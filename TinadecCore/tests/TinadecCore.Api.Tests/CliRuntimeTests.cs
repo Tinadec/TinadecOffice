@@ -105,7 +105,7 @@ public sealed class CliRuntimeTests : IAsyncLifetime
         var request = Assert.Single(host.Requests);
         Assert.Equal(provider, request.ProviderInstanceId);
         Assert.Equal("codebuddy", request.HarnessId);
-        Assert.Equal(["--acp"], request.Argv.ToArray());
+        Assert.Equal(["--acp", "--yolo"], request.Argv.ToArray());
         Assert.Equal("C:\\fake\\codebuddy.exe", request.BinaryPath);
         Assert.Equal("C:\\fake\\home", request.Environment?["HOME"]);
         // The session root is Core's governed scratch directory, never the caller's tree.
@@ -114,6 +114,13 @@ public sealed class CliRuntimeTests : IAsyncLifetime
             Path.GetFullPath(request.ScratchDirectory),
             StringComparison.Ordinal);
         Assert.Empty(host.Dropped);
+
+        // When LaunchArgs is omitted, catalog argv ("--acp") is used by default.
+        host.Requests.Clear();
+        var defaultResolution = resolution with { ProviderInstanceId = Guid.NewGuid(), LaunchArgs = null };
+        using var defaultClient = await CreateFactory(defaultResolution, host).CreateAsync(defaultResolution);
+        await defaultClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], null, CancellationToken.None);
+        Assert.Equal(["--acp"], Assert.Single(host.Requests).Argv.ToArray());
     }
 
     [Fact]
@@ -332,24 +339,26 @@ public sealed class CliRuntimeTests : IAsyncLifetime
     [Fact]
     public async Task OpencodeServe_NoBinaryConfigured_ThrowsNamingBinaryPath()
     {
+        var url = $"http://127.0.0.1:{FreePort()}";
         var manager = new OpencodeServeProcessManager(NullLogger<OpencodeServeProcessManager>.Instance);
         await using (manager)
         {
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => manager.EnsureRunningAsync(
-                new OpencodeServeConfig("", ServerUrl: "http://127.0.0.1:59999")));
+                new OpencodeServeConfig("", ServerUrl: url)));
             Assert.Contains("no binary_path", ex.Message, StringComparison.Ordinal);
-            Assert.Contains("http://127.0.0.1:59999", ex.Message, StringComparison.Ordinal);
+            Assert.Contains(url, ex.Message, StringComparison.Ordinal);
         }
     }
 
     [Fact]
     public async Task OpencodeServe_BinaryThatDoesNotExist_ThrowsWithThePathItTried()
     {
+        var url = $"http://127.0.0.1:{FreePort()}";
         var manager = new OpencodeServeProcessManager(NullLogger<OpencodeServeProcessManager>.Instance);
         await using (manager)
         {
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => manager.EnsureRunningAsync(
-                new OpencodeServeConfig("C:\\missing\\opencode.exe", ServerUrl: "http://127.0.0.1:59999")));
+                new OpencodeServeConfig("C:\\missing\\opencode.exe", ServerUrl: url)));
             Assert.Contains("C:\\missing\\opencode.exe", ex.Message, StringComparison.Ordinal);
             Assert.Contains("could not be started", ex.Message, StringComparison.Ordinal);
         }

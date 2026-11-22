@@ -12,6 +12,7 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Tests;
 
+[Collection("HostControlToken")]
 public sealed class ModelProfileTests : IAsyncLifetime
 {
     private readonly string _root = ApiTestStorage.CreateRoot("model-profile-tests");
@@ -73,7 +74,10 @@ public sealed class ModelProfileTests : IAsyncLifetime
                     tier = "DEEP",
                     notes = "  High accuracy planner model  ",
                     context_window = 128000,
-                    cost_tier = "HIGH"
+                    cost_tier = "HIGH",
+                    input_price_per_1m = 2.5m,
+                    output_price_per_1m = 10.0m,
+                    currency = "usd"
                 }
             }
         });
@@ -88,6 +92,9 @@ public sealed class ModelProfileTests : IAsyncLifetime
         Assert.Equal("High accuracy planner model", profile.GetProperty("notes").GetString());
         Assert.Equal(128000, profile.GetProperty("context_window").GetInt32());
         Assert.Equal("high", profile.GetProperty("cost_tier").GetString());
+        Assert.Equal(2.5m, profile.GetProperty("input_price_per_1m").GetDecimal());
+        Assert.Equal(10.0m, profile.GetProperty("output_price_per_1m").GetDecimal());
+        Assert.Equal("USD", profile.GetProperty("currency").GetString());
         var specialties = profile.GetProperty("specialties").EnumerateArray().Select(x => x.GetString()).ToArray();
         Assert.Equal(new[] { "reasoning", "code" }, specialties);
         Assert.Equal(0.25d, created.GetProperty("model_parameters").GetProperty("gpt-4o").GetProperty("temperature").GetDouble(), 2);
@@ -181,6 +188,98 @@ public sealed class ModelProfileTests : IAsyncLifetime
             }
         });
         Assert.Equal(HttpStatusCode.BadRequest, insideParams.StatusCode);
+
+        // Negative pricing must be rejected
+        var negativePrice = await client.PostAsJsonAsync("/api/v1/model-providers", new
+        {
+            driver = "openai",
+            display_name = "Bad Price",
+            connection_kind = "api-key",
+            model_profiles = new { gpt4 = new { input_price_per_1m = -1 } }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, negativePrice.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChatResolution_DerivesSupportsImageInputFromVisionSpecialty_AndRespectsExplicitOverrides()
+    {
+        using var client = _factory!.CreateClient();
+
+        // 1. No image_input section: "vision" specialty auto-enables SupportsImageInput
+        var autoVisionResp = await client.PostAsJsonAsync("/api/v1/model-providers", new
+        {
+            driver = "openai",
+            display_name = "Vision Auto Provider",
+            connection_kind = "api-key",
+            base_url = "https://api.example.com/v1",
+            model = "gpt-4o",
+            models = new[] { "gpt-4o", "gpt-text" },
+            api_key = "sk-vision-test",
+            model_profiles = new Dictionary<string, object>
+            {
+                ["gpt-4o"] = new { specialties = new[] { "vision", "coding" } },
+                ["gpt-text"] = new { specialties = new[] { "coding" } }
+            }
+        });
+        Assert.Equal(HttpStatusCode.OK, autoVisionResp.StatusCode);
+        var autoProviderId = (await autoVisionResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var chatResolver = _factory.Services.GetRequiredService<IChatResolver>();
+        var visionRes = await chatResolver.ResolveModelChatAsync(autoProviderId, "gpt-4o");
+        Assert.True(visionRes.IsAvailable);
+        Assert.True(visionRes.SupportsImageInput);
+
+        var textRes = await chatResolver.ResolveModelChatAsync(autoProviderId, "gpt-text");
+        Assert.True(textRes.IsAvailable);
+        Assert.False(textRes.SupportsImageInput);
+
+        // 2. Explicit image_input overrides (false disables even with "vision", true enables even without "vision")
+        var overrideResp = await client.PostAsJsonAsync("/api/v1/model-providers", new
+        {
+            driver = "openai",
+            display_name = "Vision Override Provider",
+            connection_kind = "api-key",
+            base_url = "https://api.example.com/v1",
+            model = "m-disabled",
+            models = new[] { "m-disabled", "m-forced" },
+            api_key = "sk-vision-override",
+            image_input = new
+            {
+                enabled = false,
+                model_overrides = new Dictionary<string, object>
+                {
+                    ["m-forced"] = new { enabled = true }
+                }
+            },
+            model_profiles = new Dictionary<string, object>
+            {
+                ["m-disabled"] = new { specialties = new[] { "vision" } },
+                ["m-forced"] = new { specialties = new[] { "coding" } }
+            }
+        });
+        Assert.Equal(HttpStatusCode.OK, overrideResp.StatusCode);
+        var overrideProviderId = (await overrideResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var disabledRes = await chatResolver.ResolveModelChatAsync(overrideProviderId, "m-disabled");
+        Assert.False(disabledRes.SupportsImageInput);
+
+        var forcedRes = await chatResolver.ResolveModelChatAsync(overrideProviderId, "m-forced");
+        Assert.True(forcedRes.SupportsImageInput);
+
+        // Verify AgentModelResolver also populates SupportsImageInput via ResolveImageInput
+        var agentResolver = _factory.Services.GetRequiredService<IAgentModelResolver>();
+        var plan = await agentResolver.FreezeAsync(new AgentModelFreezeRequest(
+            SessionId: Guid.NewGuid(),
+            ModeVersionId: Guid.NewGuid(),
+            AgentDefinitionId: Guid.NewGuid(),
+            AgentVersionId: Guid.NewGuid(),
+            AgentId: "worker",
+            StrategyJson: JsonSerializer.Serialize(new { kind = "fixed", provider_instance_id = autoProviderId, model = "gpt-4o" }),
+            StrategySource: "test",
+            IsConversationRoot: false));
+        var resolved = await agentResolver.ResolveInvocationCandidatesAsync(plan, null);
+        var candidate = Assert.Single(resolved);
+        Assert.True(candidate.SupportsImageInput);
     }
 
     [Fact]
@@ -259,7 +358,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
             {
                 Id = Guid.NewGuid(),
                 TenantId = tenant.TenantId,
-                WorkspaceId = tenant.WorkspaceId ?? Guid.Empty,
+                WorkspaceId = tenant.WorkspaceId,
                 ProviderInstanceId = enabledId,
                 Model = "gpt-4o-mini",
                 ConsecutiveFailures = 3,
@@ -334,9 +433,12 @@ public sealed class ModelProfileTests : IAsyncLifetime
     {
         var managedRoot = ApiTestStorage.CreateRoot("model-profile-managed");
         Directory.CreateDirectory(managedRoot);
+        const string hostToken = "model-profile-managed-host-token-0123456789";
+        var previousToken = Environment.GetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN");
+        Environment.SetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN", hostToken);
         try
         {
-            using var managedFactory = new Factory(managedRoot, managed: true);
+            using var managedFactory = new Factory(managedRoot, managed: true, hostToken);
             using var client = managedFactory.CreateClient();
             const string secretValue = "sk-managed-toml-secret-000";
 
@@ -379,6 +481,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Environment.SetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN", previousToken);
             if (Directory.Exists(managedRoot)) Directory.Delete(managedRoot, true);
         }
     }
@@ -387,15 +490,24 @@ public sealed class ModelProfileTests : IAsyncLifetime
     {
         private readonly string _root;
         private readonly bool _managed;
+        private readonly string? _hostToken;
 
-        public Factory(string root, bool managed)
+        public Factory(string root, bool managed, string? hostToken = null)
         {
             _root = root;
             _managed = managed;
+            _hostToken = hostToken;
         }
 
         protected override bool UsesManagedStorage => _managed;
         protected override string? ManagedUserRoot => _managed ? _root : null;
+
+        protected override void ConfigureClient(HttpClient client)
+        {
+            base.ConfigureClient(client);
+            if (!string.IsNullOrEmpty(_hostToken))
+                client.DefaultRequestHeaders.Add("X-Tinadec-Host-Control", _hostToken);
+        }
 
         protected override void ConfigureIsolatedWebHost(IWebHostBuilder builder)
         {

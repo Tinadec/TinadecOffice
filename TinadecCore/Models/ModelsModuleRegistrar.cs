@@ -60,7 +60,8 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton(sp => AcpSessionOptions.From(sp.GetService<IConfiguration>()));
         builder.Services.AddSingleton(sp => ModelHealthOptions.From(sp.GetService<IConfiguration>()));
         builder.Services.AddSingleton<ModelHealthRegistry>();
-        builder.Services.AddSingleton<IAcpInteractionRouterFactory, RefusingAcpInteractionRouterFactory>();
+        builder.Services.AddSingleton<IAcpInteractionRouterFactory>(sp =>
+            new ApprovalBridgingAcpInteractionRouterFactory(sp.GetService<IAcpApprovalBridge>()));
         builder.Services.AddSingleton<AcpSessionHost>();
         builder.Services.AddSingleton<IAcpSessionHost>(sp => sp.GetRequiredService<AcpSessionHost>());
         // The control plane proves a harness with a handshake. It goes through this port rather than
@@ -201,7 +202,7 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         var model = string.IsNullOrWhiteSpace(candidateModel) ? String("model") : candidateModel;
         if (string.IsNullOrWhiteSpace(model) && !harnessOwned) return Unavailable("Chat model name is not configured.");
         model ??= provider.Driver; // CLI runtimes select their own model; the route just names the runtime.
-        var imageInput = ImageInputCapability.Resolve(doc.RootElement, protocol, model);
+        var imageInput = ModelProfile.ResolveImageInput(doc.RootElement, protocol, model);
 
         string? baseUrl = null;
         if (processBacked)
@@ -252,7 +253,27 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
             RouteId = routeId,
             RouteVersionId = routeVersionId,
             CandidatePosition = candidatePosition,
-            StrategySource = strategySource
+            StrategySource = strategySource,
+            RuntimeBadge = FormatRuntimeBadge(protocol, provider.Driver, model)
+        };
+    }
+
+    private static string FormatRuntimeBadge(string? protocol, string? driver, string? model)
+    {
+        var normalized = ChatProtocols.Normalize(protocol);
+        var harnessLabel = HarnessCatalog.Find(driver)?.DisplayName
+            ?? (!string.IsNullOrWhiteSpace(driver) ? driver.Trim() : model?.Trim() ?? "Harness");
+        var apiLabel = !string.IsNullOrWhiteSpace(model)
+            ? model.Trim()
+            : (!string.IsNullOrWhiteSpace(driver) ? driver.Trim() : "Model");
+
+        return normalized switch
+        {
+            ChatProtocols.Acp => $"ACP · {harnessLabel}",
+            ChatProtocols.HeadlessCli => $"CLI · {harnessLabel}",
+            ChatProtocols.Tui => $"TUI · {harnessLabel}",
+            ChatProtocols.OpencodeServe => $"HTTP · {harnessLabel}",
+            _ => $"API · {apiLabel}"
         };
     }
 

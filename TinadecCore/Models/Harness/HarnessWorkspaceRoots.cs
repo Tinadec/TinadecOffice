@@ -17,11 +17,20 @@ namespace TinadecCore.Models.Harness;
 internal interface IHarnessWorkspaceRoots
 {
     string ForProvider(Guid providerInstanceId);
+
+    /// <summary>
+    /// Governed working directory scoped to a specific Swarm teammate within a run. Falls back to
+    /// <see cref="ForProvider"/> when neither <paramref name="runId"/> nor
+    /// <paramref name="teammateHandle"/> is supplied so single-agent behavior stays identical.
+    /// </summary>
+    string ForTeammate(Guid providerInstanceId, string? runId, string? teammateHandle) =>
+        ForProvider(providerInstanceId);
 }
 
 internal sealed class HarnessWorkspaceRoots(StoragePaths paths) : IHarnessWorkspaceRoots
 {
     private readonly ConcurrentDictionary<Guid, string> _directories = new();
+    private readonly ConcurrentDictionary<(Guid ProviderInstanceId, string RunScope, string TeammateScope), string> _teammateDirectories = new();
 
     public string ForProvider(Guid providerInstanceId) => _directories.GetOrAdd(providerInstanceId, id =>
     {
@@ -31,4 +40,26 @@ internal sealed class HarnessWorkspaceRoots(StoragePaths paths) : IHarnessWorksp
         Directory.CreateDirectory(path);
         return path;
     });
+
+    public string ForTeammate(Guid providerInstanceId, string? runId, string? teammateHandle)
+    {
+        var runScope = NormalizeScope(runId);
+        var teammateScope = NormalizeScope(teammateHandle);
+        if (runScope.Length == 0 && teammateScope.Length == 0)
+        {
+            return ForProvider(providerInstanceId);
+        }
+
+        return _teammateDirectories.GetOrAdd((providerInstanceId, runScope, teammateScope), key =>
+        {
+            // Core-minted GUID workspace keeps teammate scratch directories strictly contained under
+            // StoragePaths.Locations.Temp and immune to path traversal from run/handle strings.
+            var path = paths.HarnessWorkspace(key.ProviderInstanceId, Guid.NewGuid());
+            Directory.CreateDirectory(path);
+            return path;
+        });
+    }
+
+    private static string NormalizeScope(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 }

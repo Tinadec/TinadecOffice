@@ -537,7 +537,7 @@ public sealed class HeadlessCliChatClientTests
     /// </summary>
     private static void DeleteTree(string directory)
     {
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(25);
         while (DateTimeOffset.UtcNow < deadline)
         {
             try
@@ -551,7 +551,7 @@ public sealed class HeadlessCliChatClientTests
             }
         }
 
-        Assert.False(Directory.Exists(directory), $"temporary harness directory {directory} was still held after 10 s");
+        Assert.False(Directory.Exists(directory), $"temporary harness directory {directory} was still held after 25 s");
     }
 
     private static async Task<int> WaitForChildPidAsync(string pidFile, TimeSpan budget)

@@ -22,12 +22,43 @@ internal static class AcpProgress
         sessionUpdate is not null && UpdateTypes.Contains(sessionUpdate);
 }
 
+/// <summary>
+/// Stable cache and turn-lease key for hosted ACP sessions. Single-agent callers use empty
+/// <see cref="RunScope"/> and <see cref="TeammateScope"/> so they share one process per provider;
+/// Swarm teammates carry their run and teammate handle so concurrent teammates using the same CLI
+/// provider own separate subprocesses, worktree <c>cwd</c>s, and turn leases.
+/// </summary>
+internal readonly record struct AcpSessionKey
+{
+    public Guid ProviderInstanceId { get; }
+    public string RunScope { get; }
+    public string TeammateScope { get; }
+
+    public AcpSessionKey(Guid providerInstanceId, string? runScope = null, string? teammateScope = null)
+    {
+        ProviderInstanceId = providerInstanceId;
+        RunScope = NormalizeScope(runScope);
+        TeammateScope = NormalizeScope(teammateScope);
+    }
+
+    public bool IsTeammateScoped => RunScope.Length > 0 || TeammateScope.Length > 0;
+
+    public static AcpSessionKey ForProvider(Guid providerInstanceId) => new(providerInstanceId);
+
+    public static AcpSessionKey From(Guid providerInstanceId, string? runId = null, string? teammateHandle = null) =>
+        new(providerInstanceId, runId, teammateHandle);
+
+    public static AcpSessionKey FromRequest(AcpSessionRequest request) =>
+        new(request.ProviderInstanceId, request.RunId, request.TeammateHandle);
+
+    private static string NormalizeScope(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+}
+
 /// <summary>How a session is opened: what to spawn, where it is allowed to work, and what to restore.</summary>
 /// <param name="ScratchDirectory">
-/// The directory handed to the agent as <c>cwd</c>. It is Core's governed scratch root, never a user
-/// project: a harness writes inside its <c>cwd</c> with its own tools without producing a
-/// <c>ToolExecutionRecord</c>, an approval row, or a <c>write_scope</c> lease, so pointing this at a
-/// real repository would ship an ungoverned writer.
+/// The directory handed to the agent as <c>cwd</c>. For single-agent runs this is Core's governed
+/// scratch root; for isolated Swarm teammates it may be the teammate's dedicated Git Worktree path.
 /// </param>
 internal sealed record AcpSessionRequest(
     Guid ProviderInstanceId,
@@ -36,7 +67,10 @@ internal sealed record AcpSessionRequest(
     IReadOnlyList<string> Argv,
     string ScratchDirectory,
     IReadOnlyDictionary<string, string?>? Environment = null,
-    string? RestoreSessionId = null);
+    string? RestoreSessionId = null,
+    string? RunId = null,
+    string? TeammateHandle = null,
+    IReadOnlyList<string>? WriteScope = null);
 
 /// <summary>Agent capabilities as advertised by <c>initialize</c>, flattened to what Core branches on.</summary>
 internal sealed record AcpAgentCapabilitiesSnapshot(

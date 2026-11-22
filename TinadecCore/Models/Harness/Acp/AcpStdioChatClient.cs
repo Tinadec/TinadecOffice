@@ -90,16 +90,17 @@ internal sealed class AcpStdioChatClient : IChatClient
     }
 
     /// <summary>
-    /// One queued turn against the provider's session. The lease serializes runs that share a harness:
-    /// ACP permits a single turn in flight, and without queuing the second run would fail with
-    /// <c>already has a turn in flight</c> while the first was still thinking.
+    /// One queued turn against the scoped session. The lease serializes runs that share the same
+    /// <see cref="AcpSessionKey"/>: single-agent runs on one provider queue cleanly, while distinct
+    /// Swarm teammates sharing a provider hold independent keys and execute concurrently.
     /// </summary>
     private async Task<AcpTurnResult> RunAsync(
         IReadOnlyList<AcpContentBlock> prompt,
         IAcpTurnObserver observer,
         CancellationToken cancellationToken)
     {
-        using var lease = await _host.AcquireTurnLeaseAsync(_request.ProviderInstanceId, cancellationToken).ConfigureAwait(false);
+        var sessionKey = AcpSessionKey.FromRequest(_request);
+        using var lease = await _host.AcquireTurnLeaseAsync(sessionKey, cancellationToken).ConfigureAwait(false);
         var session = await _host.AcquireAsync(_request, cancellationToken).ConfigureAwait(false);
 
         var turn = session.PromptAsync(prompt, observer, cancellationToken);

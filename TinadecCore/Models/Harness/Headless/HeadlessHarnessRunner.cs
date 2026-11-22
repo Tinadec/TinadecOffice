@@ -59,7 +59,7 @@ internal sealed class ProcessHeadlessHarnessRunner : IHeadlessHarnessRunner
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = request.FileName,
+            // Resolved below via HarnessProcessCommand.Apply.
             WorkingDirectory = request.WorkingDirectory,
             RedirectStandardInput = request.StdinPayload is not null,
             RedirectStandardOutput = true,
@@ -68,7 +68,7 @@ internal sealed class ProcessHeadlessHarnessRunner : IHeadlessHarnessRunner
             CreateNoWindow = true,
             StandardErrorEncoding = NdjsonFraming.WireEncoding
         };
-        foreach (var argument in request.ArgumentList) startInfo.ArgumentList.Add(argument);
+        HarnessProcessCommand.Apply(startInfo, request.FileName, request.ArgumentList);
         if (request.Environment is { } overrides)
         {
             foreach (var (key, value) in overrides)

@@ -21,17 +21,23 @@ public interface IAcpHarnessProber
     /// passes <c>null</c> and is probed under a throwaway identity.
     /// </summary>
     Task<AcpHarnessProbeResult> ProbeAsync(Guid? providerInstanceId, string harnessId, string binaryPath, string? homePath, CancellationToken cancellationToken = default);
+
+    Task<AcpHarnessProbeResult> ProbeAsync(Guid? providerInstanceId, string harnessId, string binaryPath, string? homePath, string? launchArgs, CancellationToken cancellationToken = default) =>
+        ProbeAsync(providerInstanceId, harnessId, binaryPath, homePath, cancellationToken);
 }
 
 public sealed record AcpHarnessProbeResult(bool LoadSession, bool ImageInput, bool SessionFork);
 
 internal sealed class AcpHarnessProber(IAcpSessionHost sessions) : IAcpHarnessProber
 {
-    public async Task<AcpHarnessProbeResult> ProbeAsync(Guid? providerInstanceId, string harnessId, string binaryPath, string? homePath, CancellationToken cancellationToken = default)
+    public Task<AcpHarnessProbeResult> ProbeAsync(Guid? providerInstanceId, string harnessId, string binaryPath, string? homePath, CancellationToken cancellationToken = default) =>
+        ProbeAsync(providerInstanceId, harnessId, binaryPath, homePath, launchArgs: null, cancellationToken);
+
+    public async Task<AcpHarnessProbeResult> ProbeAsync(Guid? providerInstanceId, string harnessId, string binaryPath, string? homePath, string? launchArgs, CancellationToken cancellationToken = default)
     {
-        // Resolved before anything is spawned: a driver the catalog gives no ACP argv for must not reach
-        // the transport with a guessed command line, and there is then no session to clean up.
-        var argv = HarnessCatalog.ChannelArgv(harnessId, AgentChannels.Acp);
+        // Resolved before anything is spawned: custom-acp or explicit launch_args honors custom flags,
+        // otherwise a known driver resolves strictly from the catalog.
+        var argv = HarnessCatalog.ResolveAcpArgv(harnessId, launchArgs);
         var probeId = providerInstanceId ?? Guid.NewGuid();
         try
         {

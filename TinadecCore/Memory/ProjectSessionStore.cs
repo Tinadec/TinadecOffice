@@ -127,7 +127,11 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             ModeVersionId = modeVersionId,
             ViewMode = viewMode,
             PermissionMode = permissionMode ?? "default",
-            SpaceOptionsJson = viewMode == "space" ? JsonSerializer.Serialize(spaceOptions ?? new SpaceRunOptions(), JsonOptions) : null,
+            SpaceOptionsJson = spaceOptions is not null
+                ? JsonSerializer.Serialize(spaceOptions, JsonOptions)
+                : viewMode == "space"
+                    ? JsonSerializer.Serialize(new SpaceRunOptions(), JsonOptions)
+                    : null,
             MeetingModelOverrideProviderInstanceId = meetingModelOverride?.ProviderInstanceId,
             MeetingModelOverrideModel = meetingModelOverride?.Model,
             ConversationNodeKey = conversationNodeKey,
@@ -241,17 +245,17 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         finally { gate.Release(); }
     }
 
-    public static SpaceRunOptions? ReadSpaceOptions(SessionRecord session) => session.ViewMode != "space" ? null
-        : session.SpaceOptionsJson is null ? new SpaceRunOptions()
-        : JsonSerializer.Deserialize<SpaceRunOptions>(session.SpaceOptionsJson, JsonOptions) ?? new SpaceRunOptions();
+    public static SpaceRunOptions? ReadSpaceOptions(SessionRecord session) =>
+        session.SpaceOptionsJson is not null
+            ? JsonSerializer.Deserialize<SpaceRunOptions>(session.SpaceOptionsJson, JsonOptions) ?? new SpaceRunOptions()
+            : session.ViewMode == "space" ? new SpaceRunOptions() : null;
 
     public static void ValidateSessionSettings(string viewMode, string? permissionMode, SpaceRunOptions? spaceOptions)
     {
+        _ = viewMode;
         if (permissionMode is not null && permissionMode is not ("default" or "ask" or "deny" or "auto-approve" or "full-access"
             or ApprovalDelegationModes.Conversation or ApprovalDelegationModes.Reviewer or ApprovalDelegationModes.Both))
             throw new ArgumentException("permission_mode is not a supported permission policy.");
-        if (spaceOptions is not null && viewMode != "space")
-            throw new ArgumentException("space_options are only available in spatial sessions.");
         if (spaceOptions?.WorkflowModeVersionId == Guid.Empty)
             throw new ArgumentException("workflow_mode_version_id must reference a published workflow mode.");
         if (spaceOptions?.WorkflowModeVersionId is not null && !spaceOptions.MultiAgent)

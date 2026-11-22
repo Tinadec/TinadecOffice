@@ -24,6 +24,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
     private readonly ITenantContextAccessor _tenant;
     private readonly ISessionLocator _sessions;
     private readonly ModelHealthRegistry _health;
+    private readonly IModelProfileCatalogService? _catalog;
 
     public AgentModelResolver(
         IDbContextFactory<AgentConfigurationDbContext> agents,
@@ -36,7 +37,8 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         ISecretStore secrets,
         ITenantContextAccessor tenant,
         ISessionLocator sessions,
-        ModelHealthRegistry health)
+        ModelHealthRegistry health,
+        IModelProfileCatalogService? catalog = null)
     {
         _agents = agents;
         _globalConfiguration = globalConfiguration;
@@ -49,6 +51,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         _tenant = tenant;
         _sessions = sessions;
         _health = health;
+        _catalog = catalog;
     }
 
     public Task<ModelResolutionPreviewDto> PreviewAsync(ModelResolutionPreviewRequestDto request, CancellationToken cancellationToken = default) =>
@@ -458,8 +461,220 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             return new FrozenModelPlan(ModelStrategyKinds.Fixed, source,
                 [new FrozenModelCandidate(0, provider.Id, providerVersion.Id, strategy.Model, protocol)]);
         }
+        if (strategy.Kind == ModelStrategyKinds.Auto)
+        {
+            return await FreezeAutoAsync(strategy, source, ct).ConfigureAwait(false);
+        }
         throw new InvalidDataException("Unsupported model strategy.");
     }
+
+    private async Task<FrozenModelPlan> FreezeAutoAsync(ModelStrategyDto strategy, string source, CancellationToken ct)
+    {
+        if (_catalog is null)
+            throw new InvalidDataException("Auto model strategy requires IModelProfileCatalogService.");
+
+        var catalog = await _catalog.GetSanitizedCatalogAsync(includeDisabled: false, ct).ConfigureAwait(false);
+        if (catalog.Providers.Count == 0)
+            throw new InvalidDataException("No enabled model provider is configured for auto model_strategy.");
+
+        var scope = _tenant.Current;
+        await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var providerVersionById = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId
+                && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId)
+                && x.DeletedAt == null && x.Enabled)
+            .ToDictionaryAsync(x => x.Id, x => x.CurrentVersionId, ct).ConfigureAwait(false);
+
+        var providerById = catalog.Providers.ToDictionary(p => p.Id);
+        var coolingSet = catalog.Health
+            .Where(h => h.IsCooling)
+            .Select(h => (h.ProviderInstanceId, h.Model))
+            .ToHashSet();
+
+        var routeCandidates = new List<(SanitizedProviderCatalogItemDto Provider, string Model, Guid? RouteId, int? RoutePos)>();
+        var chatRoutePositions = new Dictionary<(Guid ProviderId, string Model), int>();
+        var chatRoute = catalog.Routes.FirstOrDefault(r => string.Equals(r.Purpose, "chat", StringComparison.OrdinalIgnoreCase));
+        if (chatRoute is not null)
+        {
+            foreach (var c in chatRoute.Candidates)
+            {
+                if (!string.IsNullOrWhiteSpace(c.Model))
+                    chatRoutePositions.TryAdd((c.ProviderInstanceId, c.Model), c.Position);
+            }
+        }
+
+        var scopedRoute = !string.IsNullOrWhiteSpace(strategy.RoutePurpose)
+            ? catalog.Routes.FirstOrDefault(r => string.Equals(r.Purpose, strategy.RoutePurpose.Trim(), StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (scopedRoute is not null)
+        {
+            foreach (var c in scopedRoute.Candidates.OrderBy(c => c.Position))
+            {
+                if (!providerById.TryGetValue(c.ProviderInstanceId, out var prov)) continue;
+                var model = string.IsNullOrWhiteSpace(c.Model) ? prov.DefaultModel ?? prov.Driver : c.Model.Trim();
+                routeCandidates.Add((prov, model, scopedRoute.Id, c.Position));
+            }
+        }
+        else
+        {
+            var seen = new HashSet<(Guid ProviderId, string Model)>();
+            foreach (var prov in catalog.Providers)
+            {
+                var models = new List<string>();
+                if (!string.IsNullOrWhiteSpace(prov.DefaultModel)) models.Add(prov.DefaultModel.Trim());
+                foreach (var m in prov.Models)
+                {
+                    if (!string.IsNullOrWhiteSpace(m)) models.Add(m.Trim());
+                }
+                if (models.Count == 0)
+                {
+                    foreach (var m in prov.ModelProfiles.Keys)
+                    {
+                        if (!string.IsNullOrWhiteSpace(m)) models.Add(m.Trim());
+                    }
+                }
+                if (models.Count == 0 && ChatProtocols.IsModelChosenByHarness(prov.Protocol))
+                    models.Add(prov.Driver);
+
+                foreach (var model in models)
+                {
+                    if (seen.Add((prov.Id, model)))
+                    {
+                        var pos = chatRoutePositions.TryGetValue((prov.Id, model), out var p) ? p : (int?)null;
+                        routeCandidates.Add((prov, model, null, pos));
+                    }
+                }
+            }
+        }
+
+        var requiredSpecialties = strategy.RequiredSpecialties ?? [];
+        var maxCostRank = CostTierRank(strategy.MaxCostTier);
+
+        var scored = new List<(
+            SanitizedProviderCatalogItemDto Provider,
+            string Model,
+            Guid VersionId,
+            Guid? RouteId,
+            int Usable,
+            int Healthy,
+            int FullSpecialty,
+            int SpecialtyMatches,
+            int TierScore,
+            int CostScore,
+            int RouteBonus,
+            decimal PricePenalty,
+            int RoutePosition)>();
+
+        foreach (var entry in routeCandidates)
+        {
+            if (!providerVersionById.TryGetValue(entry.Provider.Id, out var versionId)) continue;
+            entry.Provider.ModelProfiles.TryGetValue(entry.Model, out var profile);
+
+            if (maxCostRank is { } maxRank && CostTierRank(profile?.CostTier) is { } actualCost && actualCost > maxRank)
+                continue;
+
+            var harnessOwned = ChatProtocols.IsModelChosenByHarness(entry.Provider.Protocol);
+            var usable = (entry.Provider.HasApiKey || harnessOwned) ? 1 : 0;
+            var healthy = coolingSet.Contains((entry.Provider.Id, entry.Model)) ? 0 : 1;
+
+            var specialtyMatches = 0;
+            if (requiredSpecialties.Count > 0 && profile is not null)
+            {
+                foreach (var req in requiredSpecialties)
+                {
+                    if (profile.Specialties.Any(s => string.Equals(s, req, StringComparison.OrdinalIgnoreCase)))
+                        specialtyMatches++;
+                }
+            }
+            var fullSpecialty = (requiredSpecialties.Count == 0 || specialtyMatches == requiredSpecialties.Count) ? 1 : 0;
+
+            var tierScore = ScoreTierMatch(strategy.PreferredTier, profile?.Tier);
+            var costScore = maxCostRank is not null
+                ? (profile?.CostTier is not null ? 2 : 1)
+                : 0;
+            var routeBonus = entry.RoutePos is not null ? 1 : 0;
+            var pricePenalty = (profile?.InputPricePer1M ?? 0m) + (profile?.OutputPricePer1M ?? 0m);
+
+            scored.Add((
+                entry.Provider,
+                entry.Model,
+                versionId,
+                entry.RouteId,
+                usable,
+                healthy,
+                fullSpecialty,
+                specialtyMatches,
+                tierScore,
+                costScore,
+                routeBonus,
+                pricePenalty,
+                entry.RoutePos ?? int.MaxValue));
+        }
+
+        if (scored.Count == 0)
+            throw new InvalidDataException("No enabled model candidate satisfies the auto model_strategy constraints.");
+
+        var ordered = scored
+            .OrderByDescending(x => x.Usable)
+            .ThenByDescending(x => x.Healthy)
+            .ThenByDescending(x => x.FullSpecialty)
+            .ThenByDescending(x => x.SpecialtyMatches)
+            .ThenByDescending(x => x.TierScore)
+            .ThenByDescending(x => x.CostScore)
+            .ThenByDescending(x => x.RouteBonus)
+            .ThenBy(x => x.PricePenalty)
+            .ThenBy(x => x.RoutePosition)
+            .ThenBy(x => x.Provider.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Provider.Id)
+            .ToArray();
+
+        var candidates = new List<FrozenModelCandidate>(ordered.Length);
+        for (var i = 0; i < ordered.Length; i++)
+        {
+            var item = ordered[i];
+            candidates.Add(new FrozenModelCandidate(
+                i,
+                item.Provider.Id,
+                item.VersionId,
+                item.Model,
+                item.Provider.Protocol,
+                item.RouteId,
+                null));
+        }
+        return new FrozenModelPlan(ModelStrategyKinds.Auto, source, candidates);
+    }
+
+    private static int? CostTierRank(string? costTier) => costTier?.Trim().ToLowerInvariant() switch
+    {
+        "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        _ => null
+    };
+
+    private static int ScoreTierMatch(string? preferredTier, string? actualTier)
+    {
+        if (string.IsNullOrWhiteSpace(preferredTier) || string.IsNullOrWhiteSpace(actualTier)) return 0;
+        var pref = TierRank(preferredTier);
+        var act = TierRank(actualTier);
+        if (pref is null || act is null) return 0;
+        var diff = Math.Abs(pref.Value - act.Value);
+        return diff switch
+        {
+            0 => 2,
+            1 => 1,
+            _ => 0
+        };
+    }
+
+    private static int? TierRank(string tier) => tier.Trim().ToLowerInvariant() switch
+    {
+        "fast" => 1,
+        "balanced" => 2,
+        "deep" => 3,
+        _ => null
+    };
 
     private async Task<FrozenModelPlan> FreezeRouteAsync(string purpose, CancellationToken ct)
     {
@@ -530,21 +745,45 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 apiKey = await _secrets.GetAsync(provider.SecretReference, ct).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(apiKey)) return Unavailable(candidate, source, "credential_missing", "Provider credential is not available.");
             }
+            var imageInput = ModelProfile.ResolveImageInput(root, protocol, model);
             return new ChatResolution
             {
                 IsAvailable = true, BaseUrl = baseUrl, ApiKey = apiKey, Model = model,
                 Parameters = ModelParameters.ForModel(root, model),
+                SupportsImageInput = imageInput.Enabled,
+                MaxImageBytes = imageInput.MaxImageBytes,
+                MaxImagesPerTurn = imageInput.MaxImagesPerTurn,
                 ModelId = $"{provider.Driver}/{model}", Protocol = protocol,
                 ServerUrl = Text("server_url"), BinaryPath = Text("binary_path"), LaunchArgs = Text("launch_args"), HomePath = Text("home_path"),
                 ProviderInstanceId = provider.Id, ProviderVersionId = version.Id,
                 RouteId = candidate.RouteId, RouteVersionId = candidate.RouteVersionId,
-                CandidatePosition = candidate.Position, StrategySource = source
+                CandidatePosition = candidate.Position, StrategySource = source,
+                RuntimeBadge = FormatRuntimeBadge(protocol, provider.Driver, model)
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return Unavailable(candidate, source, "provider_configuration_invalid", ex.Message);
         }
+    }
+
+    internal static string FormatRuntimeBadge(string? protocol, string? driver, string? model)
+    {
+        var normalized = ChatProtocols.Normalize(protocol);
+        var harnessLabel = HarnessCatalog.Find(driver)?.DisplayName
+            ?? (!string.IsNullOrWhiteSpace(driver) ? driver.Trim() : model?.Trim() ?? "Harness");
+        var apiLabel = !string.IsNullOrWhiteSpace(model)
+            ? model.Trim()
+            : (!string.IsNullOrWhiteSpace(driver) ? driver.Trim() : "Model");
+
+        return normalized switch
+        {
+            ChatProtocols.Acp => $"ACP · {harnessLabel}",
+            ChatProtocols.HeadlessCli => $"CLI · {harnessLabel}",
+            ChatProtocols.Tui => $"TUI · {harnessLabel}",
+            ChatProtocols.OpencodeServe => $"HTTP · {harnessLabel}",
+            _ => $"API · {apiLabel}"
+        };
     }
 
     private static ChatResolution Unavailable(FrozenModelCandidate candidate, string source, string code, string message) => new()
@@ -555,28 +794,8 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         CandidatePosition = candidate.Position, StrategySource = source
     };
 
-    private static ChatResolution WithSource(ChatResolution value, string source) => new()
-    {
-        IsAvailable = value.IsAvailable,
-        BaseUrl = value.BaseUrl,
-        Model = value.Model,
-        Parameters = value.Parameters,
-        ApiKey = value.ApiKey,
-        ModelId = value.ModelId,
-        Protocol = value.Protocol,
-        ServerUrl = value.ServerUrl,
-        Token = value.Token,
-        BinaryPath = value.BinaryPath,
-        LaunchArgs = value.LaunchArgs,
-        HomePath = value.HomePath,
-        Error = value.Error,
-        ProviderInstanceId = value.ProviderInstanceId,
-        ProviderVersionId = value.ProviderVersionId,
-        RouteId = value.RouteId,
-        RouteVersionId = value.RouteVersionId,
-        CandidatePosition = value.CandidatePosition,
-        StrategySource = source
-    };
+    private static ChatResolution WithSource(ChatResolution value, string source) =>
+        value with { StrategySource = source };
 
     private async Task<string> ReadProtocolAsync(ModelProviderRecord provider, ModelProviderVersionRecord version, CancellationToken ct)
     {

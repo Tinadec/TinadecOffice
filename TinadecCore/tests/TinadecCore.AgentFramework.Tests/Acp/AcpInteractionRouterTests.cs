@@ -115,4 +115,76 @@ public sealed class AcpInteractionRouterTests
 
         Assert.NotSame(first, second);
     }
+
+    [Fact]
+    public async Task ApprovalBridgingRouter_HoldsPendingCountOpenWhileParked_AndMapsApproveRejectAndCloseAll()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gate = new TaskCompletionSource<TinadecCore.Abstractions.Ports.AcpPermissionDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bridge = new DelegatingApprovalBridge(async (_, ct) =>
+        {
+            entered.TrySetResult();
+            return await gate.Task.WaitAsync(ct);
+        });
+        var context = new AcpInteractionContext("s-bridge", RunId: "run-1", TeammateHandle: "fe", WorkingDirectory: "/repo/wt-fe", WriteScope: ["src"]);
+        var router = new ApprovalBridgingAcpInteractionRouter(context, bridge);
+        var observer = new RecordingAcpTurnObserver();
+
+        // 1. Parked approval keeps PendingCount > 0 until human/delegate decision resolves -> allow_once selected.
+        var routeTask = router.RouteAsync(
+            "session/request_permission",
+            PermissionParams(("allow-always", "allow_always"), ("allow-once", "allow_once"), ("reject-once", "reject_once")),
+            observer,
+            CancellationToken.None);
+
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, router.PendingCount);
+        gate.SetResult(new TinadecCore.Abstractions.Ports.AcpPermissionDecision(true, "approved"));
+
+        var approvedAnswer = await routeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, router.PendingCount);
+        Assert.Equal("selected", approvedAnswer.GetProperty("outcome").GetProperty("outcome").GetString());
+        Assert.Equal("allow-once", approvedAnswer.GetProperty("outcome").GetProperty("optionId").GetString());
+
+        // 2. Denied decision selects reject_once and records refusal reason.
+        var denyBridge = new DelegatingApprovalBridge((_, _) =>
+            Task.FromResult(new TinadecCore.Abstractions.Ports.AcpPermissionDecision(false, "outside_write_scope")));
+        var denyRouter = new ApprovalBridgingAcpInteractionRouter(context, denyBridge);
+        var denyObserver = new RecordingAcpTurnObserver();
+        var deniedAnswer = await denyRouter.RouteAsync(
+            "session/request_permission",
+            PermissionParams(("allow-once", "allow_once"), ("reject-always", "reject_always"), ("reject-once", "reject_once")),
+            denyObserver,
+            CancellationToken.None);
+        Assert.Equal("selected", deniedAnswer.GetProperty("outcome").GetProperty("outcome").GetString());
+        Assert.Equal("reject-once", deniedAnswer.GetProperty("outcome").GetProperty("optionId").GetString());
+        Assert.Equal("outside_write_scope", Assert.Single(denyObserver.Refusals).Reason);
+
+        // 3. CloseAll cancels parked bridge calls cleanly and resets PendingCount to 0.
+        var parkedEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var never = new TaskCompletionSource<TinadecCore.Abstractions.Ports.AcpPermissionDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelRouter = new ApprovalBridgingAcpInteractionRouter(context, new DelegatingApprovalBridge(async (_, ct) =>
+        {
+            parkedEntered.TrySetResult();
+            return await never.Task.WaitAsync(ct);
+        }));
+        var cancelObserver = new RecordingAcpTurnObserver();
+        var parkedTask = cancelRouter.RouteAsync("session/request_permission", PermissionParams(("allow-once", "allow_once")), cancelObserver, CancellationToken.None);
+        await parkedEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, cancelRouter.PendingCount);
+        cancelRouter.CloseAll();
+        var cancelledAnswer = await parkedTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, cancelRouter.PendingCount);
+        Assert.Equal("cancelled", cancelledAnswer.GetProperty("outcome").GetProperty("outcome").GetString());
+    }
+
+    private sealed class DelegatingApprovalBridge(
+        Func<TinadecCore.Abstractions.Ports.AcpPermissionCheckRequest, CancellationToken, Task<TinadecCore.Abstractions.Ports.AcpPermissionDecision>> handler)
+        : TinadecCore.Abstractions.Ports.IAcpApprovalBridge
+    {
+        public Task<TinadecCore.Abstractions.Ports.AcpPermissionDecision> EvaluateOrWaitForApprovalAsync(
+            TinadecCore.Abstractions.Ports.AcpPermissionCheckRequest request,
+            CancellationToken cancellationToken = default) =>
+            handler(request, cancellationToken);
+    }
 }

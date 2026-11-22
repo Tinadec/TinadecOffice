@@ -79,8 +79,7 @@ public sealed class ConnectAcpHandshakeTests : IAsyncLifetime
         // demands an endpoint this channel never has.
         Assert.False(row.TryGetProperty("server_url", out var serverUrl) && serverUrl.ValueKind != JsonValueKind.Null,
             $"an acp provider must not carry a server_url, got {serverUrl}");
-        Assert.False(row.TryGetProperty("launch_args", out var args) && args.ValueKind != JsonValueKind.Null,
-            $"an acp provider must not carry invented launch_args, got {args}");
+        Assert.Equal("--acp", row.GetProperty("launch_args").GetString());
 
         // A second connect of the same driver probes as the stored provider, so its session root and
         // any warm session line up with the row that is being re-verified.

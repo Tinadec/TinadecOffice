@@ -15,6 +15,10 @@ internal sealed class TuiChatClient : IChatClient
     private readonly IReadOnlyList<string> _arguments;
     private readonly ITuiHarnessRunner _runner;
 
+    internal string WorkingDirectory => _workingDirectory;
+
+    internal IReadOnlyDictionary<string, string?>? Environment => _environment;
+
     public TuiChatClient(
         string driver,
         string fileName,
@@ -27,7 +31,9 @@ internal sealed class TuiChatClient : IChatClient
         _fileName = fileName;
         _workingDirectory = workingDirectory;
         _arguments = arguments;
-        _environment = environment;
+        _environment = environment is null
+            ? null
+            : new Dictionary<string, string?>(environment, StringComparer.Ordinal);
         _runner = runner;
     }
 

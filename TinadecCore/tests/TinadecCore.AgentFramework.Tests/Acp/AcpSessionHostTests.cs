@@ -183,4 +183,76 @@ public sealed class AcpSessionHostTests : IDisposable
         Assert.Equal(TimeSpan.FromMilliseconds(250), options.DrainQuietWindow);
         Assert.Equal("tinadec-core", options.ClientName);
     }
+
+    [Fact]
+    public async Task TeammateScopedSessions_IsolateSubprocessWorktreeCwdAndTurnLease_AndDropRunSessionsCleansUp()
+    {
+        var (host, pool) = CreateHost(_contentRoot);
+        var provider = Guid.NewGuid();
+        var runA = Guid.NewGuid().ToString("N");
+        var runB = Guid.NewGuid().ToString("N");
+
+        var singleScratch = host.ScratchDirectoryFor(provider);
+        var feWorktree = Path.Combine(_contentRoot, "wt-fe");
+        var beWorktree = Path.Combine(_contentRoot, "wt-be");
+        Directory.CreateDirectory(feWorktree);
+        Directory.CreateDirectory(beWorktree);
+
+        var singleReq = AcpSessionTestSupport.Request(singleScratch, provider);
+        var feReq = new AcpSessionRequest(provider, "opencode", "fake-acp", [], feWorktree, RunId: runA, TeammateHandle: "fe", WriteScope: ["apps/fe"]);
+        var beReq = new AcpSessionRequest(provider, "opencode", "fake-acp", [], beWorktree, RunId: runA, TeammateHandle: "be", WriteScope: ["apps/be"]);
+        var otherRunReq = new AcpSessionRequest(provider, "opencode", "fake-acp", [], host.ScratchDirectoryFor(provider, runB, "qa"), RunId: runB, TeammateHandle: "qa");
+
+        var singleSession = await host.AcquireAsync(singleReq);
+        var feSession = await host.AcquireAsync(feReq);
+        var beSession = await host.AcquireAsync(beReq);
+        var otherRunSession = await host.AcquireAsync(otherRunReq);
+
+        Assert.Equal(4, pool.Count);
+        Assert.NotSame(singleSession, feSession);
+        Assert.NotSame(feSession, beSession);
+        Assert.Same(feSession, await host.AcquireAsync(feReq));
+
+        // Concurrent turn leases on distinct teammates sharing one provider must NOT block each other.
+        using (var feLease = await host.AcquireTurnLeaseAsync(AcpSessionKey.From(provider, runA, "fe")))
+        using (var beLease = await host.AcquireTurnLeaseAsync(AcpSessionKey.From(provider, runA, "be"))
+            .WaitAsync(TimeSpan.FromSeconds(2)))
+        {
+            Assert.NotNull(feLease);
+            Assert.NotNull(beLease);
+        }
+
+        // Environment propagation injects scoped MCP & teammate identity while stripping host control token.
+        var env = AgentChatClientFactory.EnvironmentOf(new TinadecCore.Abstractions.Ports.ChatResolution
+        {
+            Protocol = "acp",
+            ProviderInstanceId = provider,
+            RunId = runA,
+            TeammateHandle = "fe",
+            McpLoopbackEndpoint = "http://127.0.0.1:48731/api/v1/mcp/tinadec",
+            McpScopedBearerToken = "tmb_scoped_123",
+            AdditionalEnvironment = new Dictionary<string, string?>
+            {
+                ["TINADEC_HOST_CONTROL_TOKEN"] = "must-strip",
+                ["CUSTOM_FLAG"] = "1"
+            }
+        });
+        Assert.NotNull(env);
+        Assert.Equal("http://127.0.0.1:48731/api/v1/mcp/tinadec", env!["TINADEC_MCP_URL"]);
+        Assert.Equal("tmb_scoped_123", env["TINADEC_MCP_TOKEN"]);
+        Assert.Equal(runA, env["TINADEC_RUN_ID"]);
+        Assert.Equal("fe", env["TINADEC_TEAMMATE_HANDLE"]);
+        Assert.Equal("1", env["CUSTOM_FLAG"]);
+        Assert.False(env.ContainsKey("TINADEC_HOST_CONTROL_TOKEN"));
+
+        // DropRunSessionsAsync tears down ONLY runA's teammate subprocesses, leaving single-agent & runB alive.
+        await host.DropRunSessionsAsync(runA);
+        Assert.False(pool.TransportAt(0).WasKilled);
+        Assert.True(pool.TransportAt(1).WasKilled);
+        Assert.True(pool.TransportAt(2).WasKilled);
+        Assert.False(pool.TransportAt(3).WasKilled);
+        Assert.Same(otherRunSession, await host.AcquireAsync(otherRunReq));
+
+        await host.DisposeAsync();
+    }
 }

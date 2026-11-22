@@ -27,10 +27,20 @@ internal interface IAcpInteractionRouter
     int PendingCount { get; }
 }
 
+/// <summary>Session and teammate metadata supplied when constructing a per-session ACP interaction router.</summary>
+internal sealed record AcpInteractionContext(
+    string SessionId,
+    string? RunId = null,
+    string? TeammateHandle = null,
+    string? WorkingDirectory = null,
+    IReadOnlyList<string>? WriteScope = null);
+
 /// <summary>Creates the per-session router. Round 2 swaps what this returns and nothing else changes.</summary>
 internal interface IAcpInteractionRouterFactory
 {
     IAcpInteractionRouter Create(string sessionId);
+
+    IAcpInteractionRouter Create(AcpInteractionContext context) => Create(context.SessionId);
 }
 
 /// <summary>
@@ -76,16 +86,20 @@ internal sealed class RefusingAcpInteractionRouter(string sessionId) : IAcpInter
     {
     }
 
-    public Task<JsonElement> RouteAsync(string method, JsonElement @params, IAcpTurnObserver observer, CancellationToken cancellationToken)
+    internal static void RecordUnsupportedMethod(string method)
     {
-        if (method == "session/request_permission") return Task.FromResult(Refuse(@params, observer));
-
         lock (LoggedGate)
         {
             // Bounded: an agent in a loop could otherwise grow this without limit inside one process.
             if (Logged.Count < MaxLoggedMethods) Logged.Add(method);
         }
+    }
 
+    public Task<JsonElement> RouteAsync(string method, JsonElement @params, IAcpTurnObserver observer, CancellationToken cancellationToken)
+    {
+        if (method == "session/request_permission") return Task.FromResult(Refuse(@params, observer));
+
+        RecordUnsupportedMethod(method);
         throw new AcpMethodNotFoundException(method);
     }
 
@@ -109,7 +123,7 @@ internal sealed class RefusingAcpInteractionRouter(string sessionId) : IAcpInter
         return AcpWire.ToParams(new AcpPermissionResult(new AcpPermissionOutcome("selected", reject.OptionId)));
     }
 
-    private static IReadOnlyList<AcpPermissionOption> ReadOptions(JsonElement @params)
+    internal static IReadOnlyList<AcpPermissionOption> ReadOptions(JsonElement @params)
     {
         if (!@params.TryGetProperty("options", out var element) || element.ValueKind != JsonValueKind.Array) return [];
         return element.EnumerateArray()
@@ -124,7 +138,7 @@ internal sealed class RefusingAcpInteractionRouter(string sessionId) : IAcpInter
     private static string ReadRequiredString(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
-    private static string? ReadString(JsonElement root, string objectProperty, string valueProperty)
+    internal static string? ReadString(JsonElement root, string objectProperty, string valueProperty)
     {
         if (!root.TryGetProperty(objectProperty, out var nested) || nested.ValueKind != JsonValueKind.Object) return null;
         return nested.TryGetProperty(valueProperty, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;

@@ -13,6 +13,7 @@ using TinadecCore.Prompts;
 
 namespace TinadecCore.Api.Tests;
 
+[Collection("HostControlToken")]
 public sealed class PromptEngineTests : IAsyncLifetime
 {
     private readonly string _root = ApiTestStorage.CreateRoot("prompt-engine-tests");
@@ -224,6 +225,35 @@ public sealed class PromptEngineTests : IAsyncLifetime
         var builtinClone = await client.SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/api/v1/prompt-fragments/{id}/clone"));
         Assert.Equal(HttpStatusCode.OK, builtinClone.StatusCode);
         Assert.False((await builtinClone.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("is_builtin").GetBoolean());
+
+        // Global (WorkspaceId == null) fragment must be readable via GetAsync, GET /versions, and POST /clone
+        var tenant = _factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
+        var contentStore = _factory.Services.GetRequiredService<IContentStore>();
+        var globalId = await AddRawFragmentAsync(
+            promptDbFactory,
+            contentStore,
+            tenant,
+            "global.shared.rule",
+            "Global Shared Rule",
+            JsonSerializer.Serialize("GLOBAL_SHARED_CONTENT"),
+            targetAgentSlug: null,
+            globalScope: true);
+
+        var fragService = _factory.Services.GetRequiredService<IPromptFragmentService>();
+        var fetchedGlobal = await fragService.GetAsync(globalId);
+        Assert.NotNull(fetchedGlobal);
+        Assert.Equal("GLOBAL_SHARED_CONTENT", fetchedGlobal!.Content);
+
+        var globalVersionsResp = await client.GetAsync($"/api/v1/prompt-fragments/{globalId}/versions");
+        Assert.Equal(HttpStatusCode.OK, globalVersionsResp.StatusCode);
+        var globalVersions = await globalVersionsResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Single(globalVersions.EnumerateArray().ToArray());
+
+        var globalCloneResp = await client.SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/api/v1/prompt-fragments/{globalId}/clone"));
+        Assert.Equal(HttpStatusCode.OK, globalCloneResp.StatusCode);
+        var globalCloneJson = await globalCloneResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("global.shared.rule-copy", globalCloneJson.GetProperty("key").GetString());
+        Assert.Equal("GLOBAL_SHARED_CONTENT", globalCloneJson.GetProperty("content").GetString());
     }
 
     [Fact]
@@ -303,8 +333,10 @@ public sealed class PromptEngineTests : IAsyncLifetime
             AgentId: "meeting",
             ContextPack: null,
             SystemPrompt: "You coordinate.",
-            FrozenFragments: snapshot,
-            IncludeLiveFragments: false));
+            IncludeLiveFragments: false)
+        {
+            FrozenFragments = snapshot
+        });
         Assert.Contains("GLOBAL_RULE_TEXT", meetingPrompt.Instructions, StringComparison.Ordinal);
         Assert.Contains("MEETING_ONLY_GUIDANCE", meetingPrompt.Instructions, StringComparison.Ordinal);
         Assert.DoesNotContain("WORKER_ONLY_GUIDANCE", meetingPrompt.Instructions, StringComparison.Ordinal);
@@ -315,8 +347,10 @@ public sealed class PromptEngineTests : IAsyncLifetime
             AgentId: "worker",
             ContextPack: null,
             SystemPrompt: "You execute.",
-            FrozenFragments: snapshot,
-            IncludeLiveFragments: false));
+            IncludeLiveFragments: false)
+        {
+            FrozenFragments = snapshot
+        });
         Assert.Contains("GLOBAL_RULE_TEXT", workerBySlug.Instructions, StringComparison.Ordinal);
         Assert.Contains("WORKER_ONLY_GUIDANCE", workerBySlug.Instructions, StringComparison.Ordinal);
         Assert.DoesNotContain("MEETING_ONLY_GUIDANCE", workerBySlug.Instructions, StringComparison.Ordinal);
@@ -327,8 +361,10 @@ public sealed class PromptEngineTests : IAsyncLifetime
             AgentId: workerGuid.ToString(),
             ContextPack: null,
             SystemPrompt: "You execute by GUID.",
-            FrozenFragments: snapshot,
-            IncludeLiveFragments: false));
+            IncludeLiveFragments: false)
+        {
+            FrozenFragments = snapshot
+        });
         Assert.Contains("WORKER_ONLY_GUIDANCE", workerByGuid.Instructions, StringComparison.Ordinal);
         Assert.DoesNotContain("MEETING_ONLY_GUIDANCE", workerByGuid.Instructions, StringComparison.Ordinal);
     }
@@ -379,6 +415,8 @@ public sealed class PromptEngineTests : IAsyncLifetime
                 new { id = "n_cond_fail", type = "condition", title = "NonMatching Mode", field = "mode_slug", value = "audit-only" },
                 new { id = "n_pass_child", type = "template", title = "Passed Child", template = "CONDITIONAL_EXEC_CAP_MATCHED" },
                 new { id = "n_cond_pass", type = "condition", title = "Execution Check", layer = "execution", has_workspace = true, has_tools = true, capability = "repo_write" },
+                new { id = "n_field_pass_child", type = "template", title = "Field Passed Child", template = "CONDITIONAL_FIELD_LAYER_MATCHED" },
+                new { id = "n_cond_field_pass", type = "condition", title = "Field Layer Check", field = "layer", value = "execution" },
                 new { id = "n_pre_sys", type = "template", title = "Pre-System Banner", placement = "before_system_prompt", template = "Agent={{agent_name}} ({{agent_slug}}) Mode={{mode_name}} [{{mode_slug}}]" }
             },
             edges = new object[]
@@ -388,7 +426,8 @@ public sealed class PromptEngineTests : IAsyncLifetime
                 new { source = "n_skills", target = "n_frag" },
                 new { source = "n_frag", target = "n_assemble" },
                 new { source = "n_cond_fail", target = "n_blocked_child" },
-                new { source = "n_cond_pass", target = "n_pass_child" }
+                new { source = "n_cond_pass", target = "n_pass_child" },
+                new { source = "n_cond_field_pass", target = "n_field_pass_child" }
             }
         });
 
@@ -427,9 +466,12 @@ public sealed class PromptEngineTests : IAsyncLifetime
         Assert.True(wsIdx > sysIdx && skillsIdx > wsIdx && fragIdx > skillsIdx && assembleIdx > fragIdx,
             "Nodes must execute along topological edge order rather than raw array order.");
 
-        // Conditions filter failing branch and permit matching branch
+        // Conditions filter failing branch and permit matching branch without leaking condition "value" as prompt text
         Assert.DoesNotContain("SHOULD_BE_FILTERED_OUT", result.Instructions, StringComparison.Ordinal);
         Assert.Contains("CONDITIONAL_EXEC_CAP_MATCHED", result.Instructions, StringComparison.Ordinal);
+        Assert.Contains("CONDITIONAL_FIELD_LAYER_MATCHED", result.Instructions, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Layers, l => l.Kind == "pipeline_condition");
+        Assert.DoesNotContain(result.Layers, l => string.Equals(l.Content, "execution", StringComparison.OrdinalIgnoreCase));
 
         // fragment_ref consumes fragment once without duplicate trailing emission
         Assert.Equal(1, CountOccurrences(result.Instructions, "FRAGMENT_SECURITY_CONTENT"));
@@ -469,6 +511,32 @@ public sealed class PromptEngineTests : IAsyncLifetime
         Assert.Equal(20, cjkLayer.EstimatedTokens);
         Assert.Equal(8, asciiLayer.EstimatedTokens);
         Assert.True(cjkLayer.EstimatedTokens > asciiLayer.EstimatedTokens);
+
+        // skills_index consumes ContextPack.Evidence["workspace_skills"] once without duplicating it
+        var skillsGraph = JsonSerializer.Serialize(new
+        {
+            nodes = new object[]
+            {
+                new { id = "s1", type = "skills_index", title = "Skills" }
+            }
+        });
+        var skillsPack = new ContextPack
+        {
+            TokenBudget = 8192,
+            Evidence =
+            [
+                new ContextEvidence
+                {
+                    Source = "workspace_skills",
+                    Content = "ALLOWLISTED_SKILL_ENTRY"
+                }
+            ]
+        };
+        var skillsRes = await assembler.AssembleAsync(new FrozenPromptAssemblyRequest(
+            AgentId: "implementer",
+            ContextPack: skillsPack,
+            PromptGraphJson: skillsGraph));
+        Assert.Equal(1, CountOccurrences(skillsRes.Instructions, "ALLOWLISTED_SKILL_ENTRY"));
     }
 
     [Fact]
@@ -586,9 +654,12 @@ public sealed class PromptEngineTests : IAsyncLifetime
     {
         var managedRoot = ApiTestStorage.CreateRoot("prompt-engine-managed");
         Directory.CreateDirectory(managedRoot);
+        const string hostToken = "prompt-engine-managed-host-token-0123456789";
+        var previousToken = Environment.GetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN");
+        Environment.SetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN", hostToken);
         try
         {
-            using var managedFactory = new Factory(managedRoot, managed: true);
+            using var managedFactory = new Factory(managedRoot, managed: true, hostToken);
             using var client = managedFactory.CreateClient();
             const string body = "# TOML Roundtrip\nRule line with \"quotes\" and 中文。";
 
@@ -617,22 +688,25 @@ public sealed class PromptEngineTests : IAsyncLifetime
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Environment.SetEnvironmentVariable("TINADEC_HOST_CONTROL_TOKEN", previousToken);
             if (Directory.Exists(managedRoot)) Directory.Delete(managedRoot, true);
         }
     }
 
-    private static async Task AddRawFragmentAsync(
+    private static async Task<Guid> AddRawFragmentAsync(
         IDbContextFactory<PromptControlDbContext> factory,
         IContentStore store,
         TenantContext tenant,
         string key,
         string title,
         string rawStoredContent,
-        string? targetAgentSlug)
+        string? targetAgentSlug,
+        bool globalScope = false)
     {
         var now = DateTimeOffset.UtcNow;
+        var workspaceId = globalScope ? (Guid?)null : tenant.WorkspaceId;
         await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(rawStoredContent));
-        var storedRef = await store.PutAsync(new ContentWriteRequest(tenant.TenantId, tenant.WorkspaceId, "prompt-fragment", "application/json", stream));
+        var storedRef = await store.PutAsync(new ContentWriteRequest(tenant.TenantId, workspaceId, "prompt-fragment", "application/json", stream));
         await using var db = await factory.CreateDbContextAsync();
         var fragId = Guid.NewGuid();
         var verId = Guid.NewGuid();
@@ -640,8 +714,8 @@ public sealed class PromptEngineTests : IAsyncLifetime
         {
             Id = fragId,
             TenantId = tenant.TenantId,
-            WorkspaceId = tenant.WorkspaceId,
-            Scope = "workspace",
+            WorkspaceId = workspaceId,
+            Scope = globalScope ? "global" : "workspace",
             Key = key,
             Title = title,
             TargetAgentSlug = targetAgentSlug,
@@ -668,6 +742,7 @@ public sealed class PromptEngineTests : IAsyncLifetime
             CreatedAt = now
         });
         await db.SaveChangesAsync();
+        return fragId;
     }
 
     private static int CountOccurrences(string text, string value)
@@ -686,15 +761,24 @@ public sealed class PromptEngineTests : IAsyncLifetime
     {
         private readonly string _root;
         private readonly bool _managed;
+        private readonly string? _hostToken;
 
-        public Factory(string root, bool managed)
+        public Factory(string root, bool managed, string? hostToken = null)
         {
             _root = root;
             _managed = managed;
+            _hostToken = hostToken;
         }
 
         protected override bool UsesManagedStorage => _managed;
         protected override string? ManagedUserRoot => _managed ? _root : null;
+
+        protected override void ConfigureClient(HttpClient client)
+        {
+            base.ConfigureClient(client);
+            if (!string.IsNullOrEmpty(_hostToken))
+                client.DefaultRequestHeaders.Add("X-Tinadec-Host-Control", _hostToken);
+        }
 
         protected override void ConfigureIsolatedWebHost(IWebHostBuilder builder)
         {

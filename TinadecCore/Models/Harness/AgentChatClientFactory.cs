@@ -157,20 +157,77 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
         var provider = resolution.ProviderInstanceId
             ?? throw new InvalidOperationException($"Chat protocol {ChatProtocols.Acp} needs a provider instance to own the session.");
         var driver = DriverOf(resolution);
+        var workingDirectory = !string.IsNullOrWhiteSpace(resolution.WorkingDirectoryOverride)
+            ? EnsureWorkingDirectory(resolution.WorkingDirectoryOverride!)
+            : host.ScratchDirectoryFor(provider, resolution.RunId, resolution.TeammateHandle);
         var request = new AcpSessionRequest(
             provider,
             driver,
             resolution.BinaryPath ?? throw new InvalidOperationException($"Process protocol {ChatProtocols.Acp} requires a binary_path."),
-            HarnessCatalog.ChannelArgv(driver, AgentChannels.Acp),
-            host.ScratchDirectoryFor(provider),
-            EnvironmentOf(resolution));
+            HarnessCatalog.ResolveAcpArgv(driver, resolution.LaunchArgs),
+            workingDirectory,
+            EnvironmentOf(resolution),
+            RestoreSessionId: null,
+            RunId: resolution.RunId,
+            TeammateHandle: resolution.TeammateHandle,
+            WriteScope: resolution.WriteScope);
         return Task.FromResult<IChatClient>(new AcpStdioChatClient(host, request));
     }
 
-    private static IReadOnlyDictionary<string, string?>? EnvironmentOf(ChatResolution resolution) =>
-        string.IsNullOrWhiteSpace(resolution.HomePath)
-            ? null
-            : new Dictionary<string, string?> { ["HOME"] = resolution.HomePath };
+    private static string EnsureWorkingDirectory(string workingDirectoryOverride)
+    {
+        var resolved = Path.GetFullPath(workingDirectoryOverride.Trim());
+        Directory.CreateDirectory(resolved);
+        return resolved;
+    }
+
+    internal static IReadOnlyDictionary<string, string?>? EnvironmentOf(ChatResolution resolution)
+    {
+        Dictionary<string, string?>? env = null;
+        Dictionary<string, string?> Ensure() => env ??= new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(resolution.HomePath))
+        {
+            Ensure()["HOME"] = resolution.HomePath;
+        }
+
+        if (resolution.AdditionalEnvironment is { Count: > 0 } additional)
+        {
+            var map = Ensure();
+            foreach (var (key, value) in additional)
+            {
+                if (string.IsNullOrWhiteSpace(key)
+                    || string.Equals(key, "TINADEC_HOST_CONTROL_TOKEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                map[key] = value;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.McpLoopbackEndpoint))
+        {
+            Ensure()["TINADEC_MCP_URL"] = resolution.McpLoopbackEndpoint!.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.McpScopedBearerToken))
+        {
+            Ensure()["TINADEC_MCP_TOKEN"] = resolution.McpScopedBearerToken!.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.RunId))
+        {
+            Ensure()["TINADEC_RUN_ID"] = resolution.RunId!.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolution.TeammateHandle))
+        {
+            Ensure()["TINADEC_TEAMMATE_HANDLE"] = resolution.TeammateHandle!.Trim();
+        }
+
+        return env;
+    }
 
     /// <summary>
     /// Opens the one-shot headless channel for a provider. The catalog decides the argv, where the
@@ -195,6 +252,9 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
             $"Protocol {ChatProtocols.HeadlessCli} requires {nameof(IHarnessWorkspaceRoots)} to be registered.");
         var provider = resolution.ProviderInstanceId
             ?? throw new InvalidOperationException($"Chat protocol {ChatProtocols.HeadlessCli} needs a provider instance to own its working directory.");
+        var workingDirectory = !string.IsNullOrWhiteSpace(resolution.WorkingDirectoryOverride)
+            ? EnsureWorkingDirectory(resolution.WorkingDirectoryOverride!)
+            : roots.ForTeammate(provider, resolution.RunId, resolution.TeammateHandle);
 
         return Task.FromResult<IChatClient>(new HeadlessCliChatClient(
             driver,
@@ -202,7 +262,7 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
             envelopeKind,
             resolution.BinaryPath ?? throw new InvalidOperationException(
                 $"Process protocol {ChatProtocols.HeadlessCli} requires a binary_path."),
-            roots.ForProvider(provider),
+            workingDirectory,
             EnvironmentOf(resolution),
             runner));
     }
@@ -223,12 +283,15 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
             $"Protocol {ChatProtocols.Tui} requires {nameof(IHarnessWorkspaceRoots)} to be registered.");
         var provider = resolution.ProviderInstanceId
             ?? throw new InvalidOperationException($"Chat protocol {ChatProtocols.Tui} needs a provider instance to own its working directory.");
+        var workingDirectory = !string.IsNullOrWhiteSpace(resolution.WorkingDirectoryOverride)
+            ? EnsureWorkingDirectory(resolution.WorkingDirectoryOverride!)
+            : roots.ForTeammate(provider, resolution.RunId, resolution.TeammateHandle);
 
         return Task.FromResult<IChatClient>(new TuiChatClient(
             driver,
             resolution.BinaryPath ?? throw new InvalidOperationException(
                 $"Process protocol {ChatProtocols.Tui} requires a binary_path."),
-            roots.ForProvider(provider),
+            workingDirectory,
             HarnessCatalog.ChannelArgv(driver, AgentChannels.Tui),
             EnvironmentOf(resolution),
             runner));
@@ -243,6 +306,9 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
             resolution.LaunchArgs,
             resolution.ServerUrl,
             resolution.HomePath), cancellationToken).ConfigureAwait(false);
-        return new OpenCodeChatClient(endpoint.ServerUrl, resolution.Token, NullLogger<OpenCodeChatClient>.Instance);
+        var workingDirectory = !string.IsNullOrWhiteSpace(resolution.WorkingDirectoryOverride)
+            ? EnsureWorkingDirectory(resolution.WorkingDirectoryOverride!)
+            : null;
+        return new OpenCodeChatClient(endpoint.ServerUrl, resolution.Token, NullLogger<OpenCodeChatClient>.Instance, workingDirectory);
     }
 }

@@ -78,4 +78,13 @@ public sealed record ContextBuildRequest(
     /// skill may be opened; it never exposes the skill body or expands this set of grants.
     /// </summary>
     public IReadOnlyList<string>? AllowedToolIds { get; init; }
+
+    /// <summary>Optional mode- or session-level context strategy override (<c>direct</c>, <c>managed</c>, <c>deep_curator</c>).</summary>
+    public string? ContextStrategyOverride { get; init; }
+
+    /// <summary>Optional mode- or session-level compaction trigger ratio override (<c>0.40..0.95</c>).</summary>
+    public double? CompactionTriggerRatioOverride { get; init; }
+
+    /// <summary>Optional mode- or session-level recall fidelity override (<c>summary_only</c>, <c>balanced</c>, <c>verbatim_first</c>).</summary>
+    public string? RecallPolicyOverride { get; init; }
 }

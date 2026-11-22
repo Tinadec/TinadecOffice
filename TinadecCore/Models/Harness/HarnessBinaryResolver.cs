@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.Models.Harness;
@@ -52,7 +53,7 @@ internal static class HarnessPathTokens
 /// </summary>
 internal sealed class HarnessBinaryResolver : IHarnessBinaryResolver
 {
-    private static readonly string[] WindowsExtensions = [".exe", ".cmd", ".bat"];
+    private static readonly string[] WindowsExtensions = [".exe", ".cmd", ".bat", ".ps1"];
 
     private readonly IReadOnlyDictionary<string, string> _roots;
 
@@ -130,7 +131,24 @@ internal sealed class HarnessBinaryResolver : IHarnessBinaryResolver
 
         foreach (var extension in WindowsExtensions) yield return Path.Combine(root, binaryName + extension);
         var bare = Path.Combine(root, binaryName);
-        if (IsPortableExecutable(bare)) yield return bare;
+        if (IsPortableExecutable(bare) || IsNodeShebang(bare)) yield return bare;
+    }
+
+    internal static bool IsNodeShebang(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream, leaveOpen: false);
+            var firstLine = reader.ReadLine();
+            if (string.IsNullOrWhiteSpace(firstLine) || !firstLine.StartsWith("#!", StringComparison.Ordinal))
+                return false;
+            return firstLine.Contains("node", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static bool IsPortableExecutable(string path)
@@ -153,11 +171,24 @@ internal sealed class HarnessBinaryResolver : IHarnessBinaryResolver
         var path = Environment.GetEnvironmentVariable("PATH");
         if (!string.IsNullOrWhiteSpace(path)) roots.AddRange(path.Split(Path.PathSeparator));
 
+        var npmPrefix = Environment.GetEnvironmentVariable("NPM_CONFIG_PREFIX") ?? Environment.GetEnvironmentVariable("npm_config_prefix");
+        if (!string.IsNullOrWhiteSpace(npmPrefix))
+        {
+            roots.Add(npmPrefix);
+            roots.Add(Path.Combine(npmPrefix, "bin"));
+        }
+
+        var pnpmHome = Environment.GetEnvironmentVariable("PNPM_HOME");
+        if (!string.IsNullOrWhiteSpace(pnpmHome)) roots.Add(pnpmHome);
+
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(profile))
         {
             roots.Add(Path.Combine(profile, ".local", "bin"));
             roots.Add(Path.Combine(profile, ".npm-global", "bin"));
+            roots.Add(Path.Combine(profile, ".bun", "bin"));
+            roots.Add(Path.Combine(profile, ".cargo", "bin"));
+            roots.Add(Path.Combine(profile, "scoop", "shims"));
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -167,10 +198,77 @@ internal sealed class HarnessBinaryResolver : IHarnessBinaryResolver
         if (!string.IsNullOrWhiteSpace(localAppData))
         {
             roots.Add(localAppData);
-            roots.Add(Path.Combine(localAppData, "Programs"));
+            roots.Add(Path.Combine(localAppData, "pnpm"));
+            roots.Add(Path.Combine(localAppData, "Volta", "bin"));
+            var programs = Path.Combine(localAppData, "Programs");
+            roots.Add(programs);
+            if (Directory.Exists(programs))
+            {
+                try
+                {
+                    foreach (var dir in Directory.EnumerateDirectories(programs))
+                    {
+                        roots.Add(dir);
+                        roots.Add(Path.Combine(dir, "bin"));
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Best-effort enumeration under %LocalAppData%\Programs.
+                }
+            }
             roots.Add(Path.Combine(localAppData, "Microsoft", "WinGet", "Links"));
         }
 
         return roots.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+}
+
+/// <summary>
+/// Cross-platform <see cref="ProcessStartInfo"/> builder for harness executables.
+/// On Windows, wraps <c>.cmd</c>/<c>.bat</c> via <c>cmd.exe /d /s /c</c>, <c>.ps1</c> via
+/// <c>powershell.exe -File</c>, and extensionless <c>#!/usr/bin/env node</c> scripts via <c>node</c>.
+/// </summary>
+internal static class HarnessProcessCommand
+{
+    public static void Apply(ProcessStartInfo psi, string binaryPath, IEnumerable<string> arguments)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (binaryPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+                || binaryPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+            {
+                psi.FileName = "cmd.exe";
+                psi.ArgumentList.Add("/d");
+                psi.ArgumentList.Add("/s");
+                psi.ArgumentList.Add("/c");
+                psi.ArgumentList.Add(binaryPath);
+            }
+            else if (binaryPath.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
+            {
+                psi.FileName = "powershell.exe";
+                psi.ArgumentList.Add("-NoProfile");
+                psi.ArgumentList.Add("-NonInteractive");
+                psi.ArgumentList.Add("-ExecutionPolicy");
+                psi.ArgumentList.Add("Bypass");
+                psi.ArgumentList.Add("-File");
+                psi.ArgumentList.Add(binaryPath);
+            }
+            else if (string.IsNullOrEmpty(Path.GetExtension(binaryPath)) && HarnessBinaryResolver.IsNodeShebang(binaryPath))
+            {
+                psi.FileName = "node";
+                psi.ArgumentList.Add(binaryPath);
+            }
+            else
+            {
+                psi.FileName = binaryPath;
+            }
+        }
+        else
+        {
+            psi.FileName = binaryPath;
+        }
+
+        foreach (var argument in arguments) psi.ArgumentList.Add(argument);
     }
 }

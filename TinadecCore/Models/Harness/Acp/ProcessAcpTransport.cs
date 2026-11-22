@@ -53,7 +53,6 @@ internal sealed class ProcessAcpTransport : IAcpTransport
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = fileName,
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -65,7 +64,7 @@ internal sealed class ProcessAcpTransport : IAcpTransport
             // read as text, and that is where it would matter.
             StandardErrorEncoding = NdjsonFraming.WireEncoding
         };
-        foreach (var argument in argumentList) startInfo.ArgumentList.Add(argument);
+        HarnessProcessCommand.Apply(startInfo, fileName, argumentList);
         if (environment is { } overrides)
         {
             foreach (var (key, value) in overrides)

@@ -19,16 +19,21 @@ internal sealed class OpenCodeChatClient : IChatClient, IDisposable
 
     private readonly HttpClient _http;
     private readonly string _serverUrl;
+    private readonly string? _workingDirectory;
     private readonly ILogger<OpenCodeChatClient> _logger;
     private string? _sessionId;
     private int _disposed;
 
-    public OpenCodeChatClient(string serverUrl, string? token, ILogger<OpenCodeChatClient> logger)
+    internal string? WorkingDirectory => _workingDirectory;
+
+    public OpenCodeChatClient(string serverUrl, string? token, ILogger<OpenCodeChatClient> logger, string? workingDirectory = null)
     {
         _serverUrl = serverUrl;
+        _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory.Trim();
         _logger = logger;
         _http = new HttpClient { BaseAddress = new Uri(serverUrl) };
         if (!string.IsNullOrWhiteSpace(token)) _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (_workingDirectory is not null) _http.DefaultRequestHeaders.TryAddWithoutValidation("x-opencode-directory", _workingDirectory);
     }
 
     public async Task<ChatResponse> GetResponseAsync(

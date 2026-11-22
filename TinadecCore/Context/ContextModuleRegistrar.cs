@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Context;
 
@@ -14,13 +17,14 @@ public sealed class ContextModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        builder.Services.AddSingleton<IContextStrategyService, ContextStrategyService>();
         builder.Services.AddSingleton<IContextProvider, ContextProvider>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "strategies"],
-            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions", "workspace_skills"],
+            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions", "workspace_skills", "micro_compaction", "context_strategy"],
             Language = "C#",
             MafPrimitives = ["context"],
             RegistrationStatus = ModuleRegistrationStatus.NotConfigured
@@ -40,19 +44,28 @@ internal sealed class ContextProvider : IContextProvider
     private readonly IRuntimeContextSettings _settings;
     private readonly ITinaChatRunInput? _chatInputs;
     private readonly IMessageAttachmentStore _attachments;
+    private readonly IContextStrategyService _strategyService;
+    private readonly IContextMemoryService? _contextMemory;
+    private readonly ISessionLocator? _sessionLocator;
 
     public ContextProvider(
         IConversationStore conversations,
         IMemoryStore memory,
         IRuntimeContextSettings settings,
         IMessageAttachmentStore attachments,
-        ITinaChatRunInput? chatInputs = null)
+        ITinaChatRunInput? chatInputs = null,
+        IContextStrategyService? strategyService = null,
+        IContextMemoryService? contextMemory = null,
+        ISessionLocator? sessionLocator = null)
     {
         _conversations = conversations;
         _memory = memory;
         _settings = settings;
         _attachments = attachments;
         _chatInputs = chatInputs;
+        _strategyService = strategyService ?? new ContextStrategyService();
+        _contextMemory = contextMemory;
+        _sessionLocator = sessionLocator;
     }
 
     public async Task<ContextPack> BuildContextAsync(
@@ -168,23 +181,45 @@ internal sealed class ContextProvider : IContextProvider
             candidates.Add(mcpEvidence);
         }
 
+        ContextMemoryPolicyDto? policy = null;
+        if (_contextMemory is not null)
+        {
+            try { policy = await _contextMemory.GetPolicyAsync(cancellationToken).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* Best-effort: fallback to default managed profile. */ }
+        }
+        var profile = ResolveEffectiveProfile(request, policy);
+
+        // Steadily inject bounded L3 User Global Profile (`principal`) and active L2 Project Core
+        // Memory (`project`) Markdown blocks into the stable prefix ahead of history, rather than
+        // relying solely on keyword matching against the latest user message.
+        var coreMemoryBlocks = await BuildCoreMemoryEvidenceAsync(
+            parsedSessionId, request, policy, tokenBudget, cancellationToken).ConfigureAwait(false);
+        foreach (var block in coreMemoryBlocks)
+        {
+            candidates.Add(block.Evidence);
+        }
+
         // A compaction summary heads the raw history: it is the session's compressed view of
         // earlier turns. When the patch records what it covered, those messages leave the
         // history section, so the summary stands in for them instead of repeating beside them.
         // The full window still feeds attachments and the latest-user-message memory query.
-        var latestCompaction = FindLatestCompaction(sessionPatches);
+        var latestCompaction = profile.AsyncCompactionEnabled ? FindLatestCompaction(sessionPatches) : null;
         var compactionEvidence = BuildCompactionEvidence(latestCompaction);
         if (compactionEvidence is not null)
         {
             candidates.Add(compactionEvidence);
         }
 
-        var historyMessages = latestCompaction?.CoversThroughSequence is { } coveredThrough
+        var rawHistoryMessages = latestCompaction?.CoversThroughSequence is { } coveredThrough
             ? messages.Where(message => message.Sequence > coveredThrough).ToArray()
             : messages;
-        if (historyMessages.Count != 0)
+        var microResult = _strategyService.MicroCompactMessages(
+            rawHistoryMessages.Select(m => new ContextWindowMessage(m.Sequence, m.Role, m.Content)).ToArray(),
+            hotTailCount: Math.Clamp(Math.Min(6, recentMessageLimit / 4), 1, 12),
+            offloadThresholdBytes: policy?.OffloadLargeToolPayloadBytes ?? 16_384);
+        if (microResult.Messages.Count != 0)
         {
-            var history = string.Join('\n', historyMessages.Select(message => $"{message.Role}: {message.Content}"));
+            var history = string.Join('\n', microResult.Messages.Select(message => $"{message.Role}: {message.Content}"));
             candidates.Add(new ContextEvidence
             {
                 Source = "session_history",
@@ -192,24 +227,11 @@ internal sealed class ContextProvider : IContextProvider
                 EstimatedTokens = EstimateTokens(history),
                 Metadata = new Dictionary<string, string>
                 {
-                    ["message_count"] = historyMessages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["first_sequence"] = historyMessages[0].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["last_sequence"] = historyMessages[^1].Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                }
-            });
-        }
-
-        foreach (var item in memory)
-        {
-            candidates.Add(new ContextEvidence
-            {
-                Source = "reviewed_memory",
-                Content = item.Content,
-                EstimatedTokens = EstimateTokens(item.Content),
-                Metadata = new Dictionary<string, string>(item.Provenance, StringComparer.Ordinal)
-                {
-                    ["memory_id"] = item.Id,
-                    ["score"] = item.Score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                    ["message_count"] = microResult.Messages.Count.ToString(CultureInfo.InvariantCulture),
+                    ["first_sequence"] = microResult.Messages[0].Sequence.ToString(CultureInfo.InvariantCulture),
+                    ["last_sequence"] = microResult.Messages[^1].Sequence.ToString(CultureInfo.InvariantCulture),
+                    ["micro_compacted_count"] = microResult.FoldedCount.ToString(CultureInfo.InvariantCulture),
+                    ["offloaded_count"] = microResult.OffloadedCount.ToString(CultureInfo.InvariantCulture)
                 }
             });
         }
@@ -233,6 +255,62 @@ internal sealed class ContextProvider : IContextProvider
             used += item.EstimatedTokens;
         }
 
+        // Collect IDs and normalized statements from L3/L2 Markdown blocks that actually survived
+        // budgeting, then deduplicate cold/hybrid retrieved `reviewed_memory` items against them
+        // so the same fact is never paid for twice in the same context pack.
+        var injectedMemoryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var injectedStatements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var principalHotCount = 0;
+        var projectHotCount = 0;
+        foreach (var block in coreMemoryBlocks)
+        {
+            if (!budgeted.Contains(block.Evidence))
+            {
+                continue;
+            }
+            if (string.Equals(block.Scope, "principal", StringComparison.OrdinalIgnoreCase))
+            {
+                principalHotCount = block.Document.ActiveHotCount;
+            }
+            else if (string.Equals(block.Scope, "project", StringComparison.OrdinalIgnoreCase))
+            {
+                projectHotCount = block.Document.ActiveHotCount;
+            }
+            CollectInjectedMemoryFingerprints(block.Document, block.InjectedMarkdown, block.WasClipped, injectedMemoryIds, injectedStatements);
+        }
+
+        var deduplicatedMemoryCount = 0;
+        foreach (var item in memory)
+        {
+            if (IsAlreadyInjectedMemory(item, injectedMemoryIds, injectedStatements))
+            {
+                deduplicatedMemoryCount++;
+                continue;
+            }
+
+            var evidence = new ContextEvidence
+            {
+                Source = "reviewed_memory",
+                Content = item.Content,
+                EstimatedTokens = EstimateTokens(item.Content),
+                Metadata = new Dictionary<string, string>(item.Provenance, StringComparer.Ordinal)
+                {
+                    ["memory_id"] = item.Id,
+                    ["score"] = item.Score.ToString("0.###", CultureInfo.InvariantCulture)
+                }
+            };
+            if (evidence.EstimatedTokens > tokenBudget - used)
+            {
+                dropped.Add(evidence);
+                continue;
+            }
+            budgeted.Add(evidence);
+            used += evidence.EstimatedTokens;
+        }
+
+        var compactionRecommended = _strategyService.ShouldTriggerAsyncCompaction(
+            used, tokenBudget, profile.Strategy, profile.CompactionTriggerRatio);
+
         return new ContextPack
         {
             SessionId = request.SessionId,
@@ -245,7 +323,19 @@ internal sealed class ContextProvider : IContextProvider
             {
                 ["runtime_profile_id"] = request.RuntimeProfileId,
                 ["agent_id"] = request.AgentId,
-                ["context_revision"] = contextRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                ["context_revision"] = contextRevision.ToString(CultureInfo.InvariantCulture),
+                ["context_strategy"] = profile.Strategy,
+                ["compaction_trigger_ratio"] = profile.CompactionTriggerRatio.ToString("0.##", CultureInfo.InvariantCulture),
+                ["recall_fidelity"] = profile.RecallFidelity,
+                ["history_recall_enabled"] = profile.HistoryRecallEnabled ? "true" : "false",
+                ["cross_session_recall_enabled"] = profile.CrossSessionRecallEnabled ? "true" : "false",
+                ["compaction_recommended"] = compactionRecommended ? "true" : "false",
+                ["user_profile_memory_items"] = principalHotCount.ToString(CultureInfo.InvariantCulture),
+                ["project_core_memory_items"] = projectHotCount.ToString(CultureInfo.InvariantCulture),
+                ["deduplicated_memory_count"] = deduplicatedMemoryCount.ToString(CultureInfo.InvariantCulture),
+                ["micro_compacted_count"] = microResult.FoldedCount.ToString(CultureInfo.InvariantCulture),
+                ["offloaded_count"] = microResult.OffloadedCount.ToString(CultureInfo.InvariantCulture),
+                ["micro_compaction_saved_bytes"] = microResult.SavedBytes.ToString(CultureInfo.InvariantCulture)
             }
         };
     }
@@ -380,6 +470,343 @@ internal sealed class ContextProvider : IContextProvider
         };
     }
 
+    private static readonly Regex MemoryAnchorIdRegex = new(
+        @"<!--\s*mem:(?<id>[0-9a-fA-F\-]{36})(?:\s+[^>]*)?-->",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex TrailingHtmlCommentRegex = new(
+        @"\s*<!--.*?-->\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex WhitespaceCollapseRegex = new(
+        @"\s+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private sealed record CoreMemoryBlock(
+        string Scope,
+        MemoryDocumentDto Document,
+        string InjectedMarkdown,
+        bool WasClipped,
+        ContextEvidence Evidence);
+
+    private ContextStrategyProfile ResolveEffectiveProfile(ContextBuildRequest request, ContextMemoryPolicyDto? policy)
+    {
+        if (_strategyService is ContextStrategyService concrete)
+        {
+            return concrete.ResolveProfile(
+                request.ContextStrategyOverride,
+                policy,
+                request.CompactionTriggerRatioOverride,
+                request.RecallPolicyOverride);
+        }
+
+        var effectivePolicy = BuildOverriddenPolicy(policy, request.CompactionTriggerRatioOverride, request.RecallPolicyOverride);
+        var resolved = _strategyService.ResolveProfile(request.ContextStrategyOverride, effectivePolicy);
+        if (string.IsNullOrWhiteSpace(request.RecallPolicyOverride))
+        {
+            return resolved;
+        }
+
+        return request.RecallPolicyOverride.Trim().ToLowerInvariant() switch
+        {
+            "disabled" or "none" or "off" => resolved with { HistoryRecallEnabled = false, CrossSessionRecallEnabled = false },
+            "session_only" or "local" => resolved with { HistoryRecallEnabled = true, CrossSessionRecallEnabled = false },
+            "cross_session" or "cross_session_enabled" => resolved with { HistoryRecallEnabled = true, CrossSessionRecallEnabled = true },
+            _ => resolved
+        };
+    }
+
+    private static ContextMemoryPolicyDto? BuildOverriddenPolicy(
+        ContextMemoryPolicyDto? policy,
+        double? compactionTriggerRatioOverride,
+        string? recallPolicyOverride)
+    {
+        if (compactionTriggerRatioOverride is null && string.IsNullOrWhiteSpace(recallPolicyOverride))
+        {
+            return policy;
+        }
+
+        var basePolicy = policy ?? new ContextMemoryPolicyDto();
+        var normalizedRecall = recallPolicyOverride?.Trim().ToLowerInvariant();
+        var fidelity = normalizedRecall is "summary_only" or "balanced" or "verbatim_first"
+            ? normalizedRecall
+            : basePolicy.RecallFidelity;
+        var allowCrossSession = normalizedRecall switch
+        {
+            "disabled" or "none" or "off" or "session_only" or "local" => false,
+            "cross_session" or "cross_session_enabled" => true,
+            _ => basePolicy.AllowCrossSessionRecall
+        };
+        var ratio = compactionTriggerRatioOverride is { } r && !double.IsNaN(r)
+            ? Math.Clamp(r, 0.40, 0.95)
+            : basePolicy.CompactionTriggerRatio;
+
+        return new ContextMemoryPolicyDto
+        {
+            Strategy = basePolicy.Strategy,
+            RecallFidelity = fidelity,
+            CompactionTriggerRatio = ratio,
+            RecentMessageLimit = basePolicy.RecentMessageLimit,
+            DefaultTokenBudget = basePolicy.DefaultTokenBudget,
+            AllowCrossSessionRecall = allowCrossSession,
+            MicroCompactStaleToolOutputs = basePolicy.MicroCompactStaleToolOutputs,
+            OffloadLargeToolPayloadBytes = basePolicy.OffloadLargeToolPayloadBytes,
+            EvolutionMode = basePolicy.EvolutionMode,
+            CandidateOnly = basePolicy.CandidateOnly,
+            RetrievalLimit = basePolicy.RetrievalLimit,
+            CoreMarkdownMaxTokens = basePolicy.CoreMarkdownMaxTokens,
+            ProjectMarkdownProjection = basePolicy.ProjectMarkdownProjection,
+            ProjectMemoryPath = basePolicy.ProjectMemoryPath,
+            CompanionCanWriteProjectMemory = basePolicy.CompanionCanWriteProjectMemory,
+            AllowedScopes = basePolicy.AllowedScopes,
+            AllowedKinds = basePolicy.AllowedKinds,
+            AlwaysOnPrimitives = basePolicy.AlwaysOnPrimitives,
+            SourcePath = basePolicy.SourcePath,
+            ContentHash = basePolicy.ContentHash,
+            Version = basePolicy.Version
+        };
+    }
+
+    private async Task<IReadOnlyList<CoreMemoryBlock>> BuildCoreMemoryEvidenceAsync(
+        Guid parsedSessionId,
+        ContextBuildRequest request,
+        ContextMemoryPolicyDto? policy,
+        int tokenBudget,
+        CancellationToken cancellationToken)
+    {
+        if (_contextMemory is null)
+        {
+            return [];
+        }
+
+        var configuredMaxTokens = Math.Clamp(policy?.CoreMarkdownMaxTokens ?? 1500, 128, 8000);
+        var perDocMaxTokens = Math.Clamp(configuredMaxTokens, 128, Math.Max(128, tokenBudget / 4));
+        var perDocMaxChars = perDocMaxTokens * 4;
+
+        var blocks = new List<CoreMemoryBlock>(2);
+
+        // L3 User Global Profile (`principal`)
+        try
+        {
+            var principalDoc = await _contextMemory
+                .GetDocumentAsync("principal", cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            if (principalDoc is not null && principalDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(principalDoc.Markdown))
+            {
+                var trimmedMarkdown = principalDoc.Markdown.Trim();
+                var bounded = ClipAtLineBoundary(trimmedMarkdown, perDocMaxChars);
+                var wasClipped = bounded.Length < trimmedMarkdown.Length;
+                var content = "Active L3 User Global Profile (principal) — steady core memory applied across sessions:\n" + bounded;
+                blocks.Add(new CoreMemoryBlock(
+                    "principal",
+                    principalDoc,
+                    bounded,
+                    wasClipped,
+                    new ContextEvidence
+                    {
+                        Source = "user_profile_memory",
+                        Content = content,
+                        EstimatedTokens = EstimateTokens(content),
+                        Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["scope"] = "principal",
+                            ["layer"] = "L3",
+                            ["active_hot_count"] = principalDoc.ActiveHotCount.ToString(CultureInfo.InvariantCulture),
+                            ["cold_archive_count"] = principalDoc.ColdArchiveCount.ToString(CultureInfo.InvariantCulture),
+                            ["core_markdown_max_tokens"] = principalDoc.CoreMarkdownMaxTokens.ToString(CultureInfo.InvariantCulture),
+                            ["content_hash"] = principalDoc.ContentHash ?? string.Empty
+                        }
+                    }));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Best-effort: L3 profile unavailability must never block context building.
+        }
+
+        // L2 Project Core Memory (`project`)
+        var projectId = request.Workspace?.ProjectId is { } wp && wp != Guid.Empty ? wp : (Guid?)null;
+        var workspaceRoot = request.Workspace?.RootPath;
+        if (projectId is null && _sessionLocator is not null)
+        {
+            try
+            {
+                var session = await _sessionLocator.FindAsync(parsedSessionId, cancellationToken).ConfigureAwait(false);
+                if (session?.ProjectId is { } sp && sp != Guid.Empty)
+                {
+                    projectId = sp;
+                    if (string.IsNullOrWhiteSpace(workspaceRoot))
+                    {
+                        var project = await _sessionLocator.FindProjectAsync(sp, cancellationToken).ConfigureAwait(false);
+                        workspaceRoot = project?.RootPath;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Best-effort fallback when session locator is unavailable.
+            }
+        }
+
+        if (projectId is not null || !string.IsNullOrWhiteSpace(workspaceRoot))
+        {
+            try
+            {
+                var projectDoc = await _contextMemory
+                    .GetDocumentAsync("project", projectId: projectId, workspaceRoot: workspaceRoot, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                if (projectDoc is not null && projectDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(projectDoc.Markdown))
+                {
+                    var trimmedMarkdown = projectDoc.Markdown.Trim();
+                    var bounded = ClipAtLineBoundary(trimmedMarkdown, perDocMaxChars);
+                    var wasClipped = bounded.Length < trimmedMarkdown.Length;
+                    var content = "Active L2 Project Core Memory (project) — steady project conventions and architectural facts:\n" + bounded;
+                    var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["scope"] = "project",
+                        ["layer"] = "L2",
+                        ["active_hot_count"] = projectDoc.ActiveHotCount.ToString(CultureInfo.InvariantCulture),
+                        ["cold_archive_count"] = projectDoc.ColdArchiveCount.ToString(CultureInfo.InvariantCulture),
+                        ["core_markdown_max_tokens"] = projectDoc.CoreMarkdownMaxTokens.ToString(CultureInfo.InvariantCulture),
+                        ["content_hash"] = projectDoc.ContentHash ?? string.Empty
+                    };
+                    if ((projectDoc.ProjectId ?? projectId) is { } resolvedProjectId && resolvedProjectId != Guid.Empty)
+                    {
+                        metadata["project_id"] = resolvedProjectId.ToString();
+                    }
+                    blocks.Add(new CoreMemoryBlock(
+                        "project",
+                        projectDoc,
+                        bounded,
+                        wasClipped,
+                        new ContextEvidence
+                        {
+                            Source = "project_core_memory",
+                            Content = content,
+                            EstimatedTokens = EstimateTokens(content),
+                            Metadata = metadata
+                        }));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Best-effort: L2 project memory unavailability must never block context building.
+            }
+        }
+
+        return blocks;
+    }
+
+    private static void CollectInjectedMemoryFingerprints(
+        MemoryDocumentDto document,
+        string injectedMarkdown,
+        bool wasClipped,
+        HashSet<string> injectedIds,
+        HashSet<string> injectedStatements)
+    {
+        if (!wasClipped && document.Items is { Count: > 0 })
+        {
+            foreach (var item in document.Items)
+            {
+                if (!item.InHotMarkdown) continue;
+                injectedIds.Add(item.Id.ToString("D"));
+                injectedIds.Add(item.Id.ToString("N"));
+                var normalized = NormalizeMemoryStatement(item.Content);
+                if (normalized.Length > 0)
+                {
+                    injectedStatements.Add(normalized);
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(injectedMarkdown))
+        {
+            return;
+        }
+
+        foreach (Match match in MemoryAnchorIdRegex.Matches(injectedMarkdown))
+        {
+            if (Guid.TryParse(match.Groups["id"].Value, out var parsedId))
+            {
+                injectedIds.Add(parsedId.ToString("D"));
+                injectedIds.Add(parsedId.ToString("N"));
+            }
+        }
+
+        foreach (var rawLine in injectedMarkdown.Split('\n'))
+        {
+            var trimmed = rawLine.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#') || trimmed.StartsWith("<!--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (trimmed.StartsWith("- ", StringComparison.Ordinal) || trimmed.StartsWith("* ", StringComparison.Ordinal))
+            {
+                var normalized = NormalizeMemoryStatement(trimmed[2..]);
+                if (normalized.Length > 0)
+                {
+                    injectedStatements.Add(normalized);
+                }
+            }
+        }
+    }
+
+    private static bool IsAlreadyInjectedMemory(
+        MemoryEntry entry,
+        HashSet<string> injectedIds,
+        HashSet<string> injectedStatements)
+    {
+        if (injectedIds.Count == 0 && injectedStatements.Count == 0)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Id))
+        {
+            var rawId = entry.Id.Trim();
+            if (injectedIds.Contains(rawId))
+            {
+                return true;
+            }
+            if (Guid.TryParse(rawId, out var parsedId)
+                && (injectedIds.Contains(parsedId.ToString("D")) || injectedIds.Contains(parsedId.ToString("N"))))
+            {
+                return true;
+            }
+        }
+
+        var normalized = NormalizeMemoryStatement(entry.Content);
+        return normalized.Length > 0 && injectedStatements.Contains(normalized);
+    }
+
+    private static string NormalizeMemoryStatement(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+        var stripped = TrailingHtmlCommentRegex.Replace(text.Trim(), string.Empty).Trim();
+        if (stripped.StartsWith("- ", StringComparison.Ordinal) || stripped.StartsWith("* ", StringComparison.Ordinal))
+        {
+            stripped = stripped[2..].Trim();
+        }
+        return WhitespaceCollapseRegex.Replace(stripped, " ");
+    }
+
+    private static string ClipAtLineBoundary(string text, int maxChars)
+    {
+        if (maxChars <= 0 || text.Length <= maxChars)
+        {
+            return text;
+        }
+        var lastNewline = text.LastIndexOf('\n', Math.Min(maxChars, text.Length - 1));
+        if (lastNewline > maxChars / 2)
+        {
+            return string.Concat(text.AsSpan(0, lastNewline).TrimEnd(), "\n…");
+        }
+        return Clip(text, maxChars);
+    }
+
     private static string Clip(string text, int limit) => text.Length <= limit ? text : string.Concat(text.AsSpan(0, limit), "…");
 
     /// <summary>
@@ -465,42 +892,8 @@ internal sealed class ContextProvider : IContextProvider
 
     private static InstructionRead ReadInstructions(string rootPath, int charLimit)
     {
-        IReadOnlyCollection<string> present;
-        try
-        {
-            present = Directory.GetFiles(rootPath).Select(Path.GetFileName).OfType<string>().ToArray();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return new InstructionRead(null, null);
-        }
-
-        if (WorkspaceInstructionPolicy.Select(present) is not { } fileName) return new InstructionRead(null, null);
-        var path = Path.Combine(rootPath, fileName);
-        try
-        {
-            var info = new FileInfo(path);
-            // ResolveLinkTarget only answers for a real link, so an ordinary file pays nothing here.
-            // A link is followed to its target and refused if that target left the root: the run's
-            // prompt tells the model nothing outside the root is readable, and this reader must not be
-            // the component that proves that sentence false.
-            if (info.ResolveLinkTarget(returnFinalTarget: true) is { } target
-                && !WorkspaceInstructionPolicy.IsInsideRoot(rootPath, target.FullName))
-            {
-                return new InstructionRead(WorkspaceInstructionPolicy.EscapesRoot(fileName), fileName);
-            }
-
-            if (info.Length > WorkspaceInstructionPolicy.MaxFileBytes)
-            {
-                return new InstructionRead(WorkspaceInstructionPolicy.Deferred(fileName, info.Length), fileName);
-            }
-
-            return new InstructionRead(WorkspaceInstructionPolicy.Frame(fileName, File.ReadAllText(path), charLimit), fileName);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return new InstructionRead(null, null);
-        }
+        var read = WorkspaceInstructionPolicy.ReadWorkspaceInstructions(rootPath, charLimit);
+        return new InstructionRead(read.Text, read.FileName);
     }
 
     private sealed record SkillRead(string? Text, int Count, int Refused, int Omitted);

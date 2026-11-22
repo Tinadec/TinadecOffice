@@ -62,7 +62,7 @@ public sealed record ModelUsage(
     [property: JsonPropertyName("reasoning_tokens")] long? ReasoningTokens = null,
     [property: JsonPropertyName("additional_counts")] IReadOnlyDictionary<string, long>? AdditionalCounts = null);
 
-public sealed class ChatResolution
+public sealed record ChatResolution
 {
     public bool IsAvailable { get; init; }
     public string? BaseUrl { get; init; }
@@ -75,7 +75,7 @@ public sealed class ChatResolution
     public string? ServerUrl { get; init; }
     /// <summary>Bearer token an HTTP-serving CLI runtime prints on startup, when it issues one. Never used by the stdio ACP channel.</summary>
     public string? Token { get; init; }
-    /// <summary>Absolute path to the harness executable; required by every process-backed protocol (<see cref="Acp"/>, <see cref="HeadlessCli"/>, <see cref="Tui"/>) in place of an endpoint URL.</summary>
+    /// <summary>Absolute path to the harness executable; required by every process-backed protocol (<see cref="ChatProtocols.Acp"/>, <see cref="ChatProtocols.HeadlessCli"/>, <see cref="ChatProtocols.Tui"/>) in place of an endpoint URL.</summary>
     public string? BinaryPath { get; init; }
     /// <summary>CLI launch arguments, already materialized from the harness catalog's argv template for the selected channel (e.g. <c>serve --port 4096</c>, <c>--acp</c>).</summary>
     public string? LaunchArgs { get; init; }
@@ -99,6 +99,23 @@ public sealed class ChatResolution
     public bool SupportsImageInput { get; init; }
     public long MaxImageBytes { get; init; } = ImageInputCapability.DefaultMaxImageBytes;
     public int MaxImagesPerTurn { get; init; } = ImageInputCapability.DefaultMaxImagesPerTurn;
+
+    /// <summary>Optional active run identifier for per-teammate session/process isolation (#36).</summary>
+    public string? RunId { get; init; }
+    /// <summary>Optional teammate handle within the run (e.g. <c>backend-api</c>).</summary>
+    public string? TeammateHandle { get; init; }
+    /// <summary>Optional working directory override (e.g. an isolated Git worktree root).</summary>
+    public string? WorkingDirectoryOverride { get; init; }
+    /// <summary>Optional authorized workspace-relative write scope for the teammate.</summary>
+    public IReadOnlyList<string>? WriteScope { get; init; }
+    /// <summary>Optional extra environment variables injected into a local CLI/ACP/TUI subprocess.</summary>
+    public IReadOnlyDictionary<string, string?>? AdditionalEnvironment { get; init; }
+    /// <summary>Optional loopback MCP endpoint URL (<c>http://127.0.0.1:&lt;port&gt;/api/v1/mcp/tinadec</c>) for shared-board access.</summary>
+    public string? McpLoopbackEndpoint { get; init; }
+    /// <summary>Optional run- and teammate-scoped bearer token issued by <see cref="ITeamBoardMcpBridge"/>.</summary>
+    public string? McpScopedBearerToken { get; init; }
+    /// <summary>Human-readable runtime badge (e.g. <c>ACP · Antigravity</c>, <c>CLI · Claude Code</c>, <c>API · gpt-5</c>).</summary>
+    public string? RuntimeBadge { get; init; }
 }
 
 /// <summary>

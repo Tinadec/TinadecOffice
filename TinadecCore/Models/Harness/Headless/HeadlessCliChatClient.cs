@@ -37,6 +37,10 @@ internal sealed class HeadlessCliChatClient : IChatClient
     private readonly IReadOnlyDictionary<string, string?>? _environment;
     private readonly IHeadlessHarnessRunner _runner;
 
+    internal string WorkingDirectory => _workingDirectory;
+
+    internal IReadOnlyDictionary<string, string?>? Environment => _environment;
+
     public HeadlessCliChatClient(
         string driver,
         HarnessChannelSpec channel,
@@ -51,7 +55,9 @@ internal sealed class HeadlessCliChatClient : IChatClient
         _envelopeKind = envelopeKind;
         _fileName = fileName;
         _workingDirectory = workingDirectory;
-        _environment = environment;
+        _environment = environment is null
+            ? null
+            : new Dictionary<string, string?>(environment, StringComparer.Ordinal);
         _runner = runner;
     }
 

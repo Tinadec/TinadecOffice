@@ -36,19 +36,27 @@ public interface IOpencodeServeProcessManager
 internal sealed class OpencodeServeProcessManager : IOpencodeServeProcessManager, IAsyncDisposable
 {
     private const string PortPlaceholder = "{port}";
-    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(5);
     private static readonly Regex ExplicitPort = new(@"--port\s+(?<port>\d+)", RegexOptions.IgnoreCase);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, HostedServe> _processes = new(StringComparer.Ordinal);
-    private readonly HttpClient _http = new() { Timeout = ProbeTimeout };
+    private readonly TimeSpan _probeTimeout;
+    private readonly HttpClient _http;
     private readonly string _logDirectory;
     private readonly ILogger<OpencodeServeProcessManager> _logger;
 
     public OpencodeServeProcessManager(ILogger<OpencodeServeProcessManager> logger)
+        : this(logger, ProbeTimeout)
     {
+    }
+
+    internal OpencodeServeProcessManager(ILogger<OpencodeServeProcessManager> logger, TimeSpan probeTimeout)
+    {
+        _probeTimeout = probeTimeout > TimeSpan.Zero ? probeTimeout : ProbeTimeout;
+        _http = new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = Timeout.InfiniteTimeSpan };
         _logDirectory = Path.Combine(Path.GetTempPath(), "tinadec-opencode-serve");
         Directory.CreateDirectory(_logDirectory);
         _logger = logger;
@@ -56,9 +64,18 @@ internal sealed class OpencodeServeProcessManager : IOpencodeServeProcessManager
 
     public async Task<OpencodeServeEndpoint> EnsureRunningAsync(OpencodeServeConfig config, CancellationToken cancellationToken = default)
     {
-        if (!string.IsNullOrWhiteSpace(config.ServerUrl) && await IsReachableAsync(config.ServerUrl, cancellationToken).ConfigureAwait(false))
+        if (!string.IsNullOrWhiteSpace(config.ServerUrl))
         {
-            return new OpencodeServeEndpoint(config.ServerUrl!);
+            var probe = await ProbeUrlAsync(config.ServerUrl, cancellationToken).ConfigureAwait(false);
+            if (probe == ProbeOutcome.Reachable)
+            {
+                return new OpencodeServeEndpoint(config.ServerUrl!);
+            }
+            if (probe == ProbeOutcome.TimedOut)
+            {
+                throw new InvalidOperationException(
+                    $"opencode serve probe for '{config.ServerUrl}' timed out after {_probeTimeout.TotalSeconds:0.##}s without an HTTP response.");
+            }
         }
 
         if (string.IsNullOrWhiteSpace(config.BinaryPath))
@@ -230,20 +247,41 @@ internal sealed class OpencodeServeProcessManager : IOpencodeServeProcessManager
         }
     }
 
-    private async Task<bool> IsReachableAsync(string url, CancellationToken cancellationToken)
+    private enum ProbeOutcome
     {
+        Reachable,
+        NotListening,
+        TimedOut
+    }
+
+    private async Task<ProbeOutcome> ProbeUrlAsync(string url, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(_probeTimeout);
         try
         {
-            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token).ConfigureAwait(false);
             // Any HTTP answer means a server is listening; the status is the harness's business, and a
             // 404 from the root path is still a running server.
-            return true;
+            return ProbeOutcome.Reachable;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return false;
+            throw;
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or OperationCanceledException or TimeoutException)
+        {
+            return ProbeOutcome.TimedOut;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException)
+        {
+            return ProbeOutcome.NotListening;
         }
     }
+
+    private async Task<bool> IsReachableAsync(string url, CancellationToken cancellationToken) =>
+        await ProbeUrlAsync(url, cancellationToken).ConfigureAwait(false) == ProbeOutcome.Reachable;
 
     private static int FreePort()
     {

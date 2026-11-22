@@ -399,6 +399,142 @@ public static class HarnessCatalog
                 "`--json` 输出的是**一整个缩进 JSON 文档**（首行就是 `{`），不是每行一帧：按 NDJSON 读它只能拿到 `{`。" +
                 "答案在 `response`，计数在 `usage.inputTokens/outputTokens/totalTokens`（本机实测回 `PONG`，19239/3/19242）。",
                 "stderr 会打 `ZCode Built-in skipped (not-due)`，与回合成败无关，别当错误。"
+            ]),
+
+        new(
+            Id: "agy",
+            DisplayName: "Antigravity",
+            Vendor: "Google",
+            DocsUrl: "https://antigravity.google/docs",
+            BinaryNames: ["agy", "antigravity"],
+            EnvOverrides: ["TINADEC_AGY_EXECUTABLE", "AGY_CLI_PATH"],
+            ExtraSearchRoots:
+            [
+                "{LocalAppData}/Programs/Antigravity/bin",
+                "{LocalAppData}/Programs/Antigravity",
+                "{UserProfile}/.antigravity/bin"
+            ],
+            Channels:
+            [
+                new(AgentChannels.Acp, ChatProtocols.Acp, ["acp"], NoArgs),
+                new(AgentChannels.Tui, ChatProtocols.Tui, NoArgs, NoArgs)
+            ],
+            HttpServer: null,
+            EnvVars: ["GEMINI_API_KEY"],
+            ConfigHome: "{UserProfile}/.gemini/antigravity",
+            VersionProbe: new(["--version"], 15_000, TolerateNonZeroExit: true, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "Antigravity CLI (`agy`) speaks stdio ACP via `agy acp`; custom flags can be overridden in launch_args.",
+                "User configuration and skills live under ~/.gemini/antigravity."
+            ]),
+
+        new(
+            Id: "gemini-cli",
+            DisplayName: "Gemini CLI",
+            Vendor: "Google",
+            DocsUrl: "https://geminicli.com/docs/",
+            BinaryNames: ["gemini"],
+            EnvOverrides: ["TINADEC_GEMINI_EXECUTABLE"],
+            ExtraSearchRoots: ["{AppData}/npm", "{UserProfile}/.npm-global/bin", "{UserProfile}/.bun/bin"],
+            Channels:
+            [
+                new(AgentChannels.Acp, ChatProtocols.Acp, ["--experimental-acp"], NoArgs),
+                new(AgentChannels.Tui, ChatProtocols.Tui, NoArgs, NoArgs)
+            ],
+            HttpServer: null,
+            EnvVars: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+            ConfigHome: "{UserProfile}/.gemini",
+            VersionProbe: new(["--version"], 15_000, TolerateNonZeroExit: false, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "ACP stdio mode uses `--experimental-acp` (Gemini CLI 0.2+); override launch_args if your build uses `--acp`.",
+                "Config and MCP settings live under ~/.gemini."
+            ]),
+
+        new(
+            Id: "qwen-code",
+            DisplayName: "Qwen Code",
+            Vendor: "Alibaba Qwen",
+            DocsUrl: "https://qwenlm.github.io/qwen-code-docs/",
+            BinaryNames: ["qwen"],
+            EnvOverrides: ["TINADEC_QWEN_EXECUTABLE"],
+            ExtraSearchRoots: ["{AppData}/npm", "{UserProfile}/.npm-global/bin", "{UserProfile}/.bun/bin"],
+            Channels:
+            [
+                new(AgentChannels.Acp, ChatProtocols.Acp, ["--acp"], NoArgs),
+                new(AgentChannels.Tui, ChatProtocols.Tui, NoArgs, NoArgs)
+            ],
+            HttpServer: null,
+            EnvVars: ["DASHSCOPE_API_KEY", "OPENAI_API_KEY"],
+            ConfigHome: "{UserProfile}/.qwen",
+            VersionProbe: new(["--version"], 15_000, TolerateNonZeroExit: false, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "ACP stdio mode starts via `qwen --acp`.",
+                "Config and skills live under ~/.qwen."
+            ]),
+
+        new(
+            Id: "minimax-code",
+            DisplayName: "MiniMax Code",
+            Vendor: "MiniMax",
+            DocsUrl: "https://platform.minimaxi.com/docs",
+            BinaryNames: ["minimax", "minimax-code"],
+            EnvOverrides: ["TINADEC_MINIMAX_EXECUTABLE"],
+            ExtraSearchRoots: ["{AppData}/npm", "{UserProfile}/.npm-global/bin", "{UserProfile}/.bun/bin", "{UserProfile}/.local/bin"],
+            Channels:
+            [
+                new(AgentChannels.Acp, ChatProtocols.Acp, ["--acp"], NoArgs),
+                new(AgentChannels.Tui, ChatProtocols.Tui, NoArgs, NoArgs)
+            ],
+            HttpServer: null,
+            EnvVars: ["MINIMAX_API_KEY"],
+            ConfigHome: "{UserProfile}/.minimax",
+            VersionProbe: new(["--version"], 15_000, TolerateNonZeroExit: true, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "If your MiniMax Code build uses custom ACP flags, configure launch_args or use custom-acp."
+            ]),
+
+        new(
+            Id: "pi",
+            DisplayName: "Pi Coding Agent",
+            Vendor: "Pi",
+            DocsUrl: "https://shittycodingagent.ai/",
+            BinaryNames: ["pi"],
+            EnvOverrides: ["TINADEC_PI_EXECUTABLE"],
+            ExtraSearchRoots: ["{AppData}/npm", "{UserProfile}/.npm-global/bin", "{UserProfile}/.bun/bin", "{UserProfile}/.pi/bin"],
+            Channels:
+            [
+                new(AgentChannels.Acp, ChatProtocols.Acp, ["--acp"], NoArgs),
+                new(AgentChannels.Tui, ChatProtocols.Tui, NoArgs, NoArgs)
+            ],
+            HttpServer: null,
+            EnvVars: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+            ConfigHome: "{UserProfile}/.pi",
+            VersionProbe: new(["--version"], 15_000, TolerateNonZeroExit: true, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "Pi CLI supports ACP via `pi --acp`; set launch_args when using an external ACP adapter wrapper."
+            ]),
+
+        new(
+            Id: "custom-acp",
+            DisplayName: "Custom ACP Agent",
+            Vendor: "Custom",
+            DocsUrl: "https://agentclientprotocol.com/",
+            BinaryNames: ["custom-acp"],
+            EnvOverrides: ["TINADEC_CUSTOM_ACP_EXECUTABLE"],
+            ExtraSearchRoots: NoArgs,
+            Channels: [new(AgentChannels.Acp, ChatProtocols.Acp, NoArgs, NoArgs)],
+            HttpServer: null,
+            EnvVars: NoArgs,
+            ConfigHome: null,
+            VersionProbe: new(["--version"], 10_000, TolerateNonZeroExit: true, NeverUse: NoArgs),
+            KnownCaveats:
+            [
+                "Generic stdio ACP driver: supply any compliant ACP executable in binary_path and optional CLI flags in launch_args."
             ])
     ];
 
@@ -447,6 +583,60 @@ public static class HarnessCatalog
         Find(driver)?.Channel(channel)?.Argv
         ?? throw new InvalidOperationException(
             $"Harness '{driver}' has no '{channel}' channel in the catalog, so Core will not guess the argv that starts one.");
+
+    /// <summary>
+    /// Resolves ACP launch argv: explicit operator-provided <paramref name="launchArgs"/> overrides
+    /// the catalog template (allowing <c>custom-acp</c> or custom flags on any ACP harness);
+    /// otherwise delegates to <see cref="ChannelArgv"/>.
+    /// </summary>
+    public static IReadOnlyList<string> ResolveAcpArgv(string? driver, string? launchArgs)
+    {
+        if (!string.IsNullOrWhiteSpace(launchArgs))
+            return SplitCommandLineArgs(launchArgs);
+        if (string.Equals(driver?.Trim(), "custom-acp", StringComparison.OrdinalIgnoreCase))
+            return NoArgs;
+        return ChannelArgv(driver, AgentChannels.Acp);
+    }
+
+    public static IReadOnlyList<string> SplitCommandLineArgs(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine)) return NoArgs;
+        var args = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var hasToken = false;
+
+        foreach (var ch in commandLine)
+        {
+            if (ch == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                hasToken = true;
+                continue;
+            }
+            if (ch == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                hasToken = true;
+                continue;
+            }
+            if (char.IsWhiteSpace(ch) && !inSingleQuote && !inDoubleQuote)
+            {
+                if (hasToken)
+                {
+                    args.Add(current.ToString());
+                    current.Clear();
+                    hasToken = false;
+                }
+                continue;
+            }
+            current.Append(ch);
+            hasToken = true;
+        }
+        if (hasToken) args.Add(current.ToString());
+        return args;
+    }
 
     /// <summary>
     /// Where the prompt text goes for a (harness, channel) pair. Defaults to <see cref="HarnessPromptDeliveries.Argv"/>

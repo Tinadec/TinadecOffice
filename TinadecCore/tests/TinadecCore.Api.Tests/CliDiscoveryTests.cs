@@ -50,7 +50,7 @@ public sealed class CliDiscoveryTests : IAsyncLifetime
         {
             var status = cli.GetProperty("status").GetString();
             Assert.NotNull(cli.GetProperty("driver").GetString());
-            Assert.Contains(status, new[] { "found", "missing", "configured" });
+            Assert.Contains(status, new[] { "found", "missing", "configured", "template" });
         }
     }
 

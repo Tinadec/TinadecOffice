@@ -240,7 +240,7 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
         var tenant = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.Fragments.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null, cancellationToken)
+            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && (x.WorkspaceId == null || x.WorkspaceId == tenant.WorkspaceId) && x.DeletedAt == null, cancellationToken)
             .ConfigureAwait(false);
         if (row is null) return null;
         var version = await db.Versions.AsNoTracking()
@@ -392,7 +392,7 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
         var tenant = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.Fragments.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null, cancellationToken)
+            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && (x.WorkspaceId == null || x.WorkspaceId == tenant.WorkspaceId) && x.DeletedAt == null, cancellationToken)
             .ConfigureAwait(false);
         if (row is null)
             throw new PromptFragmentException(404, "not_found", $"Prompt fragment '{id}' was not found.");
@@ -537,7 +537,7 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
         var source = await db.Fragments.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null, cancellationToken)
+            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenant.TenantId && (x.WorkspaceId == null || x.WorkspaceId == tenant.WorkspaceId) && x.DeletedAt == null, cancellationToken)
             .ConfigureAwait(false);
         if (source is null)
             throw new PromptFragmentException(404, "not_found", $"Prompt fragment '{id}' was not found.");
@@ -550,7 +550,7 @@ internal sealed class PromptFragmentService : IPromptFragmentService, IFrozenPro
 
         var desiredKey = string.IsNullOrWhiteSpace(input?.Key) ? $"{source.Key}-copy" : input!.Key!.Trim();
         var existingKeys = (await db.Fragments.AsNoTracking()
-            .Where(x => x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null)
+            .Where(x => x.TenantId == tenant.TenantId && (x.WorkspaceId == null || x.WorkspaceId == tenant.WorkspaceId) && x.DeletedAt == null)
             .Select(x => x.Key)
             .ToListAsync(cancellationToken).ConfigureAwait(false))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -891,20 +891,25 @@ internal sealed class PromptAssembler : IPromptAssembler
         // "before_runtime_constraints") and workspace_rules placement can position blocks deterministically.
         var pipelineBlocks = new List<PipelineRenderedBlock>();
         var pipelineHasWorkspaceRulesNode = false;
+        var pipelineHasSkillsIndexNode = false;
         if (request.PromptVersionId is not null || !string.IsNullOrWhiteSpace(request.PromptGraphJson))
         {
             if (request.PromptVersionId is { } promptVersionId)
                 fragmentIds.Add($"prompt-version:{promptVersionId}:{request.PromptVersionContentHash}");
 
+            var reservedRequiredTokens = EstimateTokens(ArchitectureBaseline(agentId))
+                + EstimateTokens(request.SystemPrompt)
+                + 64;
             pipelineBlocks = await ExecutePromptGraphAsync(
                 request,
                 evalContext,
                 pool,
                 consumedFragmentIds,
-                budget,
+                Math.Max(0, budget - reservedRequiredTokens),
                 warnings,
                 cancellationToken).ConfigureAwait(false);
             pipelineHasWorkspaceRulesNode = pipelineBlocks.Any(b => b.IsWorkspaceRulesPlacement);
+            pipelineHasSkillsIndexNode = pipelineBlocks.Any(b => string.Equals(b.Kind, "skills_index", StringComparison.Ordinal));
 
             if (request.PromptVersionId is { } pvId && pipelineBlocks.Count == 0)
             {
@@ -1036,6 +1041,8 @@ internal sealed class PromptAssembler : IPromptAssembler
         {
             foreach (var evidence in contextPack.Evidence)
             {
+                if (pipelineHasSkillsIndexNode && string.Equals(evidence.Source, "workspace_skills", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var section = $"[{evidence.Source}]\n{evidence.Content}";
                 var id = $"context:{evidence.Source}";
                 TryAddBudgeted(
@@ -1153,7 +1160,8 @@ internal sealed class PromptAssembler : IPromptAssembler
             var edges = ParseEdges(root, parsedNodes);
             var ordered = TopologicalSort(parsedNodes, edges, warnings);
 
-            // Track incoming predecessors so a false condition filters downstream nodes fed solely through it.
+            // Track blocked predecessors so a false condition filters downstream nodes fed solely through it,
+            // while cyclic graphs falling back to declaration order still execute cleanly.
             var incomingByNode = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var edge in edges)
             {
@@ -1162,7 +1170,7 @@ internal sealed class PromptAssembler : IPromptAssembler
                 preds.Add(edge.Source);
             }
 
-            var activeNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var blockedNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var rendered = new List<PipelineRenderedBlock>();
             var nodeTagPrefix = request.PromptVersionId is { } pvId
                 ? pvId.ToString()
@@ -1172,10 +1180,14 @@ internal sealed class PromptAssembler : IPromptAssembler
 
             foreach (var node in ordered)
             {
-                var isReachable = !incomingByNode.TryGetValue(node.Id, out var preds)
-                    || preds.Count == 0
-                    || preds.Any(p => activeNodes.Contains(p));
-                if (!isReachable) continue;
+                var isBlocked = incomingByNode.TryGetValue(node.Id, out var preds)
+                    && preds.Count > 0
+                    && preds.All(p => blockedNodes.Contains(p));
+                if (isBlocked)
+                {
+                    blockedNodes.Add(node.Id);
+                    continue;
+                }
 
                 var placement = NormalizePlacement(ReadNodeString(node.Element, "placement", "slot"));
 
@@ -1186,11 +1198,11 @@ internal sealed class PromptAssembler : IPromptAssembler
                         var passed = EvaluateCondition(node.Element, evalContext);
                         if (!passed)
                         {
-                            // Do not add to activeNodes so exclusively downstream nodes are skipped.
+                            // Mark blocked so exclusively downstream nodes are filtered.
+                            blockedNodes.Add(node.Id);
                             break;
                         }
-                        activeNodes.Add(node.Id);
-                        var rawText = ReadTemplateText(node.Element);
+                        var rawText = ReadNodeString(node.Element, "content", "template", "text");
                         if (!string.IsNullOrWhiteSpace(rawText))
                         {
                             var substituted = SubstituteTokens(rawText.Trim(), evalContext);
@@ -1210,7 +1222,6 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     case "template":
                     {
-                        activeNodes.Add(node.Id);
                         var rawText = ReadTemplateText(node.Element);
                         if (!string.IsNullOrWhiteSpace(rawText))
                         {
@@ -1231,7 +1242,6 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     case "fragment_ref":
                     {
-                        activeNodes.Add(node.Id);
                         var refIdText = ReadNodeString(node.Element, "fragment_id");
                         var refKey = ReadNodeString(node.Element, "fragment_key", "key");
                         PoolFragment? match = null;
@@ -1265,11 +1275,11 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     case "workspace_rules":
                     {
-                        activeNodes.Add(node.Id);
                         var parts = new List<string>();
                         if (request.Workspace is { } workspace)
                         {
-                            var (wsText, wsWarnings) = WorkspaceContext(workspace, budget);
+                            var consumedSoFar = rendered.Sum(b => EstimateTokens(b.Content));
+                            var (wsText, wsWarnings) = WorkspaceContext(workspace, Math.Max(0, budget - consumedSoFar));
                             parts.Add(wsText);
                             foreach (var w in wsWarnings) warnings.Add(w);
                         }
@@ -1300,8 +1310,13 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     case "skills_index":
                     {
-                        activeNodes.Add(node.Id);
                         var skillsText = request.SkillsIndexText;
+                        if (string.IsNullOrWhiteSpace(skillsText))
+                        {
+                            skillsText = request.ContextPack?.Evidence
+                                .FirstOrDefault(e => string.Equals(e.Source, "workspace_skills", StringComparison.OrdinalIgnoreCase))
+                                ?.Content;
+                        }
                         if (string.IsNullOrWhiteSpace(skillsText)
                             && request.ContextPack?.Metadata.TryGetValue("skills_index", out var metaSkills) == true)
                         {
@@ -1346,7 +1361,6 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     case "assemble":
                     {
-                        activeNodes.Add(node.Id);
                         var header = ReadNodeString(node.Element, "header", "prefix");
                         var footer = ReadNodeString(node.Element, "footer", "suffix");
                         var body = ReadTemplateText(node.Element);
@@ -1372,7 +1386,6 @@ internal sealed class PromptAssembler : IPromptAssembler
 
                     default:
                     {
-                        activeNodes.Add(node.Id);
                         var rawText = ReadTemplateText(node.Element);
                         if (!string.IsNullOrWhiteSpace(rawText))
                         {

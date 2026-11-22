@@ -12,6 +12,7 @@ public static class ModelProfile
     public const int MaxNotesLength = 500;
     public const int MaxSpecialties = 32;
     public const int MaxSpecialtyLength = 64;
+    public const int MaxCurrencyLength = 16;
 
     public static IReadOnlyDictionary<string, ModelProfileDto> ReadMap(JsonElement value)
     {
@@ -48,14 +49,77 @@ public static class ModelProfile
         if (input.ContextWindow is { } cw && cw <= 0)
             throw new ArgumentException("model_profiles.context_window must be a positive integer.");
         var costTier = NormalizeCostTier(input.CostTier);
+        var inputPrice = NormalizePrice(input.InputPricePer1M, "input_price_per_1m");
+        var outputPrice = NormalizePrice(input.OutputPricePer1M, "output_price_per_1m");
+        var currency = NormalizeCurrency(input.Currency);
         return new ModelProfileDto
         {
             Specialties = specialties,
             Tier = tier,
             Notes = notes,
             ContextWindow = input.ContextWindow,
-            CostTier = costTier
+            CostTier = costTier,
+            InputPricePer1M = inputPrice,
+            OutputPricePer1M = outputPrice,
+            Currency = currency
         };
+    }
+
+    /// <summary>
+    /// Derives multimodal image input support from explicit <c>image_input</c> configuration,
+    /// falling back to <c>model_profiles.specialties</c> (<c>"vision"</c>) when no explicit
+    /// provider or model-level <c>image_input.enabled</c> override is present.
+    /// </summary>
+    public static ImageInputPolicy ResolveImageInput(JsonElement providerConfig, string? protocol, string? model)
+    {
+        var policy = ImageInputCapability.Resolve(providerConfig, protocol, model);
+        if (policy.Enabled) return policy;
+
+        var normalized = ChatProtocols.Normalize(protocol);
+        if (normalized is not (ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages))
+            return policy;
+
+        if (HasExplicitImageInputEnabled(providerConfig, model))
+            return policy;
+
+        ModelProfileDto? profile;
+        try
+        {
+            profile = ForModel(providerConfig, model);
+        }
+        catch (ArgumentException)
+        {
+            return policy;
+        }
+
+        if (profile is not null && profile.Specialties.Any(s => string.Equals(s, "vision", StringComparison.OrdinalIgnoreCase)))
+            return policy with { Enabled = true };
+
+        return policy;
+    }
+
+    private static bool HasExplicitImageInputEnabled(JsonElement providerConfig, string? model)
+    {
+        if (providerConfig.ValueKind != JsonValueKind.Object
+            || !providerConfig.TryGetProperty("image_input", out var imageInput)
+            || imageInput.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (model is not null
+            && imageInput.TryGetProperty("model_overrides", out var overrides)
+            && overrides.ValueKind == JsonValueKind.Object
+            && overrides.TryGetProperty(model, out var modelOverride)
+            && modelOverride.ValueKind == JsonValueKind.Object
+            && modelOverride.TryGetProperty("enabled", out var modelEnabled)
+            && modelEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return true;
+        }
+
+        return imageInput.TryGetProperty("enabled", out var providerEnabled)
+            && providerEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False;
     }
 
     private static ModelProfileDto ReadEntry(string modelId, JsonElement element)
@@ -68,6 +132,9 @@ public static class ModelProfile
         string? notes = null;
         int? contextWindow = null;
         string? costTier = null;
+        decimal? inputPrice = null;
+        decimal? outputPrice = null;
+        string? currency = null;
 
         foreach (var prop in element.EnumerateObject())
         {
@@ -135,6 +202,25 @@ public static class ModelProfile
                     costTier = NormalizeCostTier(prop.Value.GetString());
                     break;
 
+                case "input_price_per_1m":
+                    inputPrice = ReadOptionalPrice(prop.Value, modelId, "input_price_per_1m");
+                    break;
+
+                case "output_price_per_1m":
+                    outputPrice = ReadOptionalPrice(prop.Value, modelId, "output_price_per_1m");
+                    break;
+
+                case "currency":
+                    if (prop.Value.ValueKind == JsonValueKind.Null)
+                    {
+                        currency = null;
+                        break;
+                    }
+                    if (prop.Value.ValueKind != JsonValueKind.String)
+                        throw new ArgumentException($"model_profiles.{modelId}.currency must be a string.");
+                    currency = NormalizeCurrency(prop.Value.GetString());
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown model_profiles field '{prop.Name}'.");
             }
@@ -146,7 +232,10 @@ public static class ModelProfile
             Tier = tier,
             Notes = notes,
             ContextWindow = contextWindow,
-            CostTier = costTier
+            CostTier = costTier,
+            InputPricePer1M = inputPrice,
+            OutputPricePer1M = outputPrice,
+            Currency = currency
         };
     }
 
@@ -192,6 +281,31 @@ public static class ModelProfile
         return normalized is "low" or "medium" or "high"
             ? normalized
             : throw new ArgumentException("model_profiles.cost_tier must be low|medium|high.");
+    }
+
+    private static decimal? ReadOptionalPrice(JsonElement value, string modelId, string field)
+    {
+        if (value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out var parsed))
+            throw new ArgumentException($"model_profiles.{modelId}.{field} must be a non-negative number.");
+        return NormalizePrice(parsed, field);
+    }
+
+    private static decimal? NormalizePrice(decimal? value, string field)
+    {
+        if (value is null) return null;
+        if (value.Value < 0m)
+            throw new ArgumentException($"model_profiles.{field} must be a non-negative number.");
+        return value.Value;
+    }
+
+    private static string? NormalizeCurrency(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim().ToUpperInvariant();
+        if (trimmed.Length > MaxCurrencyLength)
+            throw new ArgumentException($"model_profiles.currency must not exceed {MaxCurrencyLength} characters.");
+        return trimmed;
     }
 }
 
