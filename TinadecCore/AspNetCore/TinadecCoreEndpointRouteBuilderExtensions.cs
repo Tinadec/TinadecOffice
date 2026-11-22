@@ -18,6 +18,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapStorageEndpoints();
         endpoints.MapAttachmentEndpoints();
         endpoints.MapDmaeaEndpoints();
+        endpoints.MapLiveExplainerEndpoints();
         endpoints.MapSessionPlanEndpoints();
         endpoints.MapSpatialBoardEndpoints();
         endpoints.MapCorrectionEndpoints();

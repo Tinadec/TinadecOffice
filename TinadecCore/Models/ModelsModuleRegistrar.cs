@@ -17,6 +17,64 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Models;
 
+/// <summary>Well-known model routing slot for the governance-layer read-only Live Explainer.</summary>
+public static class LiveExplainerModelSlot
+{
+    public const string Purpose = "live_explainer";
+
+    private static readonly (string Keyword, int Bonus)[] FastModelKeywords =
+    [
+        ("flash-lite", 48),
+        ("nano", 46),
+        ("flash", 38),
+        ("haiku", 38),
+        ("mini", 36),
+        ("lite", 34),
+        ("turbo", 26),
+        ("small", 24),
+        ("8b", 22),
+        ("7b", 22),
+    ];
+
+    private static readonly string[] HeavyModelPenalties = ["opus", "o1", "o3", "reasoner", "r1", "deep-research"];
+
+    public static int ScoreFastCandidate(string modelId, ModelProfileDto? profile)
+    {
+        var score = 10;
+        if (profile is not null)
+        {
+            if (string.Equals(profile.CostTier, "low", StringComparison.OrdinalIgnoreCase)) score += 50;
+            else if (string.Equals(profile.CostTier, "high", StringComparison.OrdinalIgnoreCase)) score -= 25;
+
+            if (string.Equals(profile.Tier, "fast", StringComparison.OrdinalIgnoreCase)) score += 40;
+            else if (string.Equals(profile.Tier, "deep", StringComparison.OrdinalIgnoreCase)) score -= 20;
+
+            if (profile.InputPricePer1M is > 0m and <= 0.6m) score += 30;
+        }
+
+        var lower = modelId.Trim().ToLowerInvariant();
+        foreach (var (keyword, bonus) in FastModelKeywords)
+        {
+            if (lower.Contains(keyword, StringComparison.Ordinal))
+            {
+                score += bonus;
+                break;
+            }
+        }
+
+        foreach (var heavy in HeavyModelPenalties)
+        {
+            if (lower.Contains(heavy, StringComparison.Ordinal))
+            {
+                score -= 20;
+                break;
+            }
+        }
+
+        return score;
+    }
+}
+
 /// <summary>
 /// Models module registrar. Registers model provider and routing.
 /// </summary>
@@ -142,9 +200,14 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
     public async Task<ChatResolution> ResolveChatAsync(string? routePurpose = null, CancellationToken cancellationToken = default)
     {
         var tenant = _tenant.Current;
-        var purpose = string.IsNullOrWhiteSpace(routePurpose) ? "chat" : routePurpose;
+        var purpose = string.IsNullOrWhiteSpace(routePurpose) ? "chat" : routePurpose.Trim().ToLowerInvariant();
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        if (string.Equals(purpose, LiveExplainerModelSlot.Purpose, StringComparison.Ordinal))
+        {
+            return await ResolveLiveExplainerChatAsync(db, tenant, cancellationToken).ConfigureAwait(false);
+        }
+
         var route = await db.Routes.AsNoTracking().Where(x => x.Purpose == purpose && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (route is null) return Unavailable("No chat model route is configured for this workspace.");
         var routeVersion = await db.RouteVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == route.CurrentVersionId, cancellationToken).ConfigureAwait(false);
@@ -153,6 +216,125 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         if (candidate is null) return Unavailable("Chat route has no candidates.");
 
         return await ResolveProviderChatAsync(db, candidate.ProviderInstanceId, candidate.Model, route.Id, routeVersion.Id, candidate.Position, "route", cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ChatResolution> ResolveLiveExplainerChatAsync(ModelControlDbContext db, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        // 1. Explicit live_explainer route slot takes precedence when configured.
+        var explicitRoute = await db.Routes.AsNoTracking()
+            .Where(x => x.Purpose == LiveExplainerModelSlot.Purpose && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (explicitRoute is not null)
+        {
+            var explicitVersion = await db.RouteVersions.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == explicitRoute.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+            if (explicitVersion is not null)
+            {
+                var explicitCandidates = await db.RouteCandidates.AsNoTracking()
+                    .Where(x => x.RouteVersionId == explicitVersion.Id)
+                    .OrderBy(x => x.Position)
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var candidate in explicitCandidates)
+                {
+                    var resolved = await ResolveProviderChatAsync(
+                        db, candidate.ProviderInstanceId, candidate.Model,
+                        explicitRoute.Id, explicitVersion.Id, candidate.Position,
+                        "explicit_route", cancellationToken).ConfigureAwait(false);
+                    if (resolved.IsAvailable) return resolved;
+                }
+            }
+        }
+
+        // 2. Auto-pick the fastest, cheapest lightweight API model across enabled workspace providers.
+        var providers = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.Enabled && x.DeletedAt == null)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (providers.Count > 0)
+        {
+            var versionIds = providers.Select(p => p.CurrentVersionId).Distinct().ToArray();
+            var versions = await db.ProviderVersions.AsNoTracking()
+                .Where(v => versionIds.Contains(v.Id))
+                .ToDictionaryAsync(v => v.Id, cancellationToken).ConfigureAwait(false);
+
+            var scored = new List<(int Score, Guid ProviderId, string Model)>();
+            foreach (var provider in providers)
+            {
+                if (!versions.TryGetValue(provider.CurrentVersionId, out var pv)) continue;
+                string configJson;
+                try { configJson = await ReadContentAsync(pv.ContentReference, cancellationToken).ConfigureAwait(false); }
+                catch { continue; }
+
+                using var doc = JsonDocument.Parse(configJson);
+                string? Prop(string key) => doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                var protocol = HarnessCatalog.ResolveProtocol(Prop("protocol"), provider.Driver, Prop("channel"));
+                // Avoid spawning local CLI/TUI/ACP processes automatically for background narration.
+                if (ChatProtocols.IsProcessTransport(protocol) || protocol == ChatProtocols.OpencodeServe) continue;
+
+                IReadOnlyDictionary<string, ModelProfileDto> profiles;
+                try
+                {
+                    profiles = doc.RootElement.TryGetProperty("model_profiles", out var profilesEl)
+                        ? ModelProfile.ReadMap(profilesEl)
+                        : new Dictionary<string, ModelProfileDto>(StringComparer.Ordinal);
+                }
+                catch
+                {
+                    profiles = new Dictionary<string, ModelProfileDto>(StringComparer.Ordinal);
+                }
+
+                var modelNames = new HashSet<string>(StringComparer.Ordinal);
+                if (!string.IsNullOrWhiteSpace(Prop("model"))) modelNames.Add(Prop("model")!.Trim());
+                if (doc.RootElement.TryGetProperty("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in modelsEl.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                            modelNames.Add(item.GetString()!.Trim());
+                    }
+                }
+
+                foreach (var modelName in modelNames)
+                {
+                    profiles.TryGetValue(modelName, out var profile);
+                    scored.Add((LiveExplainerModelSlot.ScoreFastCandidate(modelName, profile), provider.Id, modelName));
+                }
+            }
+
+            foreach (var candidate in scored.OrderByDescending(x => x.Score).ThenBy(x => x.Model, StringComparer.Ordinal))
+            {
+                var resolved = await ResolveProviderChatAsync(
+                    db, candidate.ProviderId, candidate.Model,
+                    null, null, 0, "auto_fast_model", cancellationToken).ConfigureAwait(false);
+                if (resolved.IsAvailable) return resolved;
+            }
+        }
+
+        // 3. Fallback to the primary chat route if configured.
+        var chatRoute = await db.Routes.AsNoTracking()
+            .Where(x => x.Purpose == "chat" && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (chatRoute is not null)
+        {
+            var chatVersion = await db.RouteVersions.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == chatRoute.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+            if (chatVersion is not null)
+            {
+                var chatCandidate = await db.RouteCandidates.AsNoTracking()
+                    .Where(x => x.RouteVersionId == chatVersion.Id)
+                    .OrderBy(x => x.Position)
+                    .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+                if (chatCandidate is not null)
+                {
+                    var fallback = await ResolveProviderChatAsync(
+                        db, chatCandidate.ProviderInstanceId, chatCandidate.Model,
+                        chatRoute.Id, chatVersion.Id, chatCandidate.Position,
+                        "chat_fallback", cancellationToken).ConfigureAwait(false);
+                    if (fallback.IsAvailable) return fallback;
+                }
+            }
+        }
+
+        return Unavailable("No live_explainer or fallback chat model route is configured for this workspace.");
     }
 
     /// <summary>

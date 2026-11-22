@@ -9,6 +9,8 @@ public sealed class AgentControlDbContext : DbContext
     public DbSet<AgentCandidateRecord> Candidates => Set<AgentCandidateRecord>();
     public DbSet<AgentEvalSuiteRecord> EvalSuites => Set<AgentEvalSuiteRecord>();
     public DbSet<AgentEvalRunRecord> EvalRuns => Set<AgentEvalRunRecord>();
+    public DbSet<LiveDigestSettingsRecord> LiveDigestSettings => Set<LiveDigestSettingsRecord>();
+    public DbSet<LiveDigestSnapshotRecord> LiveDigestSnapshots => Set<LiveDigestSnapshotRecord>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<AgentInstanceRecord>(entity =>
@@ -55,6 +57,25 @@ public sealed class AgentControlDbContext : DbContext
             entity.Property(x => x.ReportHash).HasMaxLength(128);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.CandidateId, x.StartedAt }).HasDatabaseName("ix_agent_eval_runs_scope_candidate_started");
             entity.HasIndex(x => x.SuiteId).HasDatabaseName("ix_agent_eval_runs_suite");
+        });
+        modelBuilder.Entity<LiveDigestSettingsRecord>(entity =>
+        {
+            entity.ToTable("live_digest_settings");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Mode).HasMaxLength(16).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId }).IsUnique().HasDatabaseName("ix_live_digest_settings_scope");
+        });
+        modelBuilder.Entity<LiveDigestSnapshotRecord>(entity =>
+        {
+            entity.ToTable("live_digest_snapshots");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Mode).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.Headline).HasMaxLength(1024).IsRequired();
+            entity.Property(x => x.CurrentPhase).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.SnapshotJson).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.RunId }).IsUnique().HasDatabaseName("ix_live_digest_snapshots_scope_run");
+            entity.HasIndex(x => new { x.SessionId, x.UpdatedAt }).HasDatabaseName("ix_live_digest_snapshots_session_updated");
         });
         modelBuilder.UseTinadecSnakeCase();
     }
@@ -119,4 +140,34 @@ public sealed class AgentEvalRunRecord
     public Guid CreatedByPrincipalId { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+}
+
+/// <summary>Workspace-scoped Live Digest narrator mode configuration (off | auto | always).</summary>
+public sealed class LiveDigestSettingsRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public string Mode { get; set; } = "auto";
+    public long Revision { get; set; }
+    public Guid UpdatedByPrincipalId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>Durable snapshot of a run's Live Digest chapters, waterline, signals and sentinel alerts for live recovery and post-run replay.</summary>
+public sealed class LiveDigestSnapshotRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid RunId { get; set; }
+    public string Status { get; set; } = "running";
+    public string Mode { get; set; } = "auto";
+    public long Seq { get; set; }
+    public string Headline { get; set; } = string.Empty;
+    public string CurrentPhase { get; set; } = "hypothesis";
+    public string SnapshotJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }

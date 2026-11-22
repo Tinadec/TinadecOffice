@@ -42,6 +42,11 @@ public sealed class GovernanceTopicSink : IGovernanceTopicSink
     private readonly ILogger<GovernanceTopicSink>? _logger;
     private readonly ConcurrentDictionary<Guid, FrozenRunConfigurationV1?> _configurations = new();
 
+    /// <summary>
+    /// Read-only observer hook for governance-layer sidecar consumers (e.g. LiveExplainerService).
+    /// </summary>
+    internal event Action<GovernanceTopicSignal>? SignalObserved;
+
     public GovernanceTopicSink(ILifecycleManager lifecycle, IServiceProvider services, ILogger<GovernanceTopicSink>? logger = null)
     {
         _lifecycle = lifecycle;
@@ -52,6 +57,10 @@ public sealed class GovernanceTopicSink : IGovernanceTopicSink
     public async Task RaiseAsync(GovernanceTopicSignal signal, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(signal);
+        if (!LiveExplainer.ObserverRunScope.IsCurrentObserverRun)
+        {
+            try { SignalObserved?.Invoke(signal); } catch { /* observer sidecar never faults caller */ }
+        }
         try
         {
             if (!GovernanceTopics.IsKnown(signal.Topic)) return;

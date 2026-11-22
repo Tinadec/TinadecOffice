@@ -29,11 +29,47 @@ public static class ModelAgentControlEndpoints
     private static async Task<IResult> Preview(
         ModelResolutionPreviewRequestDto request,
         IAgentModelResolver resolver,
+        IChatResolver chatResolver,
         CancellationToken cancellationToken)
     {
+        if (request?.Strategy?.Kind == ModelStrategyKinds.Route
+            && string.Equals(request.Strategy.RoutePurpose, LiveExplainerModelSlot.Purpose, StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = await chatResolver.ResolveChatAsync(LiveExplainerModelSlot.Purpose, cancellationToken).ConfigureAwait(false);
+            if (resolved.IsAvailable && resolved.ProviderInstanceId is { } providerId)
+            {
+                var selectedCandidate = new ModelResolutionCandidatePreviewDto
+                {
+                    Position = resolved.CandidatePosition,
+                    ProviderInstanceId = providerId,
+                    ProviderVersionId = resolved.ProviderVersionId,
+                    RouteId = resolved.RouteId,
+                    RouteVersionId = resolved.RouteVersionId,
+                    Model = resolved.Model,
+                    Protocol = resolved.Protocol,
+                    Available = true
+                };
+                return Results.Ok(new ModelResolutionPreviewDto
+                {
+                    StrategySource = resolved.StrategySource ?? "auto_fast_model",
+                    Chain =
+                    [
+                        new ModelResolutionStepDto
+                        {
+                            Source = resolved.StrategySource ?? "auto_fast_model",
+                            Strategy = request.Strategy,
+                            Selected = true
+                        }
+                    ],
+                    Candidates = [selectedCandidate],
+                    ExpectedSelection = selectedCandidate
+                });
+            }
+        }
+
         try
         {
-            return Results.Ok(await resolver.PreviewAsync(request, cancellationToken).ConfigureAwait(false));
+            return Results.Ok(await resolver.PreviewAsync(request!, cancellationToken).ConfigureAwait(false));
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or KeyNotFoundException)
         {

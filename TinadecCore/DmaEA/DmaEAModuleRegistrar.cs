@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.DmaEA.LiveExplainer;
 using TinadecCore.Persistence;
 
 namespace TinadecCore.DmaEA;
@@ -21,6 +22,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<SessionPlanDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<SessionPlanDbContext>>();
         builder.Services.AddSingleton<SessionPlanService>();
+        builder.Services.AddSingleton<ITeamTaskBoardPort>(sp => sp.GetRequiredService<SessionPlanService>());
         builder.Services.AddSingleton<AgentRuntimeConfigurationStore>();
         builder.Services.AddSingleton<IConfigurationDocumentValidator, RuntimeConfigurationDocumentValidator>();
         builder.Services.AddSingleton<IAgentRuntimeConfiguration>(sp => sp.GetRequiredService<AgentRuntimeConfigurationStore>());
@@ -88,8 +90,26 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<FullDuplexRunEngine>();
         builder.Services.AddSingleton<IFullDuplexRunEngine>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddSingleton<ITeamRunBoardActionSink>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
+        builder.Services.AddSingleton<ITeammateControlPort>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddSingleton<SideQuestionService>();
+        builder.Services.AddSingleton<LiveExplainerOptions>();
+        builder.Services.AddSingleton<LiveExplainerStore>();
+        builder.Services.AddSingleton<ILiveExplainerModelInvoker, DefaultLiveExplainerModelInvoker>();
+        builder.Services.AddSingleton<LiveExplainerScoutRunner>(sp => new LiveExplainerScoutRunner(
+            sp.GetRequiredService<ILiveExplainerModelInvoker>()));
+        builder.Services.AddSingleton<LiveExplainerService>(sp => new LiveExplainerService(
+            sp.GetRequiredService<ILifecycleManager>(),
+            sp.GetRequiredService<LiveExplainerStore>(),
+            sp.GetRequiredService<ILiveExplainerModelInvoker>(),
+            sp.GetRequiredService<LiveExplainerScoutRunner>(),
+            sp.GetService<IToolExecutionCoordinator>(),
+            sp.GetService<Microsoft.EntityFrameworkCore.IDbContextFactory<SessionPlanDbContext>>(),
+            sp.GetService<RunStreamProjection>(),
+            sp.GetService<IGovernanceTopicSink>(),
+            sp.GetRequiredService<LiveExplainerOptions>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<LiveExplainerService>>()));
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveExplainerService>());
         builder.Services.AddSingleton<IFullDuplexRunCoordinator, FullDuplexRunCoordinator>();
         builder.RegisterModule(new ModuleDescriptor
         {

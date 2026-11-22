@@ -35,6 +35,15 @@ internal sealed class RunStreamProjection
     private readonly ConcurrentDictionary<Guid, RunBuffer> _runs = new();
 
     /// <summary>
+    /// Read-only observer hook for governance-layer sidecar consumers (e.g. LiveExplainerService).
+    /// Must never block or throw onto the execution stream path.
+    /// </summary>
+    internal event Action<RunStreamChunk>? ChunkObserved;
+
+    /// <summary>Read-only observer hook raised when a run stream seals.</summary>
+    internal event Action<Guid>? RunSealed;
+
+    /// <summary>
     /// Starts retaining a run's frames. Called by a follower as it attaches so a run that is
     /// producing output has somewhere to publish to even before the first frame arrives.
     /// </summary>
@@ -65,6 +74,10 @@ internal sealed class RunStreamProjection
             if (buffer.Frames.Count > MaxFramesPerRun) buffer.Frames.RemoveRange(0, buffer.Frames.Count - MaxFramesPerRun);
         }
         buffer.Published.Release();
+        if (!LiveExplainer.ObserverRunScope.IsCurrentObserverRun)
+        {
+            try { ChunkObserved?.Invoke(chunk); } catch { /* observer sidecar never faults execution */ }
+        }
     }
 
     /// <summary>
@@ -137,11 +150,17 @@ internal sealed class RunStreamProjection
     /// </summary>
     public void Seal(Guid runId)
     {
-        if (!_runs.TryGetValue(runId, out var buffer)) return;
-        buffer.Sealed = true;
-        // Wake every waiter: sealing is how a follower learns that nothing more is coming, and
-        // without this a reader would sit out its full timeout before noticing.
-        buffer.Published.Release();
+        if (_runs.TryGetValue(runId, out var buffer))
+        {
+            buffer.Sealed = true;
+            // Wake every waiter: sealing is how a follower learns that nothing more is coming, and
+            // without this a reader would sit out its full timeout before noticing.
+            buffer.Published.Release();
+        }
+        if (!LiveExplainer.ObserverRunScope.IsCurrentObserverRun)
+        {
+            try { RunSealed?.Invoke(runId); } catch { /* observer sidecar never faults execution */ }
+        }
     }
 
     /// <summary>Drops a run entirely (its terminal status is already durable).</summary>
