@@ -4422,6 +4422,40 @@ export const api = {
       { method: 'POST' },
     );
   },
+
+  /** Browse host directories and files via the authenticated Gateway/Core filesystem endpoint. */
+  browseFilesystem(options?: {
+    path?: string;
+    includeFiles?: boolean;
+    showHidden?: boolean;
+    limit?: number;
+    signal?: AbortSignal;
+  }): Promise<FilesystemBrowseResponseDto> {
+    const query = new URLSearchParams();
+    if (options?.path !== undefined && options.path !== '') query.set('path', options.path);
+    if (options?.includeFiles !== undefined) query.set('include_files', options.includeFiles ? 'true' : 'false');
+    if (options?.showHidden !== undefined) query.set('show_hidden', options.showHidden ? 'true' : 'false');
+    if (options?.limit !== undefined) query.set('limit', String(options.limit));
+    const qs = query.toString();
+    return request<FilesystemBrowseResponseDto>(
+      `/api/v1/fs/browse${qs ? `?${qs}` : ''}`,
+      {
+        storageId: 'user',
+        credentials: 'include',
+        ...(options?.signal ? { signal: options.signal } : {}),
+      },
+    );
+  },
+
+  /** Create a new folder on the host filesystem for the built-in Reka picker. */
+  createHostDirectory(input: CreateHostDirectoryRequestDto): Promise<CreateHostDirectoryResponseDto> {
+    return request<CreateHostDirectoryResponseDto>('/api/v1/fs/mkdir', {
+      method: 'POST',
+      storageId: 'user',
+      credentials: 'include',
+      body: JSON.stringify(input),
+    });
+  },
 };
 
 export type ModelProbeResultDto = ReadinessItemDto;
@@ -4696,3 +4730,45 @@ export const gitBlame = api.gitBlame;
 export const gitFileAtRevision = api.gitFileAtRevision;
 export const gitStashList = api.gitStashList;
 export const gitStashShow = api.gitStashShow;
+
+export interface FilesystemBrowseRootDto {
+  name: string;
+  path: string;
+  kind: 'home' | 'drive' | string;
+}
+
+export interface FilesystemBrowseEntryDto {
+  name: string;
+  path: string;
+  kind: 'drive' | 'directory' | 'file' | string;
+  is_dir: boolean;
+  has_children?: boolean;
+  is_git_repo?: boolean;
+  is_hidden?: boolean;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+}
+
+export interface FilesystemBrowseResponseDto {
+  platform: string;
+  separator: string;
+  home_path: string;
+  current_path: string;
+  parent_path?: string | null;
+  roots: FilesystemBrowseRootDto[];
+  entries: FilesystemBrowseEntryDto[];
+  truncated?: boolean;
+}
+
+export interface CreateHostDirectoryRequestDto {
+  parent_path: string;
+  name: string;
+}
+
+export interface CreateHostDirectoryResponseDto {
+  created_path: string;
+  entry: FilesystemBrowseEntryDto;
+}
+
+export const browseFilesystem = api.browseFilesystem;
+export const createHostDirectory = api.createHostDirectory;

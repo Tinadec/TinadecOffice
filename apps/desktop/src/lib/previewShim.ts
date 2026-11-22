@@ -40,6 +40,7 @@ export function installPreviewShimIfNeeded(): void {
   const hostStatus = { state: 'preview' as const, managed: false, error: { code: 'desktop_host_required', message: i18n.global.t('host.previewShim') } }
   setHostAccessStatus(hostStatus)
   w.tinadec = {
+    isPreviewShim: true,
     getHostStatus: () => Promise.resolve(hostStatus),
     onHostStatusChanged: () => noop,
     retryHostConnection: () => Promise.resolve(hostStatus),

@@ -7,9 +7,11 @@
  * delegates host folder picking to ServerDirectoryPickerModal.
  */
 import i18n from '@/i18n'
+import { encodeMediaPathToken } from '@/composables/useBackground'
 import {
   openServerDirectoryPicker,
   probeWebAuthStatus,
+  resolveWebGatewayBase,
   type HostConnectionStatus,
 } from '@/lib/hostConnection'
 
@@ -85,6 +87,7 @@ function webAppConfig() {
   // -- Server-side Directory Pickers (backed by GET /api/v1/fs/browse) --
   openProjectDialog: async () => {
     const picked = await openServerDirectoryPicker({
+      mode: 'directory',
       multiple: false,
       title: i18n.global.t('webDirPicker.selectProjectTitle'),
     })
@@ -93,12 +96,14 @@ function webAppConfig() {
 
   selectWorkspaceFolders: (title?: string) =>
     openServerDirectoryPicker({
+      mode: 'directory',
       multiple: true,
       title: title || i18n.global.t('webDirPicker.selectWorkspaceTitle'),
     }),
 
   selectCompanionAvatarDirectory: async (title?: string) => {
     const picked = await openServerDirectoryPicker({
+      mode: 'directory',
       multiple: false,
       title: title || i18n.global.t('webDirPicker.selectAvatarTitle'),
     })
@@ -107,7 +112,26 @@ function webAppConfig() {
 
   pathForFile: () => '',
   importWorkspaceFiles: () => rejectNotAvailable('web.filesDropHint'),
-  selectBackgroundFile: () => Promise.resolve(null),
+  selectBackgroundFile: async (
+    type: 'image' | 'video' | string,
+    labels?: { title?: string; image?: string; video?: string; all?: string },
+  ) => {
+    const acceptExtensions = type === 'video'
+      ? ['.mp4', '.webm', '.mov', '.m4v', '.ogg']
+      : ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.bmp']
+    const picked = await openServerDirectoryPicker({
+      mode: 'file',
+      multiple: false,
+      acceptExtensions,
+      title: labels?.title || i18n.global.t('settings.bgPickTitle'),
+    })
+    const chosen = picked[0]
+    if (!chosen) return null
+    if (/^https?:\/\//i.test(chosen) || chosen.startsWith('data:') || chosen.startsWith('blob:')) {
+      return chosen
+    }
+    return `${resolveWebGatewayBase()}/api/v1/fs/media?token=${encodeMediaPathToken(chosen.replace(/\\/g, '/'))}`
+  },
 
   // -- Web Auth state bridge --
   openLogin: async () => null,

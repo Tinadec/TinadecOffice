@@ -12,6 +12,16 @@ import {
   DEFAULT_BACKGROUND_SETTINGS,
 } from '../types/background'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  hasServerDirectoryPicker,
+  isElectronHost,
+  isNativeElectronDialogFn,
+  pickHostFiles,
+  resolveWebGatewayBase,
+} from '@/lib/hostConnection'
+
+const IMAGE_BACKGROUND_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.bmp']
+const VIDEO_BACKGROUND_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.ogg']
 
 // Storage key for background settings
 const STORAGE_KEY = 'tinadec-background'
@@ -165,24 +175,67 @@ function mediaUrlForPath(filePath: string): string {
 }
 
 /**
- * Select background file using Electron dialog
+ * Select background file via unified built-in Reka file picker (with Electron native OS escape hatch
+ * and standalone unit-test fallback when the picker modal is not mounted).
  */
 async function selectBackgroundFile(type: BackgroundType): Promise<string | null> {
-  // Check if Electron API is available
-  const tinadec = (window as any).tinadec
-  if (!tinadec?.selectBackgroundFile) {
-    console.warn('Electron file dialog API not available')
+  const tinadec = (window as unknown as {
+    tinadec?: {
+      isWebShim?: boolean
+      isPreviewShim?: boolean
+      selectBackgroundFile?: (
+        bgType: BackgroundType,
+        labels: { title: string; image: string; video: string; all: string },
+      ) => Promise<string | null>
+    }
+  }).tinadec
+
+  const labels = {
+    title: i18n.global.t('settings.bgPickTitle'),
+    image: i18n.global.t('settings.bgPickImages'),
+    video: i18n.global.t('settings.bgPickVideos'),
+    all: i18n.global.t('settings.bgPickAll'),
+  }
+  const rawNativeSelect = tinadec?.selectBackgroundFile
+  const hasPicker = hasServerDirectoryPicker()
+
+  if (!hasPicker && (typeof rawNativeSelect !== 'function' || tinadec?.isPreviewShim)) {
+    console.warn('Background file picker API not available')
     useNotifications().notify.error(i18n.global.t('settings.backgroundPickerMissing'), { title: i18n.global.t('settings.backgroundPickerUnavailable'), source: 'settings' })
     return null
   }
 
   try {
-    const result = await tinadec.selectBackgroundFile(type, {
-      title: i18n.global.t('settings.bgPickTitle'),
-      image: i18n.global.t('settings.bgPickImages'),
-      video: i18n.global.t('settings.bgPickVideos'),
-      all: i18n.global.t('settings.bgPickAll'),
-    })
+    const acceptExtensions = type === 'image'
+      ? IMAGE_BACKGROUND_EXTENSIONS
+      : VIDEO_BACKGROUND_EXTENSIONS
+
+    const nativeFallback = isNativeElectronDialogFn(rawNativeSelect)
+      ? async () => {
+          const picked = await rawNativeSelect(type, labels)
+          return picked ? [picked] : []
+        }
+      : undefined
+
+    if (hasPicker) {
+      const pickedList = await pickHostFiles({
+        title: labels.title,
+        multiple: false,
+        acceptExtensions,
+        nativeFallback,
+      })
+      const picked = pickedList[0] ?? null
+      if (!picked) return null
+      if (!isElectronHost()) {
+        if (/^https?:\/\//i.test(picked) || picked.startsWith('data:') || picked.startsWith('blob:')) {
+          return picked
+        }
+        return `${resolveWebGatewayBase()}/api/v1/fs/media?token=${encodeMediaPathToken(picked.replace(/\\/g, '/'))}`
+      }
+      return picked
+    }
+
+    const result = await rawNativeSelect!(type, labels)
     return result || null
   } catch (error) {
     console.error('Failed to select background file:', error)

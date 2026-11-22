@@ -26,6 +26,7 @@ import CompanionStage from '@/components/pets/CompanionStage.vue'
 import { useNotifications } from '@/composables/useNotifications'
 import { toErrorState, type ErrorState } from '@/composables/useErrorState'
 import { useHostAccess } from '@/lib/hostAccess'
+import { hasServerDirectoryPicker, pickCompanionAvatarDirectory } from '@/lib/hostConnection'
 import { companionApi, type CompanionAvatar } from '@/lib/companionApi'
 import { hasCubismCoreGlobal } from '@/pets/avatarKind'
 import {
@@ -140,10 +141,18 @@ function motionCount(model: CompanionAvatar): number {
   )
 }
 
+function canPickCompanionAvatarNow(): boolean {
+  if (hasServerDirectoryPicker()) return true
+  if (typeof window === 'undefined') return false
+  const bridge = window.tinadec as (typeof window.tinadec & { isPreviewShim?: boolean }) | undefined
+  return Boolean(bridge && !bridge.isPreviewShim && typeof bridge.selectCompanionAvatarDirectory === 'function')
+}
+
+const canPickCompanionAvatar = computed(() => canPickCompanionAvatarNow())
+
 async function importAvatar(): Promise<void> {
   if (importingAvatar.value) return
-  const pick = window.tinadec?.selectCompanionAvatarDirectory
-  if (typeof pick !== 'function') {
+  if (!canPickCompanionAvatarNow()) {
     notify.error(new Error(t('settings.companions.live2d.hostUnavailable')), {
       title: t('settings.companions.live2d.importFailed'),
       key: 'companion-avatar-import',
@@ -152,7 +161,7 @@ async function importAvatar(): Promise<void> {
   }
   importingAvatar.value = true
   try {
-    const path = await pick(t('settings.companions.live2d.importPickTitle'))
+    const path = await pickCompanionAvatarDirectory(t('settings.companions.live2d.importPickTitle'))
     if (!path) return
     await companionApi.importCompanionAvatar({ path })
     await loadStandaloneAvatars()
@@ -482,7 +491,7 @@ onBeforeUnmount(() => {
         <UiButton
           size="sm"
           data-testid="companion-avatar-import"
-          :disabled="!canAccessBackend || importingAvatar"
+          :disabled="!canAccessBackend || importingAvatar || !canPickCompanionAvatar"
           @click="importAvatar"
         >
           <Plus :size="14" />

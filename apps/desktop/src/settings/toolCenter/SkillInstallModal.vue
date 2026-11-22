@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Bot, FolderOpen, GitCommitHorizontal, KeyRound, RefreshCw, ShieldCheck, X } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiSwitch, UiTextarea } from '@/components/ui'
 import { api, type ExternalCliEcosystemDto, type InstallToolSkillResultDto } from '@/api'
+import { canPickHostDirectories, pickWorkspaceFolders } from '@/lib/hostConnection'
 import { useNotifications } from '@/composables/useNotifications'
 import { toErrorState } from '@/composables/useErrorState'
 import {
@@ -55,9 +56,7 @@ const installing = ref(false)
 const importingAgentId = ref('')
 const error = ref('')
 
-const canBrowseFolder = computed(() =>
-  typeof window !== 'undefined' && typeof window.tinadec?.selectWorkspaceFolders === 'function',
-)
+const canBrowseFolder = computed(() => canPickHostDirectories())
 
 const inlineUnicodeScan = computed(() => scanHiddenUnicode(inlineContent.value))
 
@@ -184,7 +183,7 @@ watch(mode, (next) => {
 
 async function pickFolder() {
   try {
-    const picked = await window.tinadec?.selectWorkspaceFolders?.(t('toolsSettings.center.skills.localPath'))
+    const picked = await pickWorkspaceFolders(t('toolsSettings.center.skills.localPath'), { multiple: false })
     if (picked?.[0]) localPath.value = picked[0]
   } catch (err) {
     const errState = toErrorState(err, 'toolsSettings.skills')

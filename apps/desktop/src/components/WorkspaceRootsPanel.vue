@@ -7,6 +7,7 @@ import { basenameFromPath } from '@/format'
 import type { WorkspaceFileGrant, WorkspaceRoot } from '@/lib/workspaces'
 import type { AttachableFile } from '@/lib/pendingAttachments'
 import { api } from '@/api'
+import { canPickHostDirectories, pickWorkspaceFolders } from '@/lib/hostConnection'
 import type { MessageAttachmentDto } from '@/generated/client'
 
 type WorkspaceExposure = MessageAttachmentDto & {
@@ -138,12 +139,11 @@ async function write(action: () => Promise<void>): Promise<void> {
 
 async function addFolders(): Promise<void> {
   if (picking.value || busy.value) return
-  const pick = window.tinadec?.selectWorkspaceFolders
   // A browser preview has no dialog to open; saying nothing would read as "no folder chosen".
-  if (typeof pick !== 'function') { problem.value = t('host.previewShim'); return }
+  if (!canPickHostDirectories()) { problem.value = t('host.previewShim'); return }
   picking.value = true
   try {
-    const paths = await pick(t('workspaceRoots.addFolder'))
+    const paths = await pickWorkspaceFolders(t('workspaceRoots.addFolder'))
     if (paths.length) await write(() => c.addWorkspaceFolderPaths(paths))
   } finally { picking.value = false }
 }

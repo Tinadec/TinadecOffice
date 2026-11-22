@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useHostAccess } from '@/lib/hostAccess'
+import { canPickHostDirectories, pickWorkspaceFolders } from '@/lib/hostConnection'
 import { recoveryActions, useErrorState } from '@/composables/useErrorState'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -71,10 +72,10 @@ function removeRoot(root: WorkspaceRoot) {
 async function addFolders() {
   if (picking.value || saving.value) return
   const version = read
-  if (!canAccessBackend.value) return
+  if (!canAccessBackend.value || !canPickHostDirectories()) return
   picking.value = true; failure.clear(); failureOperation.value = 'preview'
   try {
-    const paths = await window.tinadec.selectWorkspaceFolders(t('workspaceEditor.pickTitle'))
+    const paths = await pickWorkspaceFolders(t('workspaceEditor.pickTitle'))
     if (version !== read) return
     if (!paths.length) return
     const seen = new Set(form.value.roots.map(root => folderIdentity(root.path)))

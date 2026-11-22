@@ -5,6 +5,7 @@ import { FolderOpen, Globe, Monitor, Sparkles, Sun, Moon, Laptop } from '@lucide
 import { UiButton, UiSelectField } from '@/components/ui'
 import { useTheme, type Theme } from '@/composables/useTheme'
 import { useHostAccess } from '@/lib/hostAccess'
+import { canPickHostDirectories, isElectronHost, pickWorkspaceFolders } from '@/lib/hostConnection'
 import { homeController } from '@/controllers/HomeController'
 
 const { t, te, locale } = useI18n()
@@ -15,12 +16,8 @@ function label(key: string, fallback: string): string {
   return te(key) ? String(t(key)) : fallback
 }
 
-const isElectron = computed(() => {
-  if (typeof window === 'undefined') return false
-  const bridge = window.tinadec as (typeof window.tinadec & { isWebShim?: boolean }) | undefined
-  if (!bridge || bridge.isWebShim || isPreview.value) return false
-  return typeof bridge.selectWorkspaceFolders === 'function'
-})
+const isElectron = computed(() => isElectronHost() && !isPreview.value)
+const canPickFolder = computed(() => !isPreview.value && canPickHostDirectories())
 
 const selectedFolder = ref(homeController.currentProject.value?.path ?? '')
 const pickingFolder = ref(false)
@@ -52,11 +49,11 @@ function onChangeLocale(nextLocale: string): void {
 }
 
 async function pickWorkspaceFolder(): Promise<void> {
-  if (!window.tinadec?.selectWorkspaceFolders) return
+  if (!canPickFolder.value) return
   pickingFolder.value = true
   folderError.value = ''
   try {
-    const paths = await window.tinadec.selectWorkspaceFolders(label('oobe.welcome.workspaceLabel', 'Workspace Folder'))
+    const paths = await pickWorkspaceFolders(label('oobe.welcome.workspaceLabel', 'Workspace Folder'), { multiple: false })
     const chosen = paths?.[0]
     if (chosen) {
       selectedFolder.value = chosen
@@ -129,7 +126,7 @@ async function pickWorkspaceFolder(): Promise<void> {
         <component :is="isElectron ? Monitor : Globe" :size="15" aria-hidden="true" />
         <label class="oobe-field-label">{{ label('oobe.welcome.workspaceLabel', 'Workspace Folder') }}</label>
       </div>
-      <template v-if="isElectron">
+      <template v-if="canPickFolder">
         <div class="oobe-folder-row">
           <span class="oobe-folder-path">{{ selectedFolder || label('oobe.welcome.workspacePick', 'Choose folder...') }}</span>
           <UiButton variant="outline" size="sm" :disabled="pickingFolder" @click="pickWorkspaceFolder">
@@ -139,7 +136,7 @@ async function pickWorkspaceFolder(): Promise<void> {
         </div>
         <p v-if="folderError" class="oobe-inline-error">{{ folderError }}</p>
       </template>
-      <p v-else class="oobe-env-note" data-testid="oobe-web-mode-note">
+      <p v-if="!isElectron" class="oobe-env-note" data-testid="oobe-web-mode-note">
         {{ label('oobe.welcome.webHostNote', 'Connected in Web mode — host access and remote workspace permissions are managed by the Gateway.') }}
       </p>
     </div>
