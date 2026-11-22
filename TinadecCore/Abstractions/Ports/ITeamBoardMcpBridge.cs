@@ -63,6 +63,7 @@ public interface ITeamBoardMcpBridge
     [
         CoreVirtualToolPolicy.TeamMessageToolId,
         CoreVirtualToolPolicy.TeamPlanToolId,
+        TeamTaskBoardProtocol.TeamTasksToolId,
         CoreVirtualToolPolicy.RecallEvidenceToolId,
         CoreVirtualToolPolicy.RecallHistoryToolId,
         CoreVirtualToolPolicy.GraphViewToolId,

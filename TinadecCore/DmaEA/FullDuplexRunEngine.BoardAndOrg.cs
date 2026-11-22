@@ -59,9 +59,71 @@ internal sealed partial class FullDuplexRunEngine
                 ? kindEl.GetString()!.Trim().ToLowerInvariant()
                 : "update";
             var wake = !args.TryGetProperty("wake", out var wakeEl) || wakeEl.ValueKind != JsonValueKind.False;
+            var boundedContent = BoundText(content, 4000);
+
+            // Fast-path: if the run's actor hub is currently live, deliver straight to the authoritative board & target mailboxes in sub-millisecond time!
+            if (_runActorHubs.TryGetValue(context.RunId, out var hub) && hub.LiveCheckpoint is not null)
+            {
+                long deliveredSeq = 0;
+                var wokenHandles = new List<string>();
+                await using (await EnterCheckpointGateAsync(context.RunId, cancellationToken).ConfigureAwait(false))
+                {
+                    if (hub.LiveCheckpoint is { } liveCp)
+                    {
+                        var entry = AppendBoardMessage(liveCp, context.TeammateHandle, target, kind, boundedContent, wake);
+                        deliveredSeq = entry.Seq;
+                        DeliverBoardMessageToLiveMailboxes(liveCp, hub, entry);
+                        if (wake)
+                        {
+                            var coordinatorTaskId = liveCp.Tasks.FirstOrDefault(t => t.IsCoordinatorTask)?.TaskId;
+                            var senderTm = liveCp.Teammates.FirstOrDefault(t =>
+                                string.Equals(t.Handle, context.TeammateHandle, StringComparison.OrdinalIgnoreCase));
+                            foreach (var wakeTarget in ResolveBoardWakeTargets(liveCp, context.TeammateHandle, target, boundedContent))
+                            {
+                                if (WakeTeammateFromBoard(liveCp, coordinatorTaskId, wakeTarget, entry.Seq, boundedContent, senderTm?.RelayDepth))
+                                {
+                                    wokenHandles.Add(wakeTarget);
+                                }
+                            }
+                        }
+                        await SaveCheckpointAsync(liveCp, liveCp.CheckpointRevision, "mcp-board-live", cancellationToken).ConfigureAwait(false);
+                        hub.SignalWake();
+                    }
+                }
+
+                if (deliveredSeq > 0)
+                {
+                    await AppendEventAsync(context.RunId, "team.board_message",
+                        $"Board message #{deliveredSeq} from @{context.TeammateHandle} to @{target} ({kind}).",
+                        new
+                        {
+                            run_id = context.RunId,
+                            seq = deliveredSeq,
+                            sender = context.TeammateHandle,
+                            target,
+                            kind,
+                            content = BoundText(boundedContent, 800),
+                            wake,
+                            woken_handles = wokenHandles,
+                            source = "mcp_loopback"
+                        }, cancellationToken).ConfigureAwait(false);
+
+                    var livePayload = JsonSerializer.SerializeToElement(new
+                    {
+                        ok = true,
+                        seq = deliveredSeq,
+                        sender = context.TeammateHandle,
+                        target,
+                        kind,
+                        wake,
+                        woken_handles = wokenHandles
+                    }, JsonOptions);
+                    return new TeamBoardToolCallResult(true, livePayload);
+                }
+            }
 
             var queue = _liveMcpBoardPosts.GetOrAdd(context.RunId, _ => new ConcurrentQueue<LiveMcpBoardPost>());
-            queue.Enqueue(new LiveMcpBoardPost(context.TeammateHandle, target, kind, BoundText(content, 4000), wake, DateTimeOffset.UtcNow));
+            queue.Enqueue(new LiveMcpBoardPost(context.TeammateHandle, target, kind, boundedContent, wake, DateTimeOffset.UtcNow));
             await EnqueueAsync(context.RunId, cancellationToken).ConfigureAwait(false);
 
             var payload = JsonSerializer.SerializeToElement(new
@@ -73,6 +135,20 @@ internal sealed partial class FullDuplexRunEngine
                 wake
             }, JsonOptions);
             return new TeamBoardToolCallResult(true, payload);
+        }
+
+        if (TeamTaskBoardProtocol.IsTeamTasks(context.ToolName)
+            || (CoreVirtualToolPolicy.IsTeamPlan(context.ToolName) && IsTaskBoardOperationElement(context.Arguments)))
+        {
+            var (opOk, opError, opPayload) = await ExecuteTaskBoardOperationCoreAsync(
+                context.SessionId,
+                context.RunId,
+                context.TeammateHandle,
+                context.Arguments,
+                cancellationToken).ConfigureAwait(false);
+            return opOk
+                ? new TeamBoardToolCallResult(true, opPayload)
+                : new TeamBoardToolCallResult(false, Error: opError);
         }
 
         if (CoreVirtualToolPolicy.IsTeamPlan(context.ToolName))
@@ -111,6 +187,30 @@ internal sealed partial class FullDuplexRunEngine
         return new TeamBoardToolCallResult(false, Error: $"Unsupported team board action '{context.ToolName}'.");
     }
 
+    private static void DeliverBoardMessageToLiveMailboxes(
+        FullDuplexCheckpointV1 checkpoint,
+        RunTeammateActorHub hub,
+        DurableTeamBoardMessage entry)
+    {
+        var recipients = new HashSet<string>(ResolveBoardWakeTargets(checkpoint, entry.Sender, entry.Target, entry.Content), StringComparer.OrdinalIgnoreCase);
+        if (string.Equals(entry.Target, "coordinator", StringComparison.OrdinalIgnoreCase))
+        {
+            recipients.Add("coordinator");
+        }
+        foreach (var recipient in recipients)
+        {
+            if (string.Equals(recipient, entry.Sender, StringComparison.OrdinalIgnoreCase))
+                continue;
+            hub.GetMailbox(recipient).Enqueue(new LiveMailboxMessage(
+                entry.Seq,
+                entry.Sender,
+                entry.Kind,
+                entry.Content,
+                Urgent: entry.Kind == "steer",
+                entry.CreatedAt));
+        }
+    }
+
     private async Task<bool> DrainLiveMcpBoardPostsAsync(
         RunState run,
         FrozenRunConfigurationV1 configuration,
@@ -122,11 +222,13 @@ internal sealed partial class FullDuplexRunEngine
             return false;
 
         var runId = Guid.Parse(run.RunId);
+        var hub = GetOrCreateActorHub(runId);
         var coordinatorTaskId = checkpoint.Tasks.FirstOrDefault(t => t.IsCoordinatorTask)?.TaskId;
         var drained = false;
         while (queue.TryDequeue(out var post))
         {
             var entry = AppendBoardMessage(checkpoint, post.Sender, post.Target, post.Kind, post.Content, post.Wake);
+            DeliverBoardMessageToLiveMailboxes(checkpoint, hub, entry);
             drained = true;
 
             var wokenHandles = new List<string>();
@@ -192,6 +294,9 @@ internal sealed partial class FullDuplexRunEngine
                 checkpoint, cancellationToken).ConfigureAwait(false);
         }
 
+        var runId = Guid.Parse(run.RunId);
+        await using var checkpointGate = await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false);
+
         var callerSlug = callerTask.WorkerAgentSlug ?? configuration.Graph?.ConversationTemplateSlug ?? "meeting";
         var callerDepth = callerTask.DispatchedByTaskId is null ? 0 : 1;
         var allowedRoster = DispatchRosterForWorker(configuration, callerSlug, callerDepth);
@@ -242,7 +347,6 @@ internal sealed partial class FullDuplexRunEngine
             modelOverride = StringProperty(rtEl, "model_id");
         }
 
-        var runId = Guid.Parse(run.RunId);
         var existingTeammate = checkpoint.Teammates.FirstOrDefault(t =>
             string.Equals(t.Handle, handle, StringComparison.OrdinalIgnoreCase));
         if (existingTeammate is not null)
@@ -286,6 +390,7 @@ internal sealed partial class FullDuplexRunEngine
                 turn.DispatchStatus = ToolDispatchStatus.Completed;
                 turn.ToolSuccess = true;
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-spawn-woken", cancellationToken).ConfigureAwait(false);
+                GetOrCreateActorHub(runId).SignalWake();
                 return checkpoint;
             }
 
@@ -365,6 +470,7 @@ internal sealed partial class FullDuplexRunEngine
         turn.DispatchStatus = ToolDispatchStatus.Completed;
         turn.ToolSuccess = true;
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-spawned", cancellationToken).ConfigureAwait(false);
+        GetOrCreateActorHub(runId).SignalWake();
 
         await AppendEventAsync(runId, "team.teammate_spawned",
             $"Spawned {mode} @{handle} ({agentSlug}).",
@@ -422,40 +528,49 @@ internal sealed partial class FullDuplexRunEngine
             kind = "update";
         var wake = !args.TryGetProperty("wake", out var wakeEl) || wakeEl.ValueKind != JsonValueKind.False;
 
+        var runId = Guid.Parse(run.RunId);
+        var hub = GetOrCreateActorHub(runId);
         var sender = callerTask.IsCoordinatorTask
             ? "coordinator"
             : callerTask.TeammateHandle ?? callerTask.WorkerHandle ?? callerTask.TaskKey;
-        var entry = AppendBoardMessage(checkpoint, sender, target, kind, BoundText(content, 4000), wake);
-
+        var boundedContent = BoundText(content, 4000);
+        DurableTeamBoardMessage entry;
         var wokenHandles = new List<string>();
-        if (wake)
+
+        await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
         {
-            var senderTm = !callerTask.IsCoordinatorTask
-                ? checkpoint.Teammates.FirstOrDefault(t => string.Equals(t.Handle, sender, StringComparison.OrdinalIgnoreCase))
-                : null;
-            foreach (var wakeTarget in ResolveBoardWakeTargets(checkpoint, sender, target, content))
+            entry = AppendBoardMessage(checkpoint, sender, target, kind, boundedContent, wake);
+            DeliverBoardMessageToLiveMailboxes(checkpoint, hub, entry);
+
+            if (wake)
             {
-                if (WakeTeammateFromBoard(checkpoint, callerTask.TaskId, wakeTarget, entry.Seq, content, senderTm?.RelayDepth))
+                var senderTm = !callerTask.IsCoordinatorTask
+                    ? checkpoint.Teammates.FirstOrDefault(t => string.Equals(t.Handle, sender, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                foreach (var wakeTarget in ResolveBoardWakeTargets(checkpoint, sender, target, boundedContent))
                 {
-                    wokenHandles.Add(wakeTarget);
+                    if (WakeTeammateFromBoard(checkpoint, callerTask.TaskId, wakeTarget, entry.Seq, boundedContent, senderTm?.RelayDepth))
+                    {
+                        wokenHandles.Add(wakeTarget);
+                    }
                 }
             }
+
+            turn.ResultJson = JsonSerializer.Serialize(new
+            {
+                ok = true,
+                seq = entry.Seq,
+                sender,
+                target,
+                kind,
+                woken_handles = wokenHandles
+            });
+            turn.DispatchStatus = ToolDispatchStatus.Completed;
+            turn.ToolSuccess = true;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-message", cancellationToken).ConfigureAwait(false);
+            hub.SignalWake();
         }
 
-        turn.ResultJson = JsonSerializer.Serialize(new
-        {
-            ok = true,
-            seq = entry.Seq,
-            sender,
-            target,
-            kind,
-            woken_handles = wokenHandles
-        });
-        turn.DispatchStatus = ToolDispatchStatus.Completed;
-        turn.ToolSuccess = true;
-        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-message", cancellationToken).ConfigureAwait(false);
-
-        var runId = Guid.Parse(run.RunId);
         await AppendEventAsync(runId, "team.board_message",
             $"Board message #{entry.Seq} from @{sender} to @{target} ({kind}).",
             new
@@ -466,7 +581,7 @@ internal sealed partial class FullDuplexRunEngine
                 sender,
                 target,
                 kind,
-                content = BoundText(content, 800),
+                content = BoundText(boundedContent, 800),
                 wake,
                 woken_handles = wokenHandles
             }, cancellationToken, callerTask.TaskId, idempotencyKey: $"team-msg:{callerTask.TaskId}:{turn.CallId}").ConfigureAwait(false);
@@ -487,6 +602,9 @@ internal sealed partial class FullDuplexRunEngine
             return new(await FeedToolFailureBackAsync(run, callerTask, turn, RunErrorTaxonomy.InvalidToolArguments,
                 "team_wait is not in your tool surface for this task.", checkpoint, cancellationToken).ConfigureAwait(false), false);
         }
+
+        var runId = Guid.Parse(run.RunId);
+        await using var checkpointGate = await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false);
 
         if (await ApplyPendingTaskDispatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false))
         {
@@ -634,6 +752,12 @@ internal sealed partial class FullDuplexRunEngine
         var callerHandle = callerTask.IsCoordinatorTask
             ? "coordinator"
             : callerTask.TeammateHandle ?? callerTask.WorkerHandle ?? callerTask.TaskKey;
+
+        if (IsTaskBoardOperationElement(args))
+        {
+            return await HandleTeamTasksCoreTurnAsync(run, checkpoint, callerTask, turn, callerHandle, args, cancellationToken).ConfigureAwait(false);
+        }
+
         var (error, goal, operation, parsedSteps) = ParseTeamPlanArguments(args, callerHandle);
         if (error is not null)
         {
@@ -641,7 +765,6 @@ internal sealed partial class FullDuplexRunEngine
                 error, checkpoint, cancellationToken).ConfigureAwait(false);
         }
 
-        callerTask.Plan = MergeTaskPlanSteps(callerTask.Plan, operation, parsedSteps);
         var runId = Guid.Parse(run.RunId);
         var updatedSessionPlan = await ApplyTeamPlanToSessionPlanAsync(
             checkpoint.SessionId,
@@ -651,18 +774,22 @@ internal sealed partial class FullDuplexRunEngine
             parsedSteps,
             cancellationToken).ConfigureAwait(false);
 
-        var completedCount = callerTask.Plan.Count(s => s.Status == "completed");
-        turn.ResultJson = JsonSerializer.Serialize(new
+        await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
         {
-            ok = true,
-            operation,
-            steps = callerTask.Plan.Count,
-            completed = completedCount,
-            session_plan_revision = updatedSessionPlan?.Revision
-        });
-        turn.DispatchStatus = ToolDispatchStatus.Completed;
-        turn.ToolSuccess = true;
-        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-plan-updated", cancellationToken).ConfigureAwait(false);
+            callerTask.Plan = MergeTaskPlanSteps(callerTask.Plan, operation, parsedSteps);
+            var completedCount = callerTask.Plan.Count(s => s.Status == "completed");
+            turn.ResultJson = JsonSerializer.Serialize(new
+            {
+                ok = true,
+                operation,
+                steps = callerTask.Plan.Count,
+                completed = completedCount,
+                session_plan_revision = updatedSessionPlan?.Revision
+            });
+            turn.DispatchStatus = ToolDispatchStatus.Completed;
+            turn.ToolSuccess = true;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-plan-updated", cancellationToken).ConfigureAwait(false);
+        }
 
         await AppendEventAsync(runId, "plan.updated",
             $"'{callerHandle}' updated the team plan ({callerTask.Plan.Count} step(s), operation={operation}).",
@@ -680,17 +807,220 @@ internal sealed partial class FullDuplexRunEngine
         return checkpoint;
     }
 
+    private async Task<FullDuplexCheckpointV1> HandleTeamTasksAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode callerTask,
+        WorkerToolTurn turn,
+        IReadOnlyList<WorkerToolDescriptor> declared,
+        CancellationToken cancellationToken)
+    {
+        if (!declared.Any(tool => TeamTaskBoardProtocol.IsTeamTasks(tool.ToolId) || CoreVirtualToolPolicy.IsTeamPlan(tool.ToolId)))
+        {
+            return await FeedToolFailureBackAsync(run, callerTask, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "team_tasks is not in your tool surface for this task.", checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+        if (!TryParseJsonObject(turn.ArgumentsJson, out var args))
+        {
+            return await FeedToolFailureBackAsync(run, callerTask, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "team_tasks requires a JSON object with 'action' ('list', 'claim', 'complete', or 'release').",
+                checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+
+        var callerHandle = callerTask.IsCoordinatorTask
+            ? "coordinator"
+            : callerTask.TeammateHandle ?? callerTask.WorkerHandle ?? callerTask.TaskKey;
+        return await HandleTeamTasksCoreTurnAsync(run, checkpoint, callerTask, turn, callerHandle, args, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<FullDuplexCheckpointV1> HandleTeamTasksCoreTurnAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode callerTask,
+        WorkerToolTurn turn,
+        string callerHandle,
+        JsonElement args,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var (ok, error, payload) = await ExecuteTaskBoardOperationCoreAsync(
+            checkpoint.SessionId,
+            runId,
+            callerHandle,
+            args,
+            cancellationToken,
+            checkpoint,
+            callerTask).ConfigureAwait(false);
+
+        if (!ok)
+        {
+            return await FeedToolFailureBackAsync(run, callerTask, turn, RunErrorTaxonomy.InvalidToolArguments,
+                error ?? "Task board operation failed.", checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+        {
+            turn.ResultJson = payload?.GetRawText() ?? "{\"ok\":true}";
+            turn.DispatchStatus = ToolDispatchStatus.Completed;
+            turn.ToolSuccess = true;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "team-tasks", cancellationToken).ConfigureAwait(false);
+        }
+        return checkpoint;
+    }
+
+    private static bool IsTaskBoardOperationElement(JsonElement args)
+    {
+        if (args.ValueKind != JsonValueKind.Object) return false;
+        var op = StringProperty(args, "action") ?? StringProperty(args, "operation");
+        return op?.Trim().ToLowerInvariant() is "list" or "claim" or "complete" or "release";
+    }
+
+    private async Task<(bool Ok, string? Error, JsonElement? Payload)> ExecuteTaskBoardOperationCoreAsync(
+        Guid sessionId,
+        Guid runId,
+        string callerHandle,
+        JsonElement args,
+        CancellationToken cancellationToken,
+        FullDuplexCheckpointV1? liveCheckpoint = null,
+        DurableTaskNode? callerTask = null)
+    {
+        if (_sessionPlan is null)
+            return (false, "Session plan task board service is unavailable in this host.", null);
+
+        var action = (StringProperty(args, "action") ?? StringProperty(args, "operation"))?.Trim().ToLowerInvariant();
+        var stepId = StringProperty(args, "step_id") ?? StringProperty(args, "id");
+        long? expectedRevision = args.ValueKind == JsonValueKind.Object
+            && args.TryGetProperty("expected_revision", out var revEl)
+            && revEl.TryGetInt64(out var parsedRev)
+            ? parsedRev
+            : null;
+
+        switch (action)
+        {
+            case "list":
+            {
+                var onlyReady = !args.TryGetProperty("only_ready", out var rEl) || rEl.ValueKind != JsonValueKind.False;
+                var listed = await _sessionPlan.ListTasksAsync(sessionId, onlyReady, cancellationToken).ConfigureAwait(false);
+                return (true, null, JsonSerializer.SerializeToElement(listed, JsonOptions));
+            }
+            case "claim":
+            {
+                var claimed = await _sessionPlan.ClaimTaskAsync(sessionId, stepId, callerHandle, expectedRevision, runId, cancellationToken).ConfigureAwait(false);
+                if (claimed.Claimed && !string.IsNullOrWhiteSpace(claimed.StepId))
+                {
+                    await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+                    {
+                        var cp = liveCheckpoint ?? (_runActorHubs.TryGetValue(runId, out var h) ? h.LiveCheckpoint : null);
+                        var tm = cp?.Teammates.FirstOrDefault(t => string.Equals(t.Handle, callerHandle, StringComparison.OrdinalIgnoreCase));
+                        if (tm is not null)
+                        {
+                            tm.ClaimedStepId = claimed.StepId;
+                            tm.UpdatedAt = DateTimeOffset.UtcNow;
+                        }
+                        if (cp is not null)
+                        {
+                            AppendBoardMessage(cp, callerHandle, "coordinator", "update",
+                                $"[task-claimed] @{callerHandle} claimed step '{claimed.StepId}' ({claimed.Task?.Title ?? claimed.StepId}).",
+                                wake: false);
+                        }
+                    }
+
+                    await AppendEventAsync(runId, "team.task_claimed",
+                        $"@{callerHandle} claimed task '{claimed.StepId}'.",
+                        new
+                        {
+                            run_id = runId,
+                            handle = callerHandle,
+                            step_id = claimed.StepId,
+                            title = claimed.Task?.Title,
+                            revision = claimed.Revision,
+                            autonomous = false
+                        }, cancellationToken, callerTask?.TaskId).ConfigureAwait(false);
+                }
+                return (true, null, JsonSerializer.SerializeToElement(claimed, JsonOptions));
+            }
+            case "complete":
+            {
+                if (string.IsNullOrWhiteSpace(stepId))
+                    return (false, "team_tasks action='complete' requires a non-empty 'step_id'.", null);
+                var summary = StringProperty(args, "summary") ?? StringProperty(args, "evidence_summary");
+                var evidence = ReadStringArray(args, "evidence");
+                var completed = await _sessionPlan.CompleteTaskAsync(sessionId, stepId, callerHandle, summary, evidence, runId, cancellationToken).ConfigureAwait(false);
+                if (completed.Completed)
+                {
+                    await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+                    {
+                        var cp = liveCheckpoint ?? (_runActorHubs.TryGetValue(runId, out var h) ? h.LiveCheckpoint : null);
+                        if (cp is not null)
+                        {
+                            var tm = cp.Teammates.FirstOrDefault(t => string.Equals(t.Handle, callerHandle, StringComparison.OrdinalIgnoreCase));
+                            if (tm is not null && string.Equals(tm.ClaimedStepId, completed.StepId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                tm.ClaimedStepId = null;
+                            }
+                            await NotifyUnlockedTasksAndWakeIdleTeammatesAsync(runId, cp, callerHandle, completed, cancellationToken).ConfigureAwait(false);
+                            await SaveCheckpointAsync(cp, cp.CheckpointRevision, "team-task-completed", cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                }
+                return (true, null, JsonSerializer.SerializeToElement(completed, JsonOptions));
+            }
+            case "release":
+            {
+                if (string.IsNullOrWhiteSpace(stepId))
+                    return (false, "team_tasks action='release' requires a non-empty 'step_id'.", null);
+                var reason = StringProperty(args, "reason") ?? StringProperty(args, "summary");
+                var markBlocked = args.TryGetProperty("mark_blocked", out var mbEl) && mbEl.ValueKind == JsonValueKind.True;
+                var released = await _sessionPlan.ReleaseTaskAsync(sessionId, stepId, callerHandle, reason, markBlocked, runId, cancellationToken).ConfigureAwait(false);
+                if (released.Released)
+                {
+                    await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+                    {
+                        var cp = liveCheckpoint ?? (_runActorHubs.TryGetValue(runId, out var h) ? h.LiveCheckpoint : null);
+                        if (cp is not null)
+                        {
+                            var tm = cp.Teammates.FirstOrDefault(t => string.Equals(t.Handle, callerHandle, StringComparison.OrdinalIgnoreCase));
+                            if (tm is not null && string.Equals(tm.ClaimedStepId, released.StepId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                tm.ClaimedStepId = null;
+                            }
+                            AppendBoardMessage(cp, callerHandle, "coordinator", "update",
+                                $"[task-released] @{callerHandle} released step '{released.StepId}' ({released.Status}).",
+                                wake: false);
+                        }
+                    }
+                    await AppendEventAsync(runId, "team.task_released",
+                        $"@{callerHandle} released task '{released.StepId}' ({released.Status}).",
+                        new
+                        {
+                            run_id = runId,
+                            handle = callerHandle,
+                            step_id = released.StepId,
+                            status = released.Status,
+                            reason,
+                            revision = released.Revision
+                        }, cancellationToken, callerTask?.TaskId).ConfigureAwait(false);
+                }
+                return (true, null, JsonSerializer.SerializeToElement(released, JsonOptions));
+            }
+            default:
+                return (false, $"Unsupported task board action '{action}'. Use list, claim, complete, or release.", null);
+        }
+    }
+
     private sealed record ParsedTeamPlanStep(
         string Id,
         string? Title,
         string? OwnerHandle,
         string? Status,
-        string? Evidence);
+        string? Evidence,
+        IReadOnlyList<string> DependsOn);
 
     private static (string? Error, string? Goal, string Operation, List<ParsedTeamPlanStep> Steps) ParseTeamPlanArguments(
         JsonElement args,
         string defaultOwner)
     {
+        _ = defaultOwner;
         var steps = new List<ParsedTeamPlanStep>();
         var goal = StringProperty(args, "goal");
         var operation = StringProperty(args, "operation")?.ToLowerInvariant();
@@ -715,14 +1045,27 @@ internal sealed partial class FullDuplexRunEngine
             if (status is not null && status is not ("pending" or "in_progress" or "completed" or "blocked" or "skipped"))
                 return ($"Step '{id}' has invalid status '{status}'; use pending, in_progress, completed, blocked, or skipped.", goal, operation, steps);
 
-            var owner = StringProperty(item, "owner_handle") ?? defaultOwner;
+            var explicitOwner = StringProperty(item, "owner_handle") ?? StringProperty(item, "owner");
+            string? normalizedOwner = null;
+            if (!string.IsNullOrWhiteSpace(explicitOwner))
+            {
+                var cleaned = explicitOwner.Trim().TrimStart('@');
+                if (!string.Equals(cleaned, "unassigned", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(cleaned, "any", StringComparison.OrdinalIgnoreCase))
+                {
+                    normalizedOwner = BoundText(cleaned, 80);
+                }
+            }
+
+            var dependsOn = ReadStringArray(item, "depends_on");
             var evidence = StringProperty(item, "evidence");
             steps.Add(new ParsedTeamPlanStep(
                 BoundText(id, 80),
                 title is null ? null : BoundText(title, 300),
-                owner is null ? null : BoundText(owner.TrimStart('@'), 80),
+                normalizedOwner,
                 status ?? (operation == "replace" ? "pending" : null),
-                evidence is null ? null : BoundText(evidence, 600)));
+                evidence is null ? null : BoundText(evidence, 600),
+                dependsOn));
         }
 
         if (steps.Count == 0)
@@ -797,7 +1140,7 @@ internal sealed partial class FullDuplexRunEngine
                     Id = s.Id,
                     Title = s.Title ?? s.Id,
                     Status = s.Status ?? SessionPlanStatuses.StepPending,
-                    DependsOn = [],
+                    DependsOn = s.DependsOn,
                     AssignedAgentSlug = s.OwnerHandle,
                     Summary = s.Evidence,
                     Artifacts = string.IsNullOrWhiteSpace(s.Evidence)
@@ -838,6 +1181,7 @@ internal sealed partial class FullDuplexRunEngine
                         Id = s.Id,
                         Title = s.Title,
                         Status = s.Status,
+                        DependsOn = s.DependsOn.Count > 0 ? s.DependsOn : null,
                         AssignedAgentSlug = s.OwnerHandle,
                         Summary = s.Evidence,
                         Artifacts = string.IsNullOrWhiteSpace(s.Evidence)
@@ -1028,7 +1372,7 @@ internal sealed partial class FullDuplexRunEngine
         foreach (var tm in checkpoint.Teammates)
         {
             if (filter is not null && !filter.Contains(tm.Handle)) continue;
-            if (string.Equals(tm.Status, "working", StringComparison.OrdinalIgnoreCase))
+            if (tm.Status is "working" or "awaiting_approval")
                 return true;
         }
         foreach (var node in checkpoint.Tasks)
@@ -1044,17 +1388,23 @@ internal sealed partial class FullDuplexRunEngine
     private static bool IsTeamWaitConditionMetWithoutTimeout(DurableTaskNode waiter, FullDuplexCheckpointV1 checkpoint)
     {
         var handles = waiter.AwaitingTeammateHandles ?? [];
+        var filter = handles.Count > 0 ? new HashSet<string>(handles, StringComparer.OrdinalIgnoreCase) : null;
         var until = waiter.TeamWaitUntil ?? "any";
-        var settled = !AnyTargetTeammateWorking(checkpoint, waiter.TaskId, handles);
+        var allSettled = !AnyTargetTeammateWorking(checkpoint, waiter.TaskId, handles);
+        var anyTargetNewlySettled = checkpoint.Tasks.Any(n =>
+            n.TaskId != waiter.TaskId
+            && IsTerminalTaskStatus(n.Status)
+            && !waiter.ReportedTaskIds.Contains(n.TaskId)
+            && (filter is null || filter.Contains(n.TeammateHandle ?? n.WorkerHandle ?? n.TaskKey)));
         var hasNewMessage = checkpoint.TeamBoard.Any(m =>
             m.Seq > waiter.AwaitingBoardSeq
             && !string.Equals(m.Sender, waiter.IsCoordinatorTask ? "coordinator" : waiter.TeammateHandle ?? waiter.WorkerHandle, StringComparison.OrdinalIgnoreCase));
 
         return until switch
         {
-            "settled" => settled,
-            "message" => hasNewMessage || settled,
-            _ => settled || hasNewMessage
+            "settled" => allSettled,
+            "message" => hasNewMessage || allSettled,
+            _ => allSettled || anyTargetNewlySettled
         };
     }
 
@@ -1221,6 +1571,9 @@ internal sealed partial class FullDuplexRunEngine
             return new(await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
                 "task_wait is not in your tool surface for this task.", checkpoint, cancellationToken).ConfigureAwait(false), false);
         }
+        var runId = Guid.Parse(run.RunId);
+        await using var checkpointGate = await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false);
+
         if (await ApplyPendingTaskDispatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false))
         {
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-dispatched", cancellationToken).ConfigureAwait(false);

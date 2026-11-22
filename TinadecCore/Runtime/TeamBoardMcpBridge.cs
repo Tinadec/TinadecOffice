@@ -166,7 +166,9 @@ public sealed class TeamBoardMcpBridge : ITeamBoardMcpBridge
 
         var args = arguments.ValueKind == JsonValueKind.Object ? arguments : EmptyObject();
 
-        if (CoreVirtualToolPolicy.IsTeamMessage(normalizedTool) || CoreVirtualToolPolicy.IsTeamPlan(normalizedTool))
+        if (CoreVirtualToolPolicy.IsTeamMessage(normalizedTool)
+            || CoreVirtualToolPolicy.IsTeamPlan(normalizedTool)
+            || TeamTaskBoardProtocol.IsTeamTasks(normalizedTool))
         {
             return await ExecuteBoardToolAsync(lease, callId, normalizedTool.ToLowerInvariant(), args, cancellationToken).ConfigureAwait(false);
         }
@@ -319,6 +321,12 @@ public sealed class TeamBoardMcpBridge : ITeamBoardMcpBridge
                     woke_target = wake,
                 }, SnakeJson),
             };
+        }
+
+        if (TeamTaskBoardProtocol.IsTeamTasks(canonicalTool)
+            || (CoreVirtualToolPolicy.IsTeamPlan(canonicalTool) && IsTaskBoardOperation(args)))
+        {
+            return await ExecuteDurableTaskBoardFallbackAsync(lease, callId, args, ct).ConfigureAwait(false);
         }
 
         // team_plan fallback
@@ -508,8 +516,110 @@ public sealed class TeamBoardMcpBridge : ITeamBoardMcpBridge
         return filtered.Length == 0 ? ITeamBoardMcpBridge.DefaultAllowedTools : filtered;
     }
 
+    private static bool IsTaskBoardOperation(JsonElement args)
+    {
+        if (args.ValueKind != JsonValueKind.Object) return false;
+        var op = args.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String
+            ? a.GetString()
+            : args.TryGetProperty("operation", out var o) && o.ValueKind == JsonValueKind.String
+                ? o.GetString()
+                : null;
+        return op?.Trim().ToLowerInvariant() is "list" or "claim" or "complete" or "release";
+    }
+
+    private async Task<ToolWireResponseDto> ExecuteDurableTaskBoardFallbackAsync(
+        ScopedTeamMcpLease lease,
+        long callId,
+        JsonElement args,
+        CancellationToken ct)
+    {
+        var board = _services.GetService<ITeamTaskBoardPort>() ?? _services.GetService<SessionPlanService>();
+        if (board is null)
+            return Fail(callId, "Team task board service is not available in this host.");
+
+        var action = (args.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String
+            ? a.GetString()
+            : args.TryGetProperty("operation", out var o) && o.ValueKind == JsonValueKind.String
+                ? o.GetString()
+                : null)?.Trim().ToLowerInvariant();
+        var stepId = args.TryGetProperty("step_id", out var sid) && sid.ValueKind == JsonValueKind.String
+            ? sid.GetString()?.Trim()
+            : null;
+        long? expectedRev = args.TryGetProperty("expected_revision", out var revEl) && revEl.TryGetInt64(out var parsedRev)
+            ? parsedRev
+            : null;
+
+        switch (action)
+        {
+            case "list":
+            {
+                var onlyReady = !args.TryGetProperty("only_ready", out var rEl) || rEl.ValueKind != JsonValueKind.False;
+                var listed = await board.ListTasksAsync(lease.SessionId, onlyReady, ct).ConfigureAwait(false);
+                return new ToolWireResponseDto
+                {
+                    CallId = callId,
+                    IsSuccess = true,
+                    Result = JsonSerializer.SerializeToElement(listed, SnakeJson),
+                };
+            }
+            case "claim":
+            {
+                var claimed = await board.ClaimTaskAsync(lease.SessionId, stepId, lease.TeammateHandle, expectedRev, lease.RunId, ct).ConfigureAwait(false);
+                return new ToolWireResponseDto
+                {
+                    CallId = callId,
+                    IsSuccess = true,
+                    Result = JsonSerializer.SerializeToElement(claimed, SnakeJson),
+                };
+            }
+            case "complete":
+            {
+                if (string.IsNullOrWhiteSpace(stepId))
+                    return Fail(callId, "team_tasks action='complete' requires a non-empty 'step_id'.");
+                var summary = args.TryGetProperty("summary", out var sumEl) && sumEl.ValueKind == JsonValueKind.String ? sumEl.GetString() : null;
+                var evidence = args.TryGetProperty("evidence", out var evEl) && evEl.ValueKind == JsonValueKind.Array
+                    ? evEl.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToArray()
+                    : null;
+                var completed = await board.CompleteTaskAsync(lease.SessionId, stepId, lease.TeammateHandle, summary, evidence, lease.RunId, ct).ConfigureAwait(false);
+                if (completed.Completed && completed.UnlockedReadyTasks.Count > 0 && _services.GetService<IFullDuplexRunEngine>() is { } wakeEngine)
+                {
+                    await wakeEngine.EnqueueAsync(lease.RunId, ct).ConfigureAwait(false);
+                }
+                return new ToolWireResponseDto
+                {
+                    CallId = callId,
+                    IsSuccess = true,
+                    Result = JsonSerializer.SerializeToElement(completed, SnakeJson),
+                };
+            }
+            case "release":
+            {
+                if (string.IsNullOrWhiteSpace(stepId))
+                    return Fail(callId, "team_tasks action='release' requires a non-empty 'step_id'.");
+                var reason = args.TryGetProperty("summary", out var sumEl) && sumEl.ValueKind == JsonValueKind.String
+                    ? sumEl.GetString()
+                    : args.TryGetProperty("reason", out var rsEl) && rsEl.ValueKind == JsonValueKind.String
+                        ? rsEl.GetString()
+                        : null;
+                var markBlocked = args.TryGetProperty("mark_blocked", out var mbEl) && mbEl.ValueKind == JsonValueKind.True;
+                var released = await board.ReleaseTaskAsync(lease.SessionId, stepId, lease.TeammateHandle, reason, markBlocked, lease.RunId, ct).ConfigureAwait(false);
+                return new ToolWireResponseDto
+                {
+                    CallId = callId,
+                    IsSuccess = true,
+                    Result = JsonSerializer.SerializeToElement(released, SnakeJson),
+                };
+            }
+            default:
+                return Fail(callId, $"Unsupported team_tasks action '{action}'. Use list, claim, complete, or release.");
+        }
+    }
+
     private static ToolManifestEntryDto? ResolveScopedToolManifestEntry(string toolId)
     {
+        if (TeamTaskBoardProtocol.IsTeamTasks(toolId))
+            return TeamTaskBoardProtocol.ManifestEntry();
+
         if (CoreVirtualToolPolicy.IsTeamTool(toolId))
             return TeamToolCatalog.ManifestEntry(toolId);
 

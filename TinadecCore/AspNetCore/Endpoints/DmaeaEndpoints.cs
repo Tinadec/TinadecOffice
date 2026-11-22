@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
@@ -120,7 +121,7 @@ public static class DmaeaEndpoints
                 declaredGraph = run is null ? OrchestrationGraphProjection.FromSnapshot(snapshotJson)
                     : ProjectFrozenGraph(frozenRun, snapshotJson);
             }
-            if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
+            if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), teammates = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
             // The snapshot describes one run, so it reads that run's events only, and only the
             // kinds it projects: the desktop refreshes this view after every live event batch,
             // and most of a session's rows are model output deltas it never looks at. Reading the
@@ -232,6 +233,7 @@ public static class DmaeaEndpoints
                 nodes,
                 lanes,
                 flows = OrchestrationGraphProjection.FlowsFromCheckpoint(checkpoint, frozenRun?.Graph?.ConversationTemplateSlug),
+                teammates = FullDuplexRunEngine.ProjectTeammateSnapshots(checkpoint),
                 assignments = Array.Empty<object>(),
                 step_results = stepResults,
                 context_packs = Array.Empty<object>(),
@@ -329,6 +331,134 @@ public static class DmaeaEndpoints
                 return Results.NotFound(new { code = "NOT_FOUND", message = ex.Message });
             }
         });
+
+        app.MapGet("/api/v1/runs/{runId}/teammates", async (string runId, IServiceProvider services, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out var runGuid))
+                return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
+
+            var control = services.GetService<ITeammateControlPort>()
+                ?? services.GetService<IFullDuplexRunEngine>() as ITeammateControlPort;
+            if (control is null)
+                return Results.Json(new { code = "SERVICE_UNAVAILABLE", message = "Teammate control port is unavailable." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+            try
+            {
+                var result = await control.ListTeammatesAsync(runGuid, ct).ConfigureAwait(false);
+                return Results.Json(result, Options);
+            }
+            catch (TeammateControlException ex)
+            {
+                return Results.Json(new { code = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
+            }
+        })
+        .Produces<TeammateListResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/v1/runs/{runId}/teammates/{handle}/steer", async (string runId, string handle, HttpRequest httpRequest, IServiceProvider services, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out var runGuid))
+                return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
+
+            TeammateSteerRequestDto? body = null;
+            try
+            {
+                if (httpRequest.ContentLength is null or > 0)
+                {
+                    body = await JsonSerializer.DeserializeAsync<TeammateSteerRequestDto>(httpRequest.Body, Options, ct).ConfigureAwait(false);
+                }
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { code = "INVALID_PAYLOAD", message = "Request body must be valid JSON." });
+            }
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Message))
+                return Results.BadRequest(new { code = "INVALID_STEER_MESSAGE", message = "Steer message is required." });
+
+            var control = services.GetService<ITeammateControlPort>()
+                ?? services.GetService<IFullDuplexRunEngine>() as ITeammateControlPort;
+            if (control is null)
+                return Results.Json(new { code = "SERVICE_UNAVAILABLE", message = "Teammate control port is unavailable." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+            try
+            {
+                var receipt = await control.SteerTeammateAsync(runGuid, handle, body, ct).ConfigureAwait(false);
+                return Results.Json(receipt, Options);
+            }
+            catch (TeammateControlException ex)
+            {
+                return Results.Json(new { code = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
+            }
+        })
+        .Produces<TeammateSteerReceiptDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status409Conflict);
+
+        app.MapPost("/api/v1/runs/{runId}/teammates/{handle}/pause", async (string runId, string handle, HttpRequest httpRequest, IServiceProvider services, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out var runGuid))
+                return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
+
+            TeammatePauseRequestDto? body = null;
+            if (httpRequest.ContentLength is > 0)
+            {
+                try
+                {
+                    body = await JsonSerializer.DeserializeAsync<TeammatePauseRequestDto>(httpRequest.Body, Options, ct).ConfigureAwait(false);
+                }
+                catch (JsonException)
+                {
+                    return Results.BadRequest(new { code = "INVALID_PAYLOAD", message = "Request body must be valid JSON." });
+                }
+            }
+
+            var control = services.GetService<ITeammateControlPort>()
+                ?? services.GetService<IFullDuplexRunEngine>() as ITeammateControlPort;
+            if (control is null)
+                return Results.Json(new { code = "SERVICE_UNAVAILABLE", message = "Teammate control port is unavailable." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+            try
+            {
+                var receipt = await control.PauseTeammateAsync(runGuid, handle, body?.Reason, ct).ConfigureAwait(false);
+                return Results.Json(receipt, Options);
+            }
+            catch (TeammateControlException ex)
+            {
+                return Results.Json(new { code = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
+            }
+        })
+        .Produces<TeammateControlReceiptDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status409Conflict);
+
+        app.MapPost("/api/v1/runs/{runId}/teammates/{handle}/resume", async (string runId, string handle, IServiceProvider services, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out var runGuid))
+                return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
+
+            var control = services.GetService<ITeammateControlPort>()
+                ?? services.GetService<IFullDuplexRunEngine>() as ITeammateControlPort;
+            if (control is null)
+                return Results.Json(new { code = "SERVICE_UNAVAILABLE", message = "Teammate control port is unavailable." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+            try
+            {
+                var receipt = await control.ResumeTeammateAsync(runGuid, handle, ct).ConfigureAwait(false);
+                return Results.Json(receipt, Options);
+            }
+            catch (TeammateControlException ex)
+            {
+                return Results.Json(new { code = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
+            }
+        })
+        .Produces<TeammateControlReceiptDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status409Conflict);
 
         app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, IDbContextFactory<AgentConfigurationDbContext> agentConfigFactory, CancellationToken ct) =>
         {
@@ -538,6 +668,7 @@ public static class DmaeaEndpoints
                 nodes,
                 lanes,
                 flows = OrchestrationGraphProjection.FlowsFromCheckpoint(checkpoint, conversationTemplateSlug),
+                teammates = FullDuplexRunEngine.ProjectTeammateSnapshots(checkpoint),
                 assignments,
                 step_results = stepResults,
                 agent_instances = agentInstancesProjection,

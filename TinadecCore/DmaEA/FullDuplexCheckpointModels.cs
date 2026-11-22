@@ -167,7 +167,26 @@ internal sealed class DurableTeammateState
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public long LastDeliveredBoardSeq { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Paused { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PausedReason { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClaimedStepId { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<PendingTeammateSteer>? PendingSteers { get; set; }
 }
+
+internal sealed record PendingTeammateSteer(
+    string Id,
+    string Message,
+    bool Urgent,
+    long BoardSeq,
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// One message posted on the run's shared low-latency board (#33).

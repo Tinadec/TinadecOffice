@@ -26,7 +26,7 @@ public interface IFullDuplexRunEngine
     Task ReconcileTerminalRunAsync(Guid runId, CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEngine, ITeamRunBoardActionSink
+internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEngine, ITeamRunBoardActionSink, ITeammateControlPort
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(2);
@@ -129,6 +129,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _scheduledModelRetries = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _terminalFinalizationGates = new();
     private readonly ConcurrentDictionary<Guid, ConcurrentQueue<LiveMcpBoardPost>> _liveMcpBoardPosts = new();
+    private readonly ConcurrentDictionary<Guid, RunTeammateActorHub> _runActorHubs = new();
+    private readonly AsyncLocal<CheckpointGateHolder?> _checkpointGateHolder = new();
     private readonly ConcurrentDictionary<Guid, long> _compactionRecommendedRevisions = new();
     private readonly AsyncLocal<RunLeaseEpoch?> _currentLeaseEpoch = new();
     private readonly AsyncLocal<bool> _deferParallelTaskCheckpointWrites = new();
@@ -184,6 +186,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
     public ValueTask EnqueueAsync(Guid runId, CancellationToken cancellationToken = default)
     {
+        if (_runActorHubs.TryGetValue(runId, out var hub))
+        {
+            hub.SignalWake();
+        }
         if (_queued.TryAdd(runId, 0))
         {
             return _queue.Writer.WriteAsync(runId, cancellationToken);
@@ -312,6 +318,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private async Task ReleaseRunInstancesBestEffortAsync(Guid runId, CancellationToken cancellationToken)
     {
         _liveMcpBoardPosts.TryRemove(runId, out _);
+        _runActorHubs.TryRemove(runId, out _);
         _compactionRecommendedRevisions.TryRemove(runId, out _);
         try
         {
@@ -416,7 +423,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         if (lease is null or { Acquired: false }) return;
 
         var releaseLease = true;
-        _currentLeaseEpoch.Value = new RunLeaseEpoch(runId, _ownerId, lease.RecoveryCount);
+        _checkpointGateHolder.Value = new CheckpointGateHolder();
+        var leaseEpoch = new RunLeaseEpoch(runId, _ownerId, lease.RecoveryCount);
+        _currentLeaseEpoch.Value = leaseEpoch;
+        var runHub = GetOrCreateActorHub(runId);
+        runHub.LiveLeaseEpoch = leaseEpoch;
         using var boardRegistration = _teamBoardMcpBridge?.RegisterRunBoardHandler(runId, HandleLiveMcpBoardCallAsync);
 
         try
@@ -539,6 +550,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
             var interrupted = checkpoint.Tasks
                 .Where(item => item.Status == "running" && string.IsNullOrWhiteSpace(item.PendingToolExecutionId))
+                .Where(item => !IsTaskPausedByTeammate(checkpoint, item))
                 .ToList();
             if (run.Status == RunStatus.AwaitingUser || checkpoint.AwaitingApprovalExpiryReview) interrupted.Clear();
             if (interrupted.Count > 0)
@@ -737,6 +749,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         finally
         {
+            runHub.LiveCheckpoint = null;
+            runHub.LiveConfiguration = null;
+            runHub.LiveRun = null;
+            runHub.LiveLeaseEpoch = null;
             if (releaseLease)
             {
                 try { await _lifecycle.ReleaseRunLeaseAsync(runId.ToString(), _ownerId, CancellationToken.None).ConfigureAwait(false); }
@@ -976,7 +992,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 }
                 else
                 {
-                    _currentLeaseEpoch.Value = new RunLeaseEpoch(runId, _ownerId, reacquired.RecoveryCount);
+                    var refreshed = new RunLeaseEpoch(runId, _ownerId, reacquired.RecoveryCount);
+                    _currentLeaseEpoch.Value = refreshed;
+                    if (_runActorHubs.TryGetValue(runId, out var activeHub))
+                        activeHub.LiveLeaseEpoch = refreshed;
                 }
                 return true;
             }
@@ -1147,15 +1166,18 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         if (_deferParallelTaskCheckpointWrites.Value)
             return checkpoint;
+        await using var _ = await EnterCheckpointGateAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
+        var effectiveExpected = Math.Max(expectedRevision, checkpoint.CheckpointRevision);
+        var leaseEpoch = LeaseEpochFor(checkpoint.RunId);
         var stored = await _lifecycle.SaveRunCheckpointAsync(checkpoint.RunId.ToString(), new RunCheckpointWrite(
-            expectedRevision,
+            effectiveExpected,
             checkpoint.Phase,
             JsonSerializer.Serialize(checkpoint, JsonOptions),
-            IdempotencyKey: $"run:{checkpoint.RunId}:{laneKey}:{key}:{expectedRevision + 1}",
+            IdempotencyKey: $"run:{checkpoint.RunId}:{laneKey}:{key}:{effectiveExpected + 1}",
             ExpectedRunStatus: expectedRunStatus,
             RequireCompletionUnclaimed: requireCompletionUnclaimed,
-            ExpectedLeaseOwner: LeaseEpochFor(checkpoint.RunId)?.OwnerId,
-            ExpectedRecoveryCount: LeaseEpochFor(checkpoint.RunId)?.RecoveryCount), cancellationToken).ConfigureAwait(false);
+            ExpectedLeaseOwner: leaseEpoch?.OwnerId,
+            ExpectedRecoveryCount: leaseEpoch?.RecoveryCount), cancellationToken).ConfigureAwait(false);
         checkpoint.CheckpointRevision = stored.Revision;
         return checkpoint;
     }
@@ -1286,7 +1308,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     }
 
     private RunLeaseEpoch? LeaseEpochFor(Guid runId) =>
-        _currentLeaseEpoch.Value is { RunId: var epochRunId } epoch && epochRunId == runId ? epoch : null;
+        _currentLeaseEpoch.Value is { RunId: var epochRunId } epoch && epochRunId == runId
+            ? epoch
+            : (_runActorHubs.TryGetValue(runId, out var hub) ? hub.LiveLeaseEpoch : null);
 
     private static string ToStatusVocabulary(RunStatus status) => status switch
     {
@@ -1327,6 +1351,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         TaskExecutionResult? Result)
     {
         public Guid TaskId { get; init; }
+        public bool PausedByHuman { get; init; }
+        public bool ParkedOnWait { get; init; }
     }
 
     private readonly record struct ModelRetryScheduleResult(
@@ -1334,7 +1360,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         bool LeaseRetained,
         bool ExitWithoutFailure);
 
-    private sealed class RunLeaseEpoch(Guid runId, string ownerId, int recoveryCount)
+    internal sealed class RunLeaseEpoch(Guid runId, string ownerId, int recoveryCount)
     {
         public Guid RunId { get; } = runId;
         public string OwnerId { get; } = ownerId;

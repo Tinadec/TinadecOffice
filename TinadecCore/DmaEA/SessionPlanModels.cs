@@ -128,6 +128,14 @@ public sealed record SessionPlanStepDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AssignedAgentSlug { get; init; }
 
+    [JsonPropertyName("claimed_by")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClaimedBy { get; init; }
+
+    [JsonPropertyName("claimed_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ClaimedAt { get; init; }
+
     [JsonPropertyName("verification_criteria")]
     public IReadOnlyList<string> VerificationCriteria { get; init; } = [];
 
@@ -266,6 +274,9 @@ public sealed record SessionPlanStepPatchDto
     [JsonPropertyName("assigned_agent_slug")]
     public string? AssignedAgentSlug { get; init; }
 
+    [JsonPropertyName("claimed_by")]
+    public string? ClaimedBy { get; init; }
+
     [JsonPropertyName("verification_criteria")]
     public IReadOnlyList<string>? VerificationCriteria { get; init; }
 
@@ -304,6 +315,9 @@ public sealed record SessionPlanAddStepDto
 
     [JsonPropertyName("assigned_agent_slug")]
     public string? AssignedAgentSlug { get; init; }
+
+    [JsonPropertyName("claimed_by")]
+    public string? ClaimedBy { get; init; }
 
     [JsonPropertyName("verification_criteria")]
     public IReadOnlyList<string>? VerificationCriteria { get; init; }

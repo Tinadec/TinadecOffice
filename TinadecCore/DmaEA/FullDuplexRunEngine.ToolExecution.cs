@@ -99,10 +99,15 @@ internal sealed partial class FullDuplexRunEngine
         CancellationToken cancellationToken,
         IReadOnlyList<WorkerToolDescriptor>? resolvedTools = null)
     {
+        var runGuid = Guid.Parse(run.RunId);
+        var hub = GetOrCreateActorHub(runGuid);
         RuntimeAgentInstance worker;
         try
         {
-            worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+            {
+                worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (WorkerAssignmentException ex)
         {
@@ -131,56 +136,112 @@ internal sealed partial class FullDuplexRunEngine
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (task.IsSpacePreparation)
+            WorkerToolTurn? pendingTurn = null;
+            string? spaceRefusal = null;
+            ToolTaskExecutionResult? earlyExit = null;
+
+            await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
             {
-                if (task.ToolTurns.FirstOrDefault(turn => turn.IsSpaceWorktreeProvisioning && turn.ResultJson is not null) is { } failedWorktree
-                    && (failedWorktree.ToolSuccess == false || failedWorktree.DispatchStatus != ToolDispatchStatus.Completed))
+                var selfHandle = task.TeammateHandle ?? task.WorkerHandle;
+                if ((!task.IsCoordinatorTask && !string.IsNullOrWhiteSpace(selfHandle) && hub.GetMailbox(selfHandle).IsPauseRequested)
+                    || IsTaskPausedByTeammate(checkpoint, task))
                 {
-                    return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolError,
-                        "The requested worktree could not be prepared; task execution stopped.", failedWorktree.ToolId);
+                    task.Status = "paused";
+                    if (FindBoundTeammate(checkpoint, task) is { } pausedTm)
+                    {
+                        pausedTm.Paused = true;
+                        pausedTm.Status = "paused";
+                        pausedTm.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "teammate-paused-boundary", cancellationToken).ConfigureAwait(false);
+                    earlyExit = new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null)
+                    {
+                        TaskId = task.TaskId,
+                        PausedByHuman = true
+                    };
                 }
-                if (QueueSpaceWorktree(configuration, checkpoint, task))
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "space-worktree-requested", cancellationToken).ConfigureAwait(false);
-                checkpoint.SpacePreparationComplete = SpacePreparationReady(configuration, checkpoint);
-                if (checkpoint.SpacePreparationComplete && configuration.SpaceOptions?.WorkflowModeVersionId is not null)
+                else
                 {
-                    var prepared = BuildWorkerStepResult(task, worker.Id,
-                        "Spatial preparation completed: confirmed specifications and execution isolation are ready.\nTASK_OUTCOME: completed");
-                    return new ToolTaskExecutionResult(checkpoint, false, new TaskExecutionResult(task.TaskId, worker.Id, "completed", prepared));
-                }
-            }
-            else if (task.Worktree && task.TaskWorktreePath is null)
-            {
-                if (task.ToolTurns.FirstOrDefault(turn => turn.IsSpaceWorktreeProvisioning && turn.ResultJson is not null) is { } failedTaskWorktree
-                    && (failedTaskWorktree.ToolSuccess == false || failedTaskWorktree.DispatchStatus != ToolDispatchStatus.Completed))
-                {
-                    return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolError,
-                        "The requested task-isolated worktree could not be prepared; task execution stopped.", failedTaskWorktree.ToolId);
-                }
-                if (QueueTaskWorktree(configuration, checkpoint, task))
-                {
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-worktree-requested", cancellationToken).ConfigureAwait(false);
+                    if (task.IsSpacePreparation)
+                    {
+                        if (task.ToolTurns.FirstOrDefault(turn => turn.IsSpaceWorktreeProvisioning && turn.ResultJson is not null) is { } failedWorktree
+                            && (failedWorktree.ToolSuccess == false || failedWorktree.DispatchStatus != ToolDispatchStatus.Completed))
+                        {
+                            earlyExit = FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolError,
+                                "The requested worktree could not be prepared; task execution stopped.", failedWorktree.ToolId);
+                        }
+                        else
+                        {
+                            if (QueueSpaceWorktree(configuration, checkpoint, task))
+                                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "space-worktree-requested", cancellationToken).ConfigureAwait(false);
+                            checkpoint.SpacePreparationComplete = SpacePreparationReady(configuration, checkpoint);
+                            if (checkpoint.SpacePreparationComplete && configuration.SpaceOptions?.WorkflowModeVersionId is not null)
+                            {
+                                var prepared = BuildWorkerStepResult(task, worker.Id,
+                                    "Spatial preparation completed: confirmed specifications and execution isolation are ready.\nTASK_OUTCOME: completed");
+                                earlyExit = new ToolTaskExecutionResult(checkpoint, false, new TaskExecutionResult(task.TaskId, worker.Id, "completed", prepared))
+                                {
+                                    TaskId = task.TaskId
+                                };
+                            }
+                        }
+                    }
+                    else if (task.Worktree && task.TaskWorktreePath is null)
+                    {
+                        if (task.ToolTurns.FirstOrDefault(turn => turn.IsSpaceWorktreeProvisioning && turn.ResultJson is not null) is { } failedTaskWorktree
+                            && (failedTaskWorktree.ToolSuccess == false || failedTaskWorktree.DispatchStatus != ToolDispatchStatus.Completed))
+                        {
+                            earlyExit = FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolError,
+                                "The requested task-isolated worktree could not be prepared; task execution stopped.", failedTaskWorktree.ToolId);
+                        }
+                        else if (QueueTaskWorktree(configuration, checkpoint, task))
+                        {
+                            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-worktree-requested", cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+
+                    if (earlyExit is null)
+                    {
+                        if (Interrupts?.TakePending(runGuid) is { } steering)
+                        {
+                            await ObserveAutonomousEventAsync(run, configuration, GovernanceTopics.UserSteer, steering.Content).ConfigureAwait(false);
+                            checkpoint = await SkipUnstartedToolCallsAsync(run, checkpoint, task, steering, cancellationToken).ConfigureAwait(false);
+                        }
+
+                        if (ConsumePendingMailboxIntoTask(checkpoint, task, hub, skipUnstartedOnUrgent: true))
+                        {
+                            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "teammate-mailbox-delivered", cancellationToken).ConfigureAwait(false);
+                        }
+
+                        pendingTurn = task.ToolTurns.FirstOrDefault(item => string.IsNullOrWhiteSpace(item.ResultJson));
+                        if (pendingTurn is not null)
+                        {
+                            spaceRefusal = SpaceToolRefusal(configuration, checkpoint, task, pendingTurn);
+                        }
+                    }
                 }
             }
 
-            if (Interrupts?.TakePending(Guid.Parse(run.RunId)) is { } steering)
-            {
-                await ObserveAutonomousEventAsync(run, configuration, GovernanceTopics.UserSteer, steering.Content).ConfigureAwait(false);
-                checkpoint = await SkipUnstartedToolCallsAsync(run, checkpoint, task, steering, cancellationToken).ConfigureAwait(false);
-            }
+            if (earlyExit is not null)
+                return earlyExit with { TaskId = task.TaskId };
 
-            var pendingTurn = task.ToolTurns.FirstOrDefault(item => string.IsNullOrWhiteSpace(item.ResultJson));
-            if (pendingTurn is not null && SpaceToolRefusal(configuration, checkpoint, task, pendingTurn) is { } refusal)
+            if (pendingTurn is not null && spaceRefusal is not null)
             {
-                checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn, RunErrorTaxonomy.InvalidToolArguments,
-                    refusal, checkpoint, cancellationToken).ConfigureAwait(false);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn, RunErrorTaxonomy.InvalidToolArguments,
+                        spaceRefusal, checkpoint, cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
 
-            // 5 Orthogonal Team Primitives (#33)
+            // Team Primitives (#33 / #50: team_spawn, team_message, team_wait, team_plan, team_tasks, team_integrate)
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTeamSpawn(pendingTurn.ToolId))
             {
-                checkpoint = await HandleTeamSpawnAsync(run, configuration, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await HandleTeamSpawnAsync(run, configuration, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTeamMessage(pendingTurn.ToolId))
@@ -190,9 +251,19 @@ internal sealed partial class FullDuplexRunEngine
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTeamWait(pendingTurn.ToolId))
             {
-                var teamWait = await HandleTeamWaitAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
-                checkpoint = teamWait.Checkpoint;
-                if (teamWait.Parked) return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null);
+                TaskWaitOutcome teamWait;
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    teamWait = await HandleTeamWaitAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                    checkpoint = teamWait.Checkpoint;
+                }
+                if (teamWait.Parked)
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null) { TaskId = task.TaskId, ParkedOnWait = true };
+                continue;
+            }
+            if (pendingTurn is not null && TeamTaskBoardProtocol.IsTeamTasks(pendingTurn.ToolId))
+            {
+                checkpoint = await HandleTeamTasksAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
                 continue;
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTeamPlan(pendingTurn.ToolId))
@@ -202,33 +273,52 @@ internal sealed partial class FullDuplexRunEngine
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTeamIntegrate(pendingTurn.ToolId))
             {
-                checkpoint = await HandleTeamIntegrateAsync(run, configuration, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await HandleTeamIntegrateAsync(run, configuration, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
 
             // Legacy Core-owned virtual tools (preserved for backward compatibility)
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTaskWait(pendingTurn.ToolId))
             {
-                var wait = await HandleTaskWaitAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
-                checkpoint = wait.Checkpoint;
-                if (wait.Parked) return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null);
+                TaskWaitOutcome wait;
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    wait = await HandleTaskWaitAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                    checkpoint = wait.Checkpoint;
+                }
+                if (wait.Parked)
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null) { TaskId = task.TaskId, ParkedOnWait = true };
                 continue;
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsPlanUpdate(pendingTurn.ToolId))
             {
-                checkpoint = await HandlePlanUpdateAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await HandlePlanUpdateAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsPlanRead(pendingTurn.ToolId))
             {
-                checkpoint = await HandlePlanReadAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await HandlePlanReadAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsCorrectionTrace(pendingTurn.ToolId))
             {
-                var correction = await HandleCorrectionTraceAsync(run, configuration, checkpoint, pendingTurn, cancellationToken).ConfigureAwait(false);
-                checkpoint = correction.Checkpoint;
-                if (correction.Parked) return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null);
+                (FullDuplexCheckpointV1 Checkpoint, bool Parked) correction;
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    correction = await HandleCorrectionTraceAsync(run, configuration, checkpoint, pendingTurn, cancellationToken).ConfigureAwait(false);
+                    checkpoint = correction.Checkpoint;
+                }
+                if (correction.Parked)
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null) { TaskId = task.TaskId, ParkedOnWait = true };
                 continue;
             }
 
@@ -239,9 +329,12 @@ internal sealed partial class FullDuplexRunEngine
                 {
                     if (!TryParseJsonObject(pendingTurn.ArgumentsJson, out var parameters))
                     {
-                        checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
-                            RunErrorTaxonomy.InvalidToolArguments, "The worker returned invalid tool arguments.",
-                            checkpoint, cancellationToken).ConfigureAwait(false);
+                        await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                        {
+                            checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
+                                RunErrorTaxonomy.InvalidToolArguments, "The worker returned invalid tool arguments.",
+                                checkpoint, cancellationToken).ConfigureAwait(false);
+                        }
                         continue;
                     }
 
@@ -257,21 +350,28 @@ internal sealed partial class FullDuplexRunEngine
                         LaneKey = LaneKeyOf(task),
                         Params = parameters
                     }, cancellationToken).ConfigureAwait(false);
-                    pendingTurn.ExecutionId = dispatch.ExecutionId;
-                    pendingTurn.ApprovalId = dispatch.ApprovalId;
-                    pendingTurn.DispatchStatus = dispatch.Status;
-                    task.PendingToolExecutionId = dispatch.ExecutionId;
-                    task.PendingToolApprovalId = dispatch.ApprovalId;
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-prepared", cancellationToken).ConfigureAwait(false);
 
-                    if (string.IsNullOrWhiteSpace(dispatch.ExecutionId))
+                    var prepareFailed = false;
+                    await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
                     {
-                        checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
-                            dispatch.ErrorCategory ?? RunErrorTaxonomy.ToolPrepareFailed,
-                            dispatch.Message ?? "The tool call could not be prepared.",
-                            checkpoint, cancellationToken).ConfigureAwait(false);
-                        continue;
+                        pendingTurn.ExecutionId = dispatch.ExecutionId;
+                        pendingTurn.ApprovalId = dispatch.ApprovalId;
+                        pendingTurn.DispatchStatus = dispatch.Status;
+                        task.PendingToolExecutionId = dispatch.ExecutionId;
+                        task.PendingToolApprovalId = dispatch.ApprovalId;
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-prepared", cancellationToken).ConfigureAwait(false);
+
+                        if (string.IsNullOrWhiteSpace(dispatch.ExecutionId))
+                        {
+                            checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
+                                dispatch.ErrorCategory ?? RunErrorTaxonomy.ToolPrepareFailed,
+                                dispatch.Message ?? "The tool call could not be prepared.",
+                                checkpoint, cancellationToken).ConfigureAwait(false);
+                            prepareFailed = true;
+                        }
                     }
+                    if (prepareFailed)
+                        continue;
                 }
 
                 if (dispatcher is not ILeaseFencedToolDispatcher fencedDispatcher)
@@ -280,7 +380,7 @@ internal sealed partial class FullDuplexRunEngine
                         "The configured tool dispatcher does not support run-lease fenced execution.");
                 }
                 var executionAuthority = await RequireToolExecutionAuthorityAsync(
-                    Guid.Parse(run.RunId),
+                    runGuid,
                     cancellationToken).ConfigureAwait(false);
                 dispatch = await fencedDispatcher.ResumeAsync(
                     pendingTurn.ExecutionId!,
@@ -294,70 +394,81 @@ internal sealed partial class FullDuplexRunEngine
                         checkpoint.CheckpointRevision);
                 }
 
-                pendingTurn.DispatchStatus = dispatch.Status;
                 if (dispatch.Status == ToolDispatchStatus.AwaitingApproval && dispatch.ParkExpired)
                 {
-                    SyncLanes(checkpoint);
-                    ClearPendingToolExecution(task, RunErrorTaxonomy.ApprovalExpired);
-                    task.Status = "failed";
-                    task.ResultStatus = "failed";
-                    task.ResultSummary = "Approval expired while the run was unattended.";
-                    task.CompletedAt = DateTimeOffset.UtcNow;
-                    checkpoint.Phase = "awaiting_user";
-                    checkpoint.AwaitingApprovalExpiryReview = true;
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-park-expired", cancellationToken).ConfigureAwait(false);
-
                     var expiryReason = $"Approval for tool '{pendingTurn.ToolId}' expired its decision window while the run was unattended.";
+                    await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                    {
+                        pendingTurn.DispatchStatus = dispatch.Status;
+                        SyncLanes(checkpoint);
+                        ClearPendingToolExecution(task, RunErrorTaxonomy.ApprovalExpired);
+                        task.Status = "failed";
+                        task.ResultStatus = "failed";
+                        task.ResultSummary = "Approval expired while the run was unattended.";
+                        task.CompletedAt = DateTimeOffset.UtcNow;
+                        checkpoint.Phase = "awaiting_user";
+                        checkpoint.AwaitingApprovalExpiryReview = true;
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-park-expired", cancellationToken).ConfigureAwait(false);
+                    }
+
                     await TrySetRunStatusAsync(run.RunId, "awaiting_user", expiryReason, cancellationToken).ConfigureAwait(false);
-                    await AppendEventAsync(Guid.Parse(run.RunId), "worker.failed",
+                    await AppendEventAsync(runGuid, "worker.failed",
                         "The tool task failed after its approval expired unattended.",
                         new { run_id = run.RunId, task_id = task.TaskId, task_key = task.TaskKey, error_category = RunErrorTaxonomy.ApprovalExpired },
                         cancellationToken).ConfigureAwait(false);
-                    await AppendEventAsync(Guid.Parse(run.RunId), "supervision.user_review.requested",
+                    await AppendEventAsync(runGuid, "supervision.user_review.requested",
                         "The run is waiting for a user decision after an approval expiry.",
                         new { run_id = run.RunId, lane_key = "main", decision = "escalate", reasons = new[] { expiryReason }, options = new[] { "continue", "correct", "cancel" } },
                         cancellationToken).ConfigureAwait(false);
-                    return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null) { TaskId = task.TaskId };
                 }
 
                 if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingResume
                     or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
                 {
-                    if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
+                    // Suspend ONLY this actor (#50): do NOT overwrite the global run status to awaiting_approval
+                    // while sibling teammates are actively executing! ExecuteReadyTasksAsync transitions the run
+                    // status only when no runnable sibling actors remain.
+                    if (dispatch.Status == ToolDispatchStatus.AwaitingApproval)
                     {
-                        var runStatus = dispatch.Status switch
-                        {
-                            ToolDispatchStatus.AwaitingDelegate => "awaiting_delegate",
-                            ToolDispatchStatus.AwaitingUser => "awaiting_user",
-                            _ => "awaiting_approval"
-                        };
-                        await TrySetRunStatusAsync(run.RunId, runStatus, dispatch.Message, cancellationToken).ConfigureAwait(false);
-                        if (dispatch.Status == ToolDispatchStatus.AwaitingApproval)
-                        {
-                            await NotifyCompanionBackflowAsync(
-                                run,
-                                configuration,
-                                checkpoint,
-                                "awaiting_approval",
-                                dispatch.Message ?? $"Tool '{pendingTurn.ToolId}' requires approval.",
-                                cancellationToken,
-                                pendingTurn).ConfigureAwait(false);
-                        }
+                        await NotifyCompanionBackflowAsync(
+                            run,
+                            configuration,
+                            checkpoint,
+                            "awaiting_approval",
+                            dispatch.Message ?? $"Tool '{pendingTurn.ToolId}' requires approval.",
+                            cancellationToken,
+                            pendingTurn).ConfigureAwait(false);
                     }
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
-                    return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
+
+                    await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                    {
+                        pendingTurn.DispatchStatus = dispatch.Status;
+                        if (FindBoundTeammate(checkpoint, task) is { } awaitingTm && !awaitingTm.Paused)
+                        {
+                            awaitingTm.Status = "awaiting_approval";
+                            awaitingTm.UpdatedAt = DateTimeOffset.UtcNow;
+                        }
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
+                    }
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null) { TaskId = task.TaskId };
                 }
 
                 if (dispatch.Status != ToolDispatchStatus.Completed)
                 {
                     var category = dispatch.ErrorCategory ?? dispatch.Status;
                     var summary = dispatch.Message ?? $"Tool '{pendingTurn.ToolId}' returned {dispatch.Status}.";
-                    pendingTurn.DispatchStatus = dispatch.Status;
-                    pendingTurn.ErrorCategory = category;
-                    pendingTurn.ResultJson = ToolCallFailureJson(pendingTurn.ToolId, category, summary, dispatch);
-                    ClearPendingToolExecution(task);
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
-                    await AppendEventAsync(Guid.Parse(run.RunId), "worker.tool_failed",
+                    int consecutiveErrors;
+                    await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                    {
+                        pendingTurn.DispatchStatus = dispatch.Status;
+                        pendingTurn.ErrorCategory = category;
+                        pendingTurn.ResultJson = ToolCallFailureJson(pendingTurn.ToolId, category, summary, dispatch);
+                        ClearPendingToolExecution(task);
+                        consecutiveErrors = TrailingConsecutiveErrors(task);
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
+                    }
+                    await AppendEventAsync(runGuid, "worker.tool_failed",
                         $"Tool '{pendingTurn.ToolId}' failed ({category}); the failure was returned to the worker as a tool result.",
                         new
                         {
@@ -371,7 +482,7 @@ internal sealed partial class FullDuplexRunEngine
                             dispatch_status = dispatch.Status,
                             error_category = category,
                             message = summary,
-                            consecutive_errors = TrailingConsecutiveErrors(task),
+                            consecutive_errors = consecutiveErrors,
                             returned_to_worker = true
                         }, cancellationToken, task.TaskId, idempotencyKey: $"tool-failure:{task.TaskId}:{pendingTurn.CallId}").ConfigureAwait(false);
                     continue;
@@ -381,79 +492,92 @@ internal sealed partial class FullDuplexRunEngine
                     Guid.Parse(pendingTurn.ExecutionId!), cancellationToken).ConfigureAwait(false);
                 var resultJson = dispatch.Result?.GetRawText();
                 if (string.IsNullOrWhiteSpace(resultJson)) resultJson = snapshot?.ResultJson ?? "null";
-                if (resultJson.Length > InlineToolResultChars && !pendingTurn.IsSpaceWorktreeProvisioning
-                    && string.Equals(snapshot?.ResultJson, resultJson, StringComparison.Ordinal))
-                {
-                    pendingTurn.ResultJson = ToolResultHead(resultJson, pendingTurn.ExecutionId!);
-                    pendingTurn.ResultOnExecution = true;
-                }
-                else
-                {
-                    pendingTurn.ResultJson = resultJson;
-                }
 
-                pendingTurn.DispatchStatus = ToolDispatchStatus.Completed;
-                pendingTurn.ToolSuccess = snapshot?.ToolSuccess;
-                if (pendingTurn.ToolSuccess != false)
+                var shouldNotifyBrowserHandoff = false;
+                CorrectionTraceState? correctionToEmit = null;
+
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
                 {
-                    checkpoint = await RecordSpaceToolResultAsync(run, configuration, checkpoint, task, pendingTurn, cancellationToken).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(task.TeammateHandle) && !string.IsNullOrWhiteSpace(task.TaskWorktreePath))
+                    if (resultJson.Length > InlineToolResultChars && !pendingTurn.IsSpaceWorktreeProvisioning
+                        && string.Equals(snapshot?.ResultJson, resultJson, StringComparison.Ordinal))
                     {
-                        var tm = checkpoint.Teammates.FirstOrDefault(t =>
-                            string.Equals(t.Handle, task.TeammateHandle, StringComparison.OrdinalIgnoreCase));
-                        if (tm is not null)
+                        pendingTurn.ResultJson = ToolResultHead(resultJson, pendingTurn.ExecutionId!);
+                        pendingTurn.ResultOnExecution = true;
+                    }
+                    else
+                    {
+                        pendingTurn.ResultJson = resultJson;
+                    }
+
+                    pendingTurn.DispatchStatus = ToolDispatchStatus.Completed;
+                    pendingTurn.ToolSuccess = snapshot?.ToolSuccess;
+                    if (pendingTurn.ToolSuccess != false)
+                    {
+                        checkpoint = await RecordSpaceToolResultAsync(run, configuration, checkpoint, task, pendingTurn, cancellationToken).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(task.TeammateHandle) && !string.IsNullOrWhiteSpace(task.TaskWorktreePath))
                         {
-                            tm.WorktreePath = task.TaskWorktreePath;
-                            tm.BranchName = task.TaskWorktreeBranch ?? tm.BranchName;
-                            tm.UpdatedAt = DateTimeOffset.UtcNow;
+                            var tm = checkpoint.Teammates.FirstOrDefault(t =>
+                                string.Equals(t.Handle, task.TeammateHandle, StringComparison.OrdinalIgnoreCase));
+                            if (tm is not null)
+                            {
+                                tm.WorktreePath = task.TaskWorktreePath;
+                                tm.BranchName = task.TaskWorktreeBranch ?? tm.BranchName;
+                                tm.UpdatedAt = DateTimeOffset.UtcNow;
+                            }
+                        }
+                        if (string.Equals(pendingTurn.ToolId, "browser_handoff", StringComparison.OrdinalIgnoreCase))
+                        {
+                            shouldNotifyBrowserHandoff = true;
                         }
                     }
-                    if (string.Equals(pendingTurn.ToolId, "browser_handoff", StringComparison.OrdinalIgnoreCase))
+                    if (pendingTurn.ToolSuccess == false)
                     {
-                        await NotifyCompanionBackflowAsync(
-                            run,
-                            configuration,
-                            checkpoint,
-                            "browser_handoff",
-                            "Browser task space handed off for human control.",
-                            cancellationToken).ConfigureAwait(false);
+                        pendingTurn.ErrorCategory = RunErrorTaxonomy.ToolError;
                     }
-                }
-                if (pendingTurn.ToolSuccess == false)
-                {
-                    pendingTurn.ErrorCategory = RunErrorTaxonomy.ToolError;
+
+                    if (checkpoint.Correction is not null
+                        && CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy))
+                    {
+                        var frozenTool = configuration.ToolManifest.FirstOrDefault(item =>
+                            string.Equals(item.Id, pendingTurn.ToolId, StringComparison.OrdinalIgnoreCase));
+                        CorrectionTracePolicy.RecordToolFact(
+                            checkpoint.Correction,
+                            pendingTurn.ToolId,
+                            pendingTurn.ArgumentsJson,
+                            new ToolDispatchResultDto
+                            {
+                                Status = pendingTurn.ToolSuccess == false ? "failed" : "completed",
+                                ExecutionId = pendingTurn.ExecutionId,
+                                Result = dispatch.Result,
+                            },
+                            frozenTool?.MutatesWorkspace ?? WorkspaceToolCatalog.MutatingMembers([pendingTurn.ToolId]).Count > 0,
+                            task.WorkerHandle,
+                            snapshot?.WorkspaceSnapshotId);
+                        CorrectionTracePolicy.EvaluateCompletion(
+                            checkpoint.Correction,
+                            configuration.RuntimePolicy!,
+                            checkpoint.UserGoal,
+                            checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+                        correctionToEmit = checkpoint.Correction;
+                    }
+
+                    task.PendingToolExecutionId = null;
+                    task.PendingToolApprovalId = null;
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
                 }
 
-                if (checkpoint.Correction is not null
-                    && CorrectionRuntimePolicy.IsStructuredInvestigation(configuration.RuntimePolicy))
+                if (shouldNotifyBrowserHandoff)
                 {
-                    var frozenTool = configuration.ToolManifest.FirstOrDefault(item =>
-                        string.Equals(item.Id, pendingTurn.ToolId, StringComparison.OrdinalIgnoreCase));
-                    CorrectionTracePolicy.RecordToolFact(
-                        checkpoint.Correction,
-                        pendingTurn.ToolId,
-                        pendingTurn.ArgumentsJson,
-                        new ToolDispatchResultDto
-                        {
-                            Status = pendingTurn.ToolSuccess == false ? "failed" : "completed",
-                            ExecutionId = pendingTurn.ExecutionId,
-                            Result = dispatch.Result,
-                        },
-                        frozenTool?.MutatesWorkspace ?? WorkspaceToolCatalog.MutatingMembers([pendingTurn.ToolId]).Count > 0,
-                        task.WorkerHandle,
-                        snapshot?.WorkspaceSnapshotId);
-                    CorrectionTracePolicy.EvaluateCompletion(
-                        checkpoint.Correction,
-                        configuration.RuntimePolicy!,
-                        checkpoint.UserGoal,
-                        checkpoint.Correction.Completion.ModifiedArtifacts.Count > 0);
+                    await NotifyCompanionBackflowAsync(
+                        run,
+                        configuration,
+                        checkpoint,
+                        "browser_handoff",
+                        "Browser task space handed off for human control.",
+                        cancellationToken).ConfigureAwait(false);
                 }
-
-                task.PendingToolExecutionId = null;
-                task.PendingToolApprovalId = null;
-                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
-                if (checkpoint.Correction is not null)
-                    await AppendCorrectionTraceEventAsync(run, checkpoint.Correction, cancellationToken).ConfigureAwait(false);
+                if (correctionToEmit is not null)
+                    await AppendCorrectionTraceEventAsync(run, correctionToEmit, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
@@ -462,149 +586,211 @@ internal sealed partial class FullDuplexRunEngine
             {
                 IReadOnlyList<WorkerToolDescriptor> declaredTools = descriptors;
                 string? closeoutPrompt = null;
-                if (task.CloseoutRequested)
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
                 {
-                    declaredTools = [];
-                    closeoutPrompt = CloseoutPrompts.Build(new CloseoutPrompts.CloseoutContext(
-                        task.CloseoutCategory ?? RunErrorTaxonomy.Runtime,
-                        task.CloseoutReason ?? "The worker budget was exhausted before the task could finish.",
-                        task.CloseoutHardCeiling,
-                        task.ToolRounds,
-                        roundLimit,
-                        configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk),
-                        task.ToolTurns.Count,
-                        configuration.Tools.MaxToolCalls,
-                        task.TokensUsed,
-                        configuration.Context.EffectiveTaskTokenBudget,
-                        Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
-                        configuration.Context.RunTokenBudget,
-                        task.ToolTurns
-                            .TakeLast(3)
-                            .Select(turn => turn.ToolId)
-                            .Where(id => !string.IsNullOrWhiteSpace(id))
-                            .ToArray()));
+                    if (task.CloseoutRequested)
+                    {
+                        declaredTools = [];
+                        closeoutPrompt = CloseoutPrompts.Build(new CloseoutPrompts.CloseoutContext(
+                            task.CloseoutCategory ?? RunErrorTaxonomy.Runtime,
+                            task.CloseoutReason ?? "The worker budget was exhausted before the task could finish.",
+                            task.CloseoutHardCeiling,
+                            task.ToolRounds,
+                            roundLimit,
+                            configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk),
+                            task.ToolTurns.Count,
+                            configuration.Tools.MaxToolCalls,
+                            task.TokensUsed,
+                            configuration.Context.EffectiveTaskTokenBudget,
+                            Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
+                            configuration.Context.RunTokenBudget,
+                            task.ToolTurns
+                                .TakeLast(3)
+                                .Select(turn => turn.ToolId)
+                                .Where(id => !string.IsNullOrWhiteSpace(id))
+                                .ToArray()));
+                    }
                 }
                 model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, declaredTools, cancellationToken, closeoutPrompt).ConfigureAwait(false);
             }
             catch (RunInterruptedException interrupted) when (!cancellationToken.IsCancellationRequested)
             {
-                Interrupts?.TakePending(Guid.Parse(run.RunId));
-                checkpoint = await RecordWorkerInterruptionAsync(run, checkpoint, task, interrupted.Request, interrupted.PartialText, [], cancellationToken).ConfigureAwait(false);
+                Interrupts?.TakePending(runGuid);
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint = await RecordWorkerInterruptionAsync(run, checkpoint, task, interrupted.Request, interrupted.PartialText, [], cancellationToken).ConfigureAwait(false);
+                }
                 continue;
             }
             catch (InvalidDataException ex)
             {
-                return FailedToolTask(checkpoint, task, worker, WorkerAssignmentInvalidCategory, SafeError(ex));
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    return FailedToolTask(checkpoint, task, worker, WorkerAssignmentInvalidCategory, SafeError(ex)) with { TaskId = task.TaskId };
+                }
             }
 
-            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, model.Usage);
-            AccumulateTaskTokens(task, model.Usage);
-            if (!model.IsAvailable || model.Error is not null)
+            ToolTaskExecutionResult? completedTurnResult = null;
+            var shouldContinueLoop = false;
+
+            await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
             {
-                return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ModelUnavailable, model.Error ?? "Worker model is unavailable.");
-            }
-            if (task.CloseoutRequested)
-            {
-                return CompleteCloseout(checkpoint, task, worker, model);
+                checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, model.Usage);
+                AccumulateTaskTokens(task, model.Usage);
+                if (!model.IsAvailable || model.Error is not null)
+                {
+                    completedTurnResult = FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ModelUnavailable, model.Error ?? "Worker model is unavailable.");
+                }
+                else if (task.CloseoutRequested)
+                {
+                    completedTurnResult = CompleteCloseout(checkpoint, task, worker, model);
+                }
+                else
+                {
+                    task.ToolRounds++;
+                    if (model.Calls.Count == 0 && string.IsNullOrWhiteSpace(model.Text))
+                    {
+                        task.ConsecutiveEmptyResponses++;
+                    }
+                    else
+                    {
+                        task.ConsecutiveEmptyResponses = 0;
+                    }
+                }
             }
 
-            task.ToolRounds++;
-            if (model.Calls.Count == 0 && string.IsNullOrWhiteSpace(model.Text))
-            {
-                task.ConsecutiveEmptyResponses++;
-            }
-            else
-            {
-                task.ConsecutiveEmptyResponses = 0;
-            }
+            if (completedTurnResult is not null)
+                return completedTurnResult with { TaskId = task.TaskId };
 
             await EmitToolRoundEventAsync(run, checkpoint, task, configuration, roundLimit, model, cancellationToken).ConfigureAwait(false);
 
-            if (roundLimit > 0 && task.ToolRounds > roundLimit)
-            {
-                RequestCloseout(task, RunErrorTaxonomy.ToolRoundLimit,
-                    $"The worker exhausted its tool-round budget ({DescribeToolBudget(configuration, task, roundLimit)}).");
-            }
-
+            LoopGuardDecision? loopDecision = null;
             if (!task.CloseoutRequested && _loopGuard is { } guard)
             {
-                var decision = await guard.EvaluateAsync(
+                int iterSnapshot;
+                int tokensSnapshot;
+                int callCountSnapshot;
+                IReadOnlyList<string> fingerprintsSnapshot;
+                int errorsSnapshot;
+                await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+                {
+                    iterSnapshot = task.ToolRounds - 1;
+                    tokensSnapshot = task.TokensUsed;
+                    callCountSnapshot = task.ToolTurns.Count;
+                    fingerprintsSnapshot = TrailingFingerprints(task, FingerprintTail);
+                    errorsSnapshot = TrailingConsecutiveErrors(task);
+                }
+
+                loopDecision = await guard.EvaluateAsync(
                     run.SessionId.ToString(),
                     run.RunId.ToString(),
                     new LoopGuardContext
                     {
-                        Iteration = task.ToolRounds - 1,
+                        Iteration = iterSnapshot,
                         MaxIterations = roundLimit,
-                        TokensUsed = task.TokensUsed,
+                        TokensUsed = tokensSnapshot,
                         TokenBudget = configuration.Context.EffectiveTaskTokenBudget,
-                        ToolCallCount = task.ToolTurns.Count,
+                        ToolCallCount = callCountSnapshot,
                         MaxToolCalls = configuration.Tools.MaxToolCalls,
-                        RecentToolCallFingerprints = TrailingFingerprints(task, FingerprintTail),
-                        ConsecutiveErrors = TrailingConsecutiveErrors(task)
+                        RecentToolCallFingerprints = fingerprintsSnapshot,
+                        ConsecutiveErrors = errorsSnapshot
                     },
                     cancellationToken).ConfigureAwait(false);
-                if (!decision.ShouldContinue)
+            }
+
+            var observeBudgetExhausted = false;
+            long observedRunTokens = 0;
+
+            await using (await EnterCheckpointGateAsync(runGuid, cancellationToken).ConfigureAwait(false))
+            {
+                if (roundLimit > 0 && task.ToolRounds > roundLimit)
                 {
-                    RequestCloseout(task, decision.Category ?? RunErrorTaxonomy.ToolLoopDetected,
-                        decision.Reason ?? "The loop guard stopped further tool rounds for this task.",
-                        decision.HardCeiling);
+                    RequestCloseout(task, RunErrorTaxonomy.ToolRoundLimit,
+                        $"The worker exhausted its tool-round budget ({DescribeToolBudget(configuration, task, roundLimit)}).");
+                }
+
+                if (!task.CloseoutRequested && loopDecision is { ShouldContinue: false })
+                {
+                    RequestCloseout(task, loopDecision.Category ?? RunErrorTaxonomy.ToolLoopDetected,
+                        loopDecision.Reason ?? "The loop guard stopped further tool rounds for this task.",
+                        loopDecision.HardCeiling);
+                }
+
+                if (!task.CloseoutRequested)
+                {
+                    var runTokens = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage);
+                    if (configuration.Context.RunTokenBudget > 0 && runTokens >= configuration.Context.RunTokenBudget)
+                    {
+                        observeBudgetExhausted = true;
+                        observedRunTokens = runTokens;
+                        RequestCloseout(task, RunErrorTaxonomy.RunTokenBudgetExhausted,
+                            $"The run exhausted its token budget ({runTokens}/{configuration.Context.RunTokenBudget}).");
+                    }
+                }
+
+                if (!task.CloseoutRequested && task.ConsecutiveEmptyResponses >= MaxConsecutiveEmptyResponses)
+                {
+                    RequestCloseout(task, RunErrorTaxonomy.EmptyResponseLimit,
+                        $"The worker returned {task.ConsecutiveEmptyResponses} consecutive empty responses.");
+                }
+
+                if (task.CloseoutRequested)
+                {
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-closeout", cancellationToken).ConfigureAwait(false);
+                    shouldContinueLoop = true;
+                }
+                else if (model.Calls.Count == 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(model.Text))
+                    {
+                        var result = BuildWorkerStepResult(task, worker.Id, model.Text);
+                        completedTurnResult = new ToolTaskExecutionResult(checkpoint, Waiting: false,
+                            new TaskExecutionResult(task.TaskId, worker.Id, result.Status, result));
+                    }
+                    else
+                    {
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-empty-response", cancellationToken).ConfigureAwait(false);
+                        shouldContinueLoop = true;
+                    }
+                }
+                else
+                {
+                    var existingCallIds = task.ToolTurns.Select(item => item.CallId).ToHashSet(StringComparer.Ordinal);
+                    foreach (var call in model.Calls)
+                    {
+                        if (!existingCallIds.Add(call.CallId))
+                        {
+                            completedTurnResult = FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.DuplicateToolCall, $"The worker reused tool call id '{call.CallId}'.", call.ToolId);
+                            break;
+                        }
+                        task.ToolTurns.Add(new WorkerToolTurn
+                        {
+                            CallId = call.CallId,
+                            ToolId = call.ToolId,
+                            ArgumentsJson = call.ArgumentsJson,
+                            AssistantText = task.ToolTurns.Count == 0 ? model.Text : null
+                        });
+                    }
+                    if (completedTurnResult is null)
+                    {
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-calls", cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
 
-            if (!task.CloseoutRequested)
+            if (observeBudgetExhausted)
             {
-                var runTokens = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage);
-                if (configuration.Context.RunTokenBudget > 0 && runTokens >= configuration.Context.RunTokenBudget)
-                {
-                    await ObserveAutonomousEventAsync(run, configuration, GovernanceTopics.BudgetTick,
-                        $"The run exhausted its token budget ({runTokens}/{configuration.Context.RunTokenBudget}).").ConfigureAwait(false);
-                    RequestCloseout(task, RunErrorTaxonomy.RunTokenBudgetExhausted,
-                        $"The run exhausted its token budget ({runTokens}/{configuration.Context.RunTokenBudget}).");
-                }
+                await ObserveAutonomousEventAsync(run, configuration, GovernanceTopics.BudgetTick,
+                    $"The run exhausted its token budget ({observedRunTokens}/{configuration.Context.RunTokenBudget}).").ConfigureAwait(false);
             }
-
-            if (!task.CloseoutRequested && task.ConsecutiveEmptyResponses >= MaxConsecutiveEmptyResponses)
-            {
-                RequestCloseout(task, RunErrorTaxonomy.EmptyResponseLimit,
-                    $"The worker returned {task.ConsecutiveEmptyResponses} consecutive empty responses.");
-            }
-
-            if (task.CloseoutRequested)
+            if (task.CloseoutRequested && shouldContinueLoop)
             {
                 await EmitCloseoutRequestedAsync(run, checkpoint, task, configuration, roundLimit, model, cancellationToken).ConfigureAwait(false);
-                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-closeout", cancellationToken).ConfigureAwait(false);
+            }
+            if (completedTurnResult is not null)
+                return completedTurnResult with { TaskId = task.TaskId };
+            if (shouldContinueLoop)
                 continue;
-            }
-
-            if (model.Calls.Count == 0)
-            {
-                if (!string.IsNullOrWhiteSpace(model.Text))
-                {
-                    var result = BuildWorkerStepResult(task, worker.Id, model.Text);
-                    return new ToolTaskExecutionResult(checkpoint, Waiting: false,
-                        new TaskExecutionResult(task.TaskId, worker.Id, result.Status, result));
-                }
-                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-empty-response", cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            var existingCallIds = task.ToolTurns.Select(item => item.CallId).ToHashSet(StringComparer.Ordinal);
-            foreach (var call in model.Calls)
-            {
-                if (!existingCallIds.Add(call.CallId))
-                {
-                    return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.DuplicateToolCall, $"The worker reused tool call id '{call.CallId}'.", call.ToolId);
-                }
-                task.ToolTurns.Add(new WorkerToolTurn
-                {
-                    CallId = call.CallId,
-                    ToolId = call.ToolId,
-                    ArgumentsJson = call.ArgumentsJson,
-                    AssistantText = task.ToolTurns.Count == 0 ? model.Text : null
-                });
-            }
-
-            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-calls", cancellationToken).ConfigureAwait(false);
         }
 
         throw new OperationCanceledException(cancellationToken);
@@ -623,20 +809,39 @@ internal sealed partial class FullDuplexRunEngine
         if (configuration.SpaceOptions is not null)
             authorized = authorized.Where(entry => !SpaceCompositionPolicy.IsWorktreeManagement(entry.Id)).ToArray();
 
+        // Automatically surface the decentralized atomic task board (`team_tasks`, #50) whenever an agent carries team board/plan capabilities.
+        var carriesTeamSurface = authorized.Any(e => CoreVirtualToolPolicy.IsTeamPlan(e.Id) || CoreVirtualToolPolicy.IsTeamMessage(e.Id) || CoreVirtualToolPolicy.IsTeamSpawn(e.Id))
+            || !string.IsNullOrWhiteSpace(task.TeammateHandle);
+
         if (task.RequiredTools.Count == 0)
         {
-            return authorized
+            var descriptors = authorized
                 .Select(entry => new WorkerToolDescriptor(entry.Id, entry.Description, entry.InputSchema))
-                .ToArray();
+                .ToList();
+            if (carriesTeamSurface && !descriptors.Any(d => TeamTaskBoardProtocol.IsTeamTasks(d.ToolId)))
+            {
+                var teamTasksEntry = TeamTaskBoardProtocol.ManifestEntry();
+                descriptors.Add(new WorkerToolDescriptor(teamTasksEntry.Id, teamTasksEntry.Description, teamTasksEntry.InputSchema));
+            }
+            return descriptors;
         }
 
         var byId = authorized.ToDictionary(entry => entry.Id, StringComparer.OrdinalIgnoreCase);
         var entries = new List<WorkerToolDescriptor>(task.RequiredTools.Count);
         foreach (var required in task.RequiredTools)
         {
-            if (!byId.TryGetValue(required, out var entry))
-                throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{required}', which is not authorized for the assigned worker instance.");
-            entries.Add(new WorkerToolDescriptor(entry.Id, entry.Description, entry.InputSchema));
+            if (byId.TryGetValue(required, out var entry))
+            {
+                entries.Add(new WorkerToolDescriptor(entry.Id, entry.Description, entry.InputSchema));
+                continue;
+            }
+            if (TeamTaskBoardProtocol.IsTeamTasks(required) && carriesTeamSurface)
+            {
+                var teamTasksEntry = TeamTaskBoardProtocol.ManifestEntry();
+                entries.Add(new WorkerToolDescriptor(teamTasksEntry.Id, teamTasksEntry.Description, teamTasksEntry.InputSchema));
+                continue;
+            }
+            throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{required}', which is not authorized for the assigned worker instance.");
         }
         return entries;
     }

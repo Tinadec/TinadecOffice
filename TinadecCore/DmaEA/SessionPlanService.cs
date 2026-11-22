@@ -6,7 +6,7 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.DmaEA;
 
-public sealed class SessionPlanService
+public sealed class SessionPlanService : ITeamTaskBoardPort
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, byte> EnsuredConnections = new(StringComparer.Ordinal);
@@ -659,13 +659,657 @@ public sealed class SessionPlanService
         }
     }
 
+    public async Task<TeamTaskBoardListResult> ListTasksAsync(
+        Guid sessionId,
+        bool onlyReady = true,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = _sessionGates.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(db, cancellationToken).ConfigureAwait(false);
+            var row = await FindPlanRowInternalAsync(db, sessionId, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                return new TeamTaskBoardListResult { SessionId = sessionId, Revision = 0 };
+            }
+
+            var phases = DeserializePhases(row.PlanJson);
+            return BuildTaskBoardListResult(sessionId, row.Revision, phases, onlyReady);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<TeamTaskClaimResult> ClaimTaskAsync(
+        Guid sessionId,
+        string? stepId,
+        string claimantHandle,
+        long? expectedRevision = null,
+        Guid? runId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var cleanHandle = string.IsNullOrWhiteSpace(claimantHandle) ? "teammate" : claimantHandle.Trim().TrimStart('@');
+        var gate = _sessionGates.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(db, cancellationToken).ConfigureAwait(false);
+            var row = await FindPlanRowInternalAsync(db, sessionId, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                return new TeamTaskClaimResult
+                {
+                    Claimed = false,
+                    StepId = stepId,
+                    Reason = "plan_empty",
+                    Revision = 0
+                };
+            }
+
+            if (expectedRevision is { } expected && row.Revision != expected)
+            {
+                return new TeamTaskClaimResult
+                {
+                    Claimed = false,
+                    StepId = stepId,
+                    Reason = "revision_conflict",
+                    Revision = row.Revision
+                };
+            }
+
+            var phases = DeserializePhases(row.PlanJson);
+            var stepById = BuildStepLookup(phases);
+            var now = DateTimeOffset.UtcNow;
+
+            int targetPhaseIdx = -1;
+            int targetStepIdx = -1;
+
+            if (!string.IsNullOrWhiteSpace(stepId))
+            {
+                var requestedId = stepId.Trim();
+                for (var pi = 0; pi < phases.Count; pi++)
+                {
+                    var idx = phases[pi].Steps.ToList().FindIndex(s =>
+                        string.Equals(s.Id, requestedId, StringComparison.OrdinalIgnoreCase)
+                        || (!string.IsNullOrWhiteSpace(s.BoundTaskKey) && string.Equals(s.BoundTaskKey, requestedId, StringComparison.OrdinalIgnoreCase)));
+                    if (idx >= 0)
+                    {
+                        targetPhaseIdx = pi;
+                        targetStepIdx = idx;
+                        break;
+                    }
+                }
+
+                if (targetPhaseIdx < 0)
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        StepId = requestedId,
+                        Reason = "step_not_found",
+                        Revision = row.Revision
+                    };
+                }
+
+                var candidate = phases[targetPhaseIdx].Steps[targetStepIdx];
+                var phaseId = phases[targetPhaseIdx].Id;
+
+                if (string.Equals(candidate.ClaimedBy, cleanHandle, StringComparison.OrdinalIgnoreCase)
+                    && candidate.Status == SessionPlanStatuses.StepInProgress)
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = true,
+                        StepId = candidate.Id,
+                        ClaimedBy = cleanHandle,
+                        Revision = row.Revision,
+                        Task = ToBoardItem(phaseId, candidate, stepById)
+                    };
+                }
+
+                if (!string.IsNullOrWhiteSpace(candidate.ClaimedBy)
+                    && !string.Equals(candidate.ClaimedBy, cleanHandle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        StepId = candidate.Id,
+                        AlreadyClaimedBy = candidate.ClaimedBy,
+                        Reason = "already_claimed",
+                        Revision = row.Revision,
+                        Task = ToBoardItem(phaseId, candidate, stepById)
+                    };
+                }
+
+                if (candidate.Status is SessionPlanStatuses.StepCompleted or SessionPlanStatuses.StepSkipped)
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        StepId = candidate.Id,
+                        AlreadyClaimedBy = candidate.ClaimedBy ?? candidate.AssignedAgentSlug,
+                        Reason = "already_completed",
+                        Revision = row.Revision,
+                        Task = ToBoardItem(phaseId, candidate, stepById)
+                    };
+                }
+
+                if (candidate.Status == SessionPlanStatuses.StepInProgress
+                    && !string.IsNullOrWhiteSpace(candidate.AssignedAgentSlug)
+                    && !string.Equals(candidate.AssignedAgentSlug, cleanHandle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        StepId = candidate.Id,
+                        AlreadyClaimedBy = candidate.AssignedAgentSlug,
+                        Reason = "already_in_progress",
+                        Revision = row.Revision,
+                        Task = ToBoardItem(phaseId, candidate, stepById)
+                    };
+                }
+
+                if (!AreDependenciesSatisfied(candidate, stepById))
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        StepId = candidate.Id,
+                        Reason = "dependencies_unmet",
+                        Revision = row.Revision,
+                        Task = ToBoardItem(phaseId, candidate, stepById)
+                    };
+                }
+            }
+            else
+            {
+                // Auto-claim first ready, unclaimed step (preferring steps assigned to this handle, then open pool steps; never stealing coordinator-reserved steps).
+                for (var pass = 0; pass < 2 && targetPhaseIdx < 0; pass++)
+                {
+                    for (var pi = 0; pi < phases.Count && targetPhaseIdx < 0; pi++)
+                    {
+                        for (var si = 0; si < phases[pi].Steps.Count; si++)
+                        {
+                            var s = phases[pi].Steps[si];
+                            if (!IsClaimableReadyStep(s, stepById)) continue;
+                            if (string.Equals(s.AssignedAgentSlug, "coordinator", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(cleanHandle, "coordinator", StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+                            if (pass == 0)
+                            {
+                                if (string.Equals(s.AssignedAgentSlug, cleanHandle, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    targetPhaseIdx = pi;
+                                    targetStepIdx = si;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                if (string.IsNullOrWhiteSpace(s.AssignedAgentSlug)
+                                    || string.Equals(s.AssignedAgentSlug, "unassigned", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(s.AssignedAgentSlug, "any", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    targetPhaseIdx = pi;
+                                    targetStepIdx = si;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (targetPhaseIdx < 0)
+                {
+                    return new TeamTaskClaimResult
+                    {
+                        Claimed = false,
+                        Reason = "no_ready_tasks",
+                        Revision = row.Revision
+                    };
+                }
+            }
+
+            var targetPhase = phases[targetPhaseIdx];
+            var updatedSteps = targetPhase.Steps.ToList();
+            var claimedStep = updatedSteps[targetStepIdx] with
+            {
+                Status = SessionPlanStatuses.StepInProgress,
+                ClaimedBy = cleanHandle,
+                ClaimedAt = now,
+                AssignedAgentSlug = cleanHandle,
+                UpdatedAt = now
+            };
+            updatedSteps[targetStepIdx] = claimedStep;
+            phases[targetPhaseIdx] = targetPhase with { Steps = updatedSteps };
+
+            if (runId is { } rid && rid != Guid.Empty)
+                row.LastRunId = rid;
+            var recomputed = RecomputePhases(NormalizeAndValidatePhases(phases, tolerateMissingDeps: true));
+            row.Status = ComputePlanStatus(recomputed, row.ApprovedAt is not null, explicitStatus: null);
+            row.PlanJson = SerializePhases(recomputed);
+            row.Revision++;
+            row.UpdatedAt = now;
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var dto = ToDto(row, recomputed);
+            await EmitPlanUpdatedAsync(sessionId, runId ?? row.LastRunId, dto, $"@{cleanHandle} claimed step '{claimedStep.Id}'.", cancellationToken).ConfigureAwait(false);
+
+            var updatedLookup = BuildStepLookup(recomputed);
+            var persistedStep = updatedLookup[claimedStep.Id];
+            return new TeamTaskClaimResult
+            {
+                Claimed = true,
+                StepId = persistedStep.Id,
+                ClaimedBy = cleanHandle,
+                Revision = row.Revision,
+                Task = ToBoardItem(recomputed[targetPhaseIdx].Id, persistedStep, updatedLookup)
+            };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<TeamTaskCompleteResult> CompleteTaskAsync(
+        Guid sessionId,
+        string stepId,
+        string claimantHandle,
+        string? summary = null,
+        IReadOnlyList<string>? evidence = null,
+        Guid? runId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(stepId))
+            throw new SessionPlanException(400, "invalid_request", "step_id is required to complete a task.");
+
+        var cleanHandle = string.IsNullOrWhiteSpace(claimantHandle) ? "teammate" : claimantHandle.Trim().TrimStart('@');
+        var requestedId = stepId.Trim();
+        var gate = _sessionGates.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(db, cancellationToken).ConfigureAwait(false);
+            var row = await FindPlanRowInternalAsync(db, sessionId, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                return new TeamTaskCompleteResult
+                {
+                    Completed = false,
+                    StepId = requestedId,
+                    Reason = "plan_empty",
+                    Revision = 0
+                };
+            }
+
+            var phases = DeserializePhases(row.PlanJson);
+            var beforeLookup = BuildStepLookup(phases);
+            var readyIdsBefore = phases
+                .SelectMany(p => p.Steps)
+                .Where(s => IsClaimableReadyStep(s, beforeLookup))
+                .Select(s => s.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            int targetPhaseIdx = -1;
+            int targetStepIdx = -1;
+            for (var pi = 0; pi < phases.Count; pi++)
+            {
+                var idx = phases[pi].Steps.ToList().FindIndex(s =>
+                    string.Equals(s.Id, requestedId, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(s.BoundTaskKey) && string.Equals(s.BoundTaskKey, requestedId, StringComparison.OrdinalIgnoreCase)));
+                if (idx >= 0)
+                {
+                    targetPhaseIdx = pi;
+                    targetStepIdx = idx;
+                    break;
+                }
+            }
+
+            if (targetPhaseIdx < 0)
+            {
+                return new TeamTaskCompleteResult
+                {
+                    Completed = false,
+                    StepId = requestedId,
+                    Reason = "step_not_found",
+                    Revision = row.Revision
+                };
+            }
+
+            var current = phases[targetPhaseIdx].Steps[targetStepIdx];
+            if (!string.IsNullOrWhiteSpace(current.ClaimedBy)
+                && !string.Equals(current.ClaimedBy, cleanHandle, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(cleanHandle, "coordinator", StringComparison.OrdinalIgnoreCase))
+            {
+                return new TeamTaskCompleteResult
+                {
+                    Completed = false,
+                    StepId = current.Id,
+                    Reason = $"claimed_by_{current.ClaimedBy}",
+                    Revision = row.Revision,
+                    Task = ToBoardItem(phases[targetPhaseIdx].Id, current, beforeLookup)
+                };
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var artifacts = current.Artifacts.ToList();
+            if (evidence is { Count: > 0 })
+            {
+                foreach (var ev in evidence.Where(e => !string.IsNullOrWhiteSpace(e)).Take(8))
+                {
+                    var trimmed = ev.Trim();
+                    AddUniqueArtifact(artifacts, new SessionPlanArtifactDto
+                    {
+                        Kind = "evidence",
+                        Label = Truncate(trimmed, 160),
+                        Path = LooksLikePath(trimmed) ? trimmed : null
+                    });
+                }
+            }
+
+            var completedStep = current with
+            {
+                Status = SessionPlanStatuses.StepCompleted,
+                ClaimedBy = current.ClaimedBy ?? cleanHandle,
+                ClaimedAt = current.ClaimedAt ?? now,
+                AssignedAgentSlug = current.AssignedAgentSlug ?? cleanHandle,
+                Summary = string.IsNullOrWhiteSpace(summary) ? current.Summary : Truncate(summary.Trim(), 2000),
+                Artifacts = artifacts,
+                UpdatedAt = now
+            };
+
+            var updatedSteps = phases[targetPhaseIdx].Steps.ToList();
+            updatedSteps[targetStepIdx] = completedStep;
+            phases[targetPhaseIdx] = phases[targetPhaseIdx] with { Steps = updatedSteps };
+
+            if (runId is { } rid && rid != Guid.Empty)
+                row.LastRunId = rid;
+            var recomputed = RecomputePhases(NormalizeAndValidatePhases(phases, tolerateMissingDeps: true));
+            row.Status = ComputePlanStatus(recomputed, row.ApprovedAt is not null, explicitStatus: null);
+            row.PlanJson = SerializePhases(recomputed);
+            row.Revision++;
+            row.UpdatedAt = now;
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var dto = ToDto(row, recomputed);
+            await EmitPlanUpdatedAsync(sessionId, runId ?? row.LastRunId, dto, $"@{cleanHandle} completed step '{completedStep.Id}'.", cancellationToken).ConfigureAwait(false);
+
+            var afterLookup = BuildStepLookup(recomputed);
+            var unlocked = new List<TeamTaskBoardItemDto>();
+            foreach (var p in recomputed)
+            {
+                foreach (var s in p.Steps)
+                {
+                    if (!readyIdsBefore.Contains(s.Id) && IsClaimableReadyStep(s, afterLookup))
+                    {
+                        unlocked.Add(ToBoardItem(p.Id, s, afterLookup));
+                    }
+                }
+            }
+
+            return new TeamTaskCompleteResult
+            {
+                Completed = true,
+                StepId = completedStep.Id,
+                CompletedBy = cleanHandle,
+                Revision = row.Revision,
+                Task = ToBoardItem(recomputed[targetPhaseIdx].Id, afterLookup[completedStep.Id], afterLookup),
+                UnlockedReadyTasks = unlocked
+            };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<TeamTaskReleaseResult> ReleaseTaskAsync(
+        Guid sessionId,
+        string stepId,
+        string claimantHandle,
+        string? reason = null,
+        bool markBlocked = false,
+        Guid? runId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(stepId))
+            throw new SessionPlanException(400, "invalid_request", "step_id is required to release a task.");
+
+        var cleanHandle = string.IsNullOrWhiteSpace(claimantHandle) ? "teammate" : claimantHandle.Trim().TrimStart('@');
+        var requestedId = stepId.Trim();
+        var gate = _sessionGates.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(db, cancellationToken).ConfigureAwait(false);
+            var row = await FindPlanRowInternalAsync(db, sessionId, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                return new TeamTaskReleaseResult
+                {
+                    Released = false,
+                    StepId = requestedId,
+                    Status = SessionPlanStatuses.StepPending,
+                    Reason = "plan_empty",
+                    Revision = 0
+                };
+            }
+
+            var phases = DeserializePhases(row.PlanJson);
+            var lookupBefore = BuildStepLookup(phases);
+            int targetPhaseIdx = -1;
+            int targetStepIdx = -1;
+            for (var pi = 0; pi < phases.Count; pi++)
+            {
+                var idx = phases[pi].Steps.ToList().FindIndex(s =>
+                    string.Equals(s.Id, requestedId, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(s.BoundTaskKey) && string.Equals(s.BoundTaskKey, requestedId, StringComparison.OrdinalIgnoreCase)));
+                if (idx >= 0)
+                {
+                    targetPhaseIdx = pi;
+                    targetStepIdx = idx;
+                    break;
+                }
+            }
+
+            if (targetPhaseIdx < 0)
+            {
+                return new TeamTaskReleaseResult
+                {
+                    Released = false,
+                    StepId = requestedId,
+                    Status = SessionPlanStatuses.StepPending,
+                    Reason = "step_not_found",
+                    Revision = row.Revision
+                };
+            }
+
+            var current = phases[targetPhaseIdx].Steps[targetStepIdx];
+            if (!string.IsNullOrWhiteSpace(current.ClaimedBy)
+                && !string.Equals(current.ClaimedBy, cleanHandle, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(cleanHandle, "coordinator", StringComparison.OrdinalIgnoreCase))
+            {
+                return new TeamTaskReleaseResult
+                {
+                    Released = false,
+                    StepId = current.Id,
+                    Status = current.Status,
+                    Reason = $"claimed_by_{current.ClaimedBy}",
+                    Revision = row.Revision,
+                    Task = ToBoardItem(phases[targetPhaseIdx].Id, current, lookupBefore)
+                };
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var nextStatus = markBlocked ? SessionPlanStatuses.StepBlocked : SessionPlanStatuses.StepPending;
+            var clearAssignee = string.Equals(current.AssignedAgentSlug, cleanHandle, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : current.AssignedAgentSlug;
+            var releasedStep = current with
+            {
+                Status = nextStatus,
+                ClaimedBy = null,
+                ClaimedAt = null,
+                AssignedAgentSlug = clearAssignee,
+                Summary = string.IsNullOrWhiteSpace(reason) ? current.Summary : Truncate(reason.Trim(), 2000),
+                UpdatedAt = now
+            };
+
+            var updatedSteps = phases[targetPhaseIdx].Steps.ToList();
+            updatedSteps[targetStepIdx] = releasedStep;
+            phases[targetPhaseIdx] = phases[targetPhaseIdx] with { Steps = updatedSteps };
+
+            if (runId is { } rid && rid != Guid.Empty)
+                row.LastRunId = rid;
+            var recomputed = RecomputePhases(NormalizeAndValidatePhases(phases, tolerateMissingDeps: true));
+            row.Status = ComputePlanStatus(recomputed, row.ApprovedAt is not null, explicitStatus: null);
+            row.PlanJson = SerializePhases(recomputed);
+            row.Revision++;
+            row.UpdatedAt = now;
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var dto = ToDto(row, recomputed);
+            await EmitPlanUpdatedAsync(sessionId, runId ?? row.LastRunId, dto, $"@{cleanHandle} released step '{releasedStep.Id}' ({nextStatus}).", cancellationToken).ConfigureAwait(false);
+
+            var afterLookup = BuildStepLookup(recomputed);
+            return new TeamTaskReleaseResult
+            {
+                Released = true,
+                StepId = releasedStep.Id,
+                Status = nextStatus,
+                Reason = reason,
+                Revision = row.Revision,
+                Task = ToBoardItem(recomputed[targetPhaseIdx].Id, afterLookup[releasedStep.Id], afterLookup)
+            };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<SessionPlanRecord?> FindPlanRowInternalAsync(
+        SessionPlanDbContext db,
+        Guid sessionId,
+        CancellationToken ct)
+    {
+        var session = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
+        var scope = _tenant.Current;
+        if (session is not null)
+        {
+            if (scope.TenantId != Guid.Empty && (session.TenantId != scope.TenantId || session.WorkspaceId != scope.WorkspaceId))
+                throw new SessionPlanException(404, "session_not_found", $"Session '{sessionId}' was not found.");
+            return await db.SessionPlans.SingleOrDefaultAsync(
+                x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId,
+                ct).ConfigureAwait(false);
+        }
+
+        if (scope.TenantId != Guid.Empty)
+        {
+            return await db.SessionPlans.SingleOrDefaultAsync(
+                x => x.SessionId == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                ct).ConfigureAwait(false);
+        }
+
+        return await db.SessionPlans.SingleOrDefaultAsync(x => x.SessionId == sessionId, ct).ConfigureAwait(false);
+    }
+
+    private static Dictionary<string, SessionPlanStepDto> BuildStepLookup(IReadOnlyList<SessionPlanPhaseDto> phases) =>
+        phases.SelectMany(p => p.Steps).ToDictionary(s => s.Id, s => s, StringComparer.OrdinalIgnoreCase);
+
+    private static bool AreDependenciesSatisfied(
+        SessionPlanStepDto step,
+        IReadOnlyDictionary<string, SessionPlanStepDto> stepById) =>
+        step.DependsOn.All(dep =>
+            !stepById.TryGetValue(dep, out var depStep)
+            || depStep.Status is SessionPlanStatuses.StepCompleted or SessionPlanStatuses.StepSkipped);
+
+    private static bool IsClaimableReadyStep(
+        SessionPlanStepDto step,
+        IReadOnlyDictionary<string, SessionPlanStepDto> stepById) =>
+        step.Status == SessionPlanStatuses.StepPending
+        && string.IsNullOrWhiteSpace(step.ClaimedBy)
+        && AreDependenciesSatisfied(step, stepById);
+
+    private static TeamTaskBoardItemDto ToBoardItem(
+        string phaseId,
+        SessionPlanStepDto step,
+        IReadOnlyDictionary<string, SessionPlanStepDto> stepById) => new()
+    {
+        Id = step.Id,
+        PhaseId = phaseId,
+        Title = step.Title,
+        Description = step.Description,
+        Status = step.Status,
+        DependsOn = step.DependsOn,
+        Ready = IsClaimableReadyStep(step, stepById),
+        ClaimedBy = step.ClaimedBy,
+        AssignedAgentSlug = step.AssignedAgentSlug,
+        ClaimedAt = step.ClaimedAt,
+        Summary = step.Summary
+    };
+
+    private static TeamTaskBoardListResult BuildTaskBoardListResult(
+        Guid sessionId,
+        long revision,
+        IReadOnlyList<SessionPlanPhaseDto> phases,
+        bool onlyReady)
+    {
+        var lookup = BuildStepLookup(phases);
+        var allItems = new List<TeamTaskBoardItemDto>();
+        var readyCount = 0;
+        var inProgressCount = 0;
+        var completedCount = 0;
+        var blockedCount = 0;
+
+        foreach (var p in phases)
+        {
+            foreach (var s in p.Steps)
+            {
+                var item = ToBoardItem(p.Id, s, lookup);
+                if (item.Ready) readyCount++;
+                if (s.Status == SessionPlanStatuses.StepInProgress) inProgressCount++;
+                else if (s.Status is SessionPlanStatuses.StepCompleted or SessionPlanStatuses.StepSkipped) completedCount++;
+                else if (s.Status is SessionPlanStatuses.StepBlocked or SessionPlanStatuses.StepFailed) blockedCount++;
+
+                if (!onlyReady || item.Ready)
+                    allItems.Add(item);
+            }
+        }
+
+        return new TeamTaskBoardListResult
+        {
+            SessionId = sessionId,
+            Revision = revision,
+            ReadyCount = readyCount,
+            InProgressCount = inProgressCount,
+            CompletedCount = completedCount,
+            BlockedCount = blockedCount,
+            Tasks = allItems
+        };
+    }
+
     private async Task<(TenantContext Scope, SessionReference Session)> RequireSessionAsync(Guid sessionId, CancellationToken ct)
     {
         var scope = _tenant.Current;
         var session = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-        if (session is null || session.TenantId != scope.TenantId || session.WorkspaceId != scope.WorkspaceId)
+        if (session is null || (scope.TenantId != Guid.Empty && (session.TenantId != scope.TenantId || session.WorkspaceId != scope.WorkspaceId)))
             throw new SessionPlanException(404, "session_not_found", $"Session '{sessionId}' was not found.");
-        return (scope, session);
+        var effectiveScope = scope.TenantId != Guid.Empty
+            ? scope
+            : scope with { TenantId = session.TenantId, WorkspaceId = session.WorkspaceId };
+        return (effectiveScope, session);
     }
 
     private async Task EmitPlanUpdatedAsync(
@@ -796,6 +1440,8 @@ public sealed class SessionPlanService
                     DependsOn = deps,
                     BoundTaskKey = string.IsNullOrWhiteSpace(s.BoundTaskKey) ? null : s.BoundTaskKey.Trim(),
                     AssignedAgentSlug = string.IsNullOrWhiteSpace(s.AssignedAgentSlug) ? null : s.AssignedAgentSlug.Trim(),
+                    ClaimedBy = string.IsNullOrWhiteSpace(s.ClaimedBy) ? null : s.ClaimedBy.Trim().TrimStart('@'),
+                    ClaimedAt = string.IsNullOrWhiteSpace(s.ClaimedBy) ? null : s.ClaimedAt,
                     VerificationCriteria = s.VerificationCriteria.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).ToArray(),
                     Artifacts = s.Artifacts ?? [],
                     Summary = string.IsNullOrWhiteSpace(s.Summary) ? null : Truncate(s.Summary.Trim(), 2000)
@@ -890,6 +1536,12 @@ public sealed class SessionPlanService
                     DependsOn = patch.DependsOn ?? cur.DependsOn,
                     BoundTaskKey = patch.BoundTaskKey ?? cur.BoundTaskKey,
                     AssignedAgentSlug = patch.AssignedAgentSlug ?? cur.AssignedAgentSlug,
+                    ClaimedBy = patch.ClaimedBy is not null
+                        ? (string.IsNullOrWhiteSpace(patch.ClaimedBy) ? null : patch.ClaimedBy.Trim().TrimStart('@'))
+                        : cur.ClaimedBy,
+                    ClaimedAt = patch.ClaimedBy is not null
+                        ? (string.IsNullOrWhiteSpace(patch.ClaimedBy) ? null : cur.ClaimedAt ?? now)
+                        : cur.ClaimedAt,
                     VerificationCriteria = patch.VerificationCriteria ?? cur.VerificationCriteria,
                     Artifacts = patch.Artifacts ?? cur.Artifacts,
                     Summary = patch.Summary ?? cur.Summary,
