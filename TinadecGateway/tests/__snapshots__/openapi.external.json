@@ -13805,6 +13805,30 @@
         ]
       }
     },
+    "/api/v1/fs/media": {
+      "get": {
+        "operationId": "getApiV1FsMedia",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Stream user-selected background image/video media safely",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/fs/mkdir": {
+      "post": {
+        "operationId": "postApiV1FsMkdir",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create a directory on the host filesystem (authenticated Web/Electron picker)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/api/v1/governance/approval-delegations": {
       "post": {
         "operationId": "postApiV1GovernanceApproval-delegations",
@@ -17417,6 +17441,160 @@
         "summary": "List session runs",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/spatial-board": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdSpatial-board",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get multiplayer spatial board snapshot",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/spatial-board/comments": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdSpatial-boardComments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create spatial board comment pin",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/spatial-board/comments/{pinId}": {
+      "delete": {
+        "operationId": "deleteApiV1SessionsBySessionIdSpatial-boardCommentsByPinId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pinId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete a spatial board comment pin",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1SessionsBySessionIdSpatial-boardCommentsByPinId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pinId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update or resolve a spatial board comment pin",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/spatial-board/comments/{pinId}/replies": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdSpatial-boardCommentsByPinIdReplies",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pinId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reply to a spatial board comment pin",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/spatial-board/ops": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdSpatial-boardOps",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Apply property-level LWW spatial board operations",
+        "tags": [
+          "Sessions"
         ]
       }
     },

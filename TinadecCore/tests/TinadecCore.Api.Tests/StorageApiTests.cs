@@ -162,24 +162,33 @@ public sealed partial class StorageApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ComposerSettings_RejectFlatOptionsAndInvalidUpdatesWithoutPartialWrites()
+    public async Task ComposerSettings_AcceptFlatOptionsAndRejectInvalidUpdatesWithoutPartialWrites()
     {
         var client = _factory!.CreateClient();
-        var badCreate = await client.PostAsJsonAsync("/api/v1/sessions", new { space_options = new { plan_first = true } });
-        Assert.Equal(HttpStatusCode.BadRequest, badCreate.StatusCode);
+        var flatWithOptions = await client.PostAsJsonAsync("/api/v1/sessions", new { title = "Flat with preset options", space_options = new { plan_first = true } });
+        Assert.Equal(HttpStatusCode.Created, flatWithOptions.StatusCode);
+        var flatBody = await flatWithOptions.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("flat", flatBody.GetProperty("view_mode").GetString());
+        Assert.True(flatBody.GetProperty("space_options").GetProperty("plan_first").GetBoolean());
+
         var created = await (await client.PostAsJsonAsync("/api/v1/sessions", new { title = "Original" })).Content.ReadFromJsonAsync<JsonElement>();
         var id = created.GetProperty("id").GetGuid();
-        var badPatch = await client.PatchAsJsonAsync($"/api/v1/sessions/{id}", new { title = "Must not save", space_options = new { plan_first = true } });
-        Assert.Equal(HttpStatusCode.BadRequest, badPatch.StatusCode);
+        var badWorkflow = await client.PatchAsJsonAsync($"/api/v1/sessions/{id}", new { title = "Must not save", space_options = new { workflow_mode_version_id = Guid.NewGuid(), multi_agent = false } });
+        Assert.Equal(HttpStatusCode.BadRequest, badWorkflow.StatusCode);
         var badPermission = await client.PatchAsJsonAsync($"/api/v1/sessions/{id}", new { title = "Also must not save", permission_mode = "anything" });
         Assert.Equal(HttpStatusCode.BadRequest, badPermission.StatusCode);
-        var badInteraction = await client.PostAsJsonAsync($"/api/v1/sessions/{id}/interactions", new { content = "Do work", space_options = new { plan_first = true } });
+        var badInteraction = await client.PostAsJsonAsync($"/api/v1/sessions/{id}/interactions", new { content = "Do work", space_options = new { workflow_mode_version_id = Guid.NewGuid(), multi_agent = false } });
         Assert.Equal(HttpStatusCode.BadRequest, badInteraction.StatusCode);
         var stored = await _factory.Services.GetRequiredService<ProjectSessionStore>().GetSessionAsync(id);
         Assert.Equal("Original", stored!.Title);
         Assert.Equal(0, stored.SettingsRevision);
         Assert.Null(stored.SpaceOptionsJson);
         Assert.Empty((await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{id}/messages"))!);
+
+        var validFlatPatch = await client.PatchAsJsonAsync($"/api/v1/sessions/{id}", new { space_options = new { plan_first = true, multi_agent = true } });
+        Assert.Equal(HttpStatusCode.OK, validFlatPatch.StatusCode);
+        stored = await _factory.Services.GetRequiredService<ProjectSessionStore>().GetSessionAsync(id);
+        Assert.True(ProjectSessionStore.ReadSpaceOptions(stored!)!.PlanFirst);
     }
 
     [Fact]
