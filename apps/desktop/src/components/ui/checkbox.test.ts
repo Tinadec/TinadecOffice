@@ -14,6 +14,7 @@ describe('UiCheckbox', () => {
 
   it('keeps a visible border despite the global button reset', () => {
     // `button { border: 0 }` is unlayered, so it wins over Tailwind's layered utility.
-    expect(source).toContain('border: 1px solid hsl(var(--primary))')
+    expect(source).toContain('border: 1px solid var(--border-default)')
+    expect(source).not.toContain('border: 1px solid hsl(var(--primary))')
   })
 })

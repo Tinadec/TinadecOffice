@@ -36,15 +36,17 @@ withDefaults(defineProps<{
 .island-card {
   --island-pad: 12px;
   background: var(--surface-raised);
-  border: 1px solid var(--border-card);
-  border-radius: 12px;
+  border: 1px solid var(--border-card, var(--border-default));
+  border-radius: var(--radius-island, 12px);
   box-shadow: var(--shadow-card-subtle);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+  transition: box-shadow 180ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              border-color 180ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              background-color 180ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
 }
 
 .island-card.variant-section {
@@ -53,7 +55,7 @@ withDefaults(defineProps<{
 
 .island-card.hoverable:hover {
   box-shadow: var(--shadow-card-hover);
-  border-color: var(--border-card-active);
+  border-color: var(--border-card-active, var(--border-default));
 }
 
 .island-card.pad-sm { --island-pad: 8px; }
@@ -88,7 +90,7 @@ withDefaults(defineProps<{
 
 .island-card.divided .island-header {
   padding-bottom: calc(var(--island-pad) * 0.75);
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-muted, var(--border-default));
 }
 
 .island-card.divided .island-header + .island-body {
@@ -97,7 +99,7 @@ withDefaults(defineProps<{
 
 .island-card.divided .island-footer {
   padding-top: calc(var(--island-pad) * 0.75);
-  border-top: 1px solid var(--border-default);
+  border-top: 1px solid var(--border-muted, var(--border-default));
 }
 
 @media (prefers-reduced-motion: reduce) {

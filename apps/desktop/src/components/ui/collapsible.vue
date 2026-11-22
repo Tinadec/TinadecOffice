@@ -13,10 +13,10 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
 }>()
 
-const isOpen = ref(props.open)
+const isOpen = ref(Boolean(props.open))
 
 watch(() => props.open, (val) => {
-  isOpen.value = val
+  isOpen.value = Boolean(val)
 })
 
 function toggle() {
@@ -26,12 +26,54 @@ function toggle() {
 </script>
 
 <template>
-  <div :class="cn('', props.class)">
-    <div @click="toggle">
-      <slot name="trigger" />
+  <div :class="cn('ui-collapsible', props.class)" :data-state="isOpen ? 'open' : 'closed'">
+    <div class="ui-collapsible-trigger" @click="toggle">
+      <slot name="trigger" :open="isOpen" :toggle="toggle" />
     </div>
-    <div v-if="isOpen">
-      <slot />
+    <div
+      data-slot="collapsible-content"
+      class="ui-collapsible-panel"
+      :data-state="isOpen ? 'open' : 'closed'"
+      :aria-hidden="!isOpen"
+    >
+      <div class="ui-collapsible-inner">
+        <slot />
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.ui-collapsible-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: grid-template-rows 200ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              opacity 160ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              visibility 0s linear 200ms;
+}
+
+.ui-collapsible-panel[data-state="open"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: grid-template-rows 200ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              opacity 160ms var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+              visibility 0s linear 0s;
+}
+
+.ui-collapsible-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-collapsible-panel,
+  .ui-collapsible-panel[data-state="open"] {
+    transition: none;
+  }
+}
+</style>

@@ -12,6 +12,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 import { cn } from '@/lib/utils'
+import { UiTransition } from './ui-transition'
 
 export interface SelectFieldOption {
   value: string
@@ -157,6 +158,13 @@ function onMenuKeydown(event: KeyboardEvent): void {
   closeMenu(true)
 }
 
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.defaultPrevented) return
+  event.preventDefault()
+  event.stopPropagation()
+  closeMenu(true)
+}
+
 function onPointerDownOutside(event: PointerEvent): void {
   const target = event.target as Node | null
   if (!target) return
@@ -172,10 +180,12 @@ function onResize(): void { closeMenu() }
 watch(open, (isOpen) => {
   if (isOpen) {
     window.addEventListener('pointerdown', onPointerDownOutside, true)
+    window.addEventListener('keydown', onWindowKeydown)
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
   } else {
     window.removeEventListener('pointerdown', onPointerDownOutside, true)
+    window.removeEventListener('keydown', onWindowKeydown)
     window.removeEventListener('scroll', onScroll, true)
     window.removeEventListener('resize', onResize)
   }
@@ -190,6 +200,7 @@ watch(controlDisabled, (isDisabled) => {
 onBeforeUnmount(() => {
   closeMenu()
   window.removeEventListener('pointerdown', onPointerDownOutside, true)
+  window.removeEventListener('keydown', onWindowKeydown)
   window.removeEventListener('scroll', onScroll, true)
   window.removeEventListener('resize', onResize)
 })
@@ -217,34 +228,68 @@ onBeforeUnmount(() => {
     </button>
 
     <Teleport :to="portalTarget">
-      <div
-        v-if="open"
-        ref="menu"
-        :id="menuId"
-        class="ui-select-menu"
-        role="listbox"
-        :style="menuStyle"
-        :aria-label="ariaLabel"
-      @keydown="onMenuKeydown"
-      >
-        <button
-          v-for="(option, index) in options"
-          :key="option.value"
-          type="button"
-          class="ui-select-option"
-          role="option"
-          :id="`${menuId}-option-${index}`"
-          :aria-selected="option.value === currentValue"
-          :disabled="option.disabled"
-          :data-active="index === activeIndex"
-          :data-value="option.value"
-          :class="{ 'is-selected': option.value === currentValue, 'is-disabled': option.disabled }"
-          @click="choose(option)"
-          @mousemove="activeIndex = index"
+      <UiTransition name="ui-pop">
+        <div
+          v-if="open"
+          ref="menu"
+          :id="menuId"
+          class="ui-select-menu"
+          role="listbox"
+          :style="menuStyle"
+          :aria-label="ariaLabel"
+          @keydown="onMenuKeydown"
         >
-          {{ option.label }}
-        </button>
-      </div>
+          <button
+            v-for="(option, index) in options"
+            :key="option.value"
+            type="button"
+            class="ui-select-option"
+            role="option"
+            :id="`${menuId}-option-${index}`"
+            :aria-selected="option.value === currentValue"
+            :disabled="option.disabled"
+            :data-active="index === activeIndex"
+            :data-value="option.value"
+            :class="{ 'is-selected': option.value === currentValue, 'is-disabled': option.disabled }"
+            @click="choose(option)"
+            @mousemove="activeIndex = index"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </UiTransition>
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.ui-pop-enter-active {
+  transition: opacity 160ms var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1)),
+              transform 160ms var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1));
+  transform-origin: top center;
+}
+
+.ui-pop-leave-active {
+  transition: opacity 110ms var(--ease-exit, cubic-bezier(0.4, 0, 1, 1)),
+              transform 110ms var(--ease-exit, cubic-bezier(0.4, 0, 1, 1));
+  transform-origin: top center;
+}
+
+.ui-pop-enter-from,
+.ui-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-3px) scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-pop-enter-active,
+  .ui-pop-leave-active {
+    transition: none;
+  }
+
+  .ui-pop-enter-from,
+  .ui-pop-leave-to {
+    transform: none;
+  }
+}
+</style>

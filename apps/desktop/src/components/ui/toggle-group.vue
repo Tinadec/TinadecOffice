@@ -33,7 +33,25 @@ function toggle(value: string) {
 </script>
 
 <template>
-  <div :class="cn('inline-flex items-center justify-center rounded-md bg-[var(--surface-section)] p-1 gap-1', props.class)">
+  <div
+    role="group"
+    data-slot="toggle-group"
+    :class="cn(
+      'ui-toggle-group inline-flex items-center justify-center gap-0.5 rounded-[var(--radius-control-md,8px)] border border-[var(--border-muted)] bg-[var(--surface-section)] p-[3px] text-[var(--text-secondary)]',
+      props.class,
+    )"
+  >
     <slot :toggle="toggle" :active-value="activeValue" />
   </div>
 </template>
+
+<style scoped>
+.ui-toggle-group :deep([data-state="on"]),
+.ui-toggle-group :deep([aria-pressed="true"]),
+.ui-toggle-group :deep(.active) {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+</style>

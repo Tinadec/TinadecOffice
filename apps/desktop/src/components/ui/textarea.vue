@@ -21,7 +21,7 @@ const emit = defineEmits<{
 
 const classes = computed(() =>
   cn(
-    'flex min-h-[60px] w-full rounded-md border border-input bg-[var(--surface-input)] px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+    'ui-textarea flex min-h-[68px] w-full min-w-0 rounded-[var(--radius-control,6px)] border border-[var(--border-input,var(--border-default))] bg-[var(--surface-input)] px-3 py-2 text-[13px] leading-[1.5] text-[var(--text-primary)] transition-[border-color,background-color,box-shadow] duration-150 ease-out motion-reduce:transition-none placeholder:text-[var(--text-muted)] hover:border-[var(--border-input-focus)] focus-visible:border-[var(--border-input-focus)] focus-visible:outline-none focus-visible:shadow-[var(--focus-ring,0_0_0_2px_color-mix(in_srgb,var(--accent-primary)_22%,transparent))] disabled:cursor-not-allowed disabled:opacity-50',
     props.class,
   ),
 )
