@@ -365,7 +365,7 @@ function openDiagnostics(tab: 'readiness' | 'events') {
 .panel-home-card-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px; font-size: 10px; font-weight: 700;
-  color: #fff; background: var(--accent-primary); border-radius: 999px; flex-shrink: 0;
+  color: var(--text-on-primary, #ffffff); background: var(--bg-primary-button, var(--accent-primary)); border-radius: 999px; flex-shrink: 0;
 }
 
 .panel-home-status-bar {
