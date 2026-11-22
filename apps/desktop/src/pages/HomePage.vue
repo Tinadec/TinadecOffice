@@ -67,18 +67,65 @@ const { t } = useI18n()
 const { notify } = useNotifications()
 
 function onFocusHomeDockEvent(event: Event): void {
-  const detail = (event as CustomEvent<{ card?: HomeDockCardId; approvalTab?: ApprovalDockTab }>).detail
+  const detail = (event as CustomEvent<{
+    card?: HomeDockCardId
+    approvalTab?: ApprovalDockTab
+    subView?: 'timeline' | 'trajectory'
+    runId?: string | null
+  }>).detail
   if (!detail?.card) return
   focusDockCard({
     card: detail.card,
     ...(detail.approvalTab ? { approvalTab: detail.approvalTab } : {}),
+    ...(detail.runId ? { runId: detail.runId } : {}),
   }, { uie, title: dockCardTitle(detail.card) })
+
+  if (detail.card === 'orchestration' && detail.subView) {
+    const subView = detail.subView
+    void nextTick(() => {
+      setTimeout(() => {
+        const container = root.value ?? document
+        if (subView === 'timeline') {
+          const timelineBtn = container.querySelector<HTMLButtonElement>('[data-testid="topology-view-btn-timeline"]')
+          timelineBtn?.click()
+          timelineBtn?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+        } else if (subView === 'trajectory') {
+          const trajBlock = container.querySelector<HTMLElement>('[data-testid="trajectory-diagnostics-block"]')
+          trajBlock?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        }
+      }, 60)
+    })
+  }
+}
+
+function onLiveDigestFillSteerEvent(event: Event): void {
+  const detail = (event as CustomEvent<{ prompt?: string | null }>).detail
+  const prompt = typeof detail?.prompt === 'string' ? detail.prompt.trim() : ''
+  if (!prompt) return
+  homeController.updateDraft(prompt)
+  window.dispatchEvent(new CustomEvent('tinadec:focus-composer', { detail: { draft: prompt } }))
+  void nextTick(() => {
+    const container = root.value ?? document
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea.welcome-dialog-input, textarea[data-testid="composer-input"], textarea[data-testid="composer-textarea"], .composer-box textarea, .composer-textarea',
+    )
+    if (textarea) {
+      textarea.focus()
+      const end = textarea.value.length
+      try {
+        textarea.setSelectionRange(end, end)
+      } catch {
+        // Non-selectable element in isolated test environments.
+      }
+    }
+  })
 }
 
 onMounted(() => {
   homeController.start()
   controllerStarted.value = true
   window.addEventListener('tinadec:focus-home-dock', onFocusHomeDockEvent)
+  window.addEventListener('tinadec:live-digest-fill-steer', onLiveDigestFillSteerEvent)
   if (activeDockFocus.value) {
     ensureHomeDockCardOpen(activeDockFocus.value.card, { uie, title: dockCardTitle(activeDockFocus.value.card) })
   }
@@ -161,6 +208,7 @@ function clearHostHighlight(): void {
 onUnmounted(() => {
   clearHostHighlight()
   window.removeEventListener('tinadec:focus-home-dock', onFocusHomeDockEvent)
+  window.removeEventListener('tinadec:live-digest-fill-steer', onLiveDigestFillSteerEvent)
 })
 
 watch(

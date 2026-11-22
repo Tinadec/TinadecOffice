@@ -9,6 +9,7 @@ import {
   Edit3,
   Info,
   Plus,
+  Radio,
   RefreshCw,
   Route,
   Search,
@@ -28,6 +29,7 @@ import ModelCenterProviderForm, { type ProviderFormState } from '@/settings/mode
 import ModelCenterDialogs from '@/settings/modelCenter/ModelCenterDialogs.vue'
 import { centerDiagnosticLabel as centerDiagnosticText, providerStatusLabel } from '@/settings/modelCenterLabels'
 import { useNotifications } from '@/composables/useNotifications'
+import { useLiveDigestSettings, type LiveDigestMode } from '@/composables/useLiveDigest'
 import { suggestModelProfile, type ModelCenterContext } from '@/composables/useModelCenter'
 import type {
   CenterDiagnosticDto,
@@ -289,6 +291,111 @@ async function changeDefaultChat(value: string) {
   const [providerId, model] = value.split('\u0000')
   if (!providerId) return
   await setDefaultChatModel(providerId, model || null, routeCandidateProviderLabel(providerId))
+}
+
+// ── Live Digest Explainer Model Slot & 3-Mode Switch ────────────────
+const LIVE_DIGEST_AUTO_VALUE = '__auto__'
+const {
+  settings: liveDigestSettings,
+  loading: liveDigestSettingsLoading,
+  saving: liveDigestSettingsSaving,
+  loadSettings: loadLiveDigestSettings,
+  setMode: saveLiveDigestMode,
+  setExplainerModel: saveLiveDigestExplainerModel,
+} = useLiveDigestSettings()
+
+watch(
+  () => props.canAccessBackend,
+  (ready) => {
+    if (ready) void loadLiveDigestSettings()
+  },
+  { immediate: true },
+)
+
+const liveDigestModeOptions = computed<Array<{ value: LiveDigestMode; label: string }>>(() => [
+  { value: 'off', label: t('liveDigest.settings.modeOff') },
+  { value: 'auto', label: t('liveDigest.settings.modeAuto') },
+  { value: 'always', label: t('liveDigest.settings.modeAlways') },
+])
+
+const liveDigestMode = computed<LiveDigestMode>(() => liveDigestSettings.value?.mode ?? 'auto')
+
+const liveDigestModelValue = computed<string>(() => {
+  const s = liveDigestSettings.value
+  if (s?.provider_instance_id) {
+    return `${s.provider_instance_id}\u0000${s.model ?? ''}`
+  }
+  const route = routes.value.find((item) => item.purpose === 'live_explainer')
+  const candidate = route?.candidates?.[0]
+  if (candidate?.provider_instance_id) {
+    return `${candidate.provider_instance_id}\u0000${candidate.model ?? ''}`
+  }
+  return LIVE_DIGEST_AUTO_VALUE
+})
+
+const liveDigestModelOptions = computed(() => {
+  const options: Array<{ value: string; label: string }> = [
+    { value: LIVE_DIGEST_AUTO_VALUE, label: t('liveDigest.settings.autoFastModelOption') },
+    ...defaultChatOptions.value,
+  ]
+  const current = liveDigestModelValue.value
+  if (current !== LIVE_DIGEST_AUTO_VALUE && !options.some((opt) => opt.value === current)) {
+    const [providerId, model] = current.split('\u0000')
+    const label = [routeCandidateProviderLabel(providerId), model].filter(Boolean).join(' · ')
+    options.splice(1, 0, { value: current, label })
+  }
+  return options
+})
+
+const liveDigestResolvedHint = computed<string>(() => {
+  const s = liveDigestSettings.value
+  if (!s) return t('liveDigest.settings.subtitle')
+  if (s.mode === 'off') return t('liveDigest.settings.modeOffHint')
+  const modelText = s.resolved_model
+    ? (s.resolved_provider_instance_id
+        ? `${routeCandidateProviderLabel(s.resolved_provider_instance_id)} · ${s.resolved_model}`
+        : s.resolved_model)
+    : null
+  if (s.resolved_source === 'explicit_route' && modelText) {
+    return t('liveDigest.settings.resolvedExplicit', { model: modelText })
+  }
+  if (s.resolved_source === 'auto_fast_model' && modelText) {
+    return t('liveDigest.settings.resolvedAutoFast', { model: modelText })
+  }
+  if (s.resolved_source === 'chat_fallback' && modelText) {
+    return t('liveDigest.settings.resolvedChatFallback', { model: modelText })
+  }
+  if (s.resolved_source === 'unconfigured') {
+    return t('liveDigest.settings.resolvedUnconfigured')
+  }
+  return t('liveDigest.settings.subtitle')
+})
+
+async function handleLiveDigestModeChange(nextMode: LiveDigestMode): Promise<void> {
+  if (!props.canAccessBackend || liveDigestSettingsSaving.value || nextMode === liveDigestMode.value) return
+  try {
+    await saveLiveDigestMode(nextMode)
+    notify.success(t('liveDigest.settings.saved'))
+  } catch (error) {
+    notify.error(error, { title: t('liveDigest.settings.title') })
+  }
+}
+
+async function handleLiveDigestModelChange(value: string): Promise<void> {
+  if (!props.canAccessBackend || liveDigestSettingsSaving.value || value === liveDigestModelValue.value) return
+  try {
+    if (!value || value === LIVE_DIGEST_AUTO_VALUE) {
+      await saveLiveDigestExplainerModel(null, null)
+    } else {
+      const [providerId, model] = value.split('\u0000')
+      if (!providerId) return
+      await saveLiveDigestExplainerModel(providerId, model || null)
+    }
+    notify.success(t('liveDigest.settings.saved'))
+    void loadModelCenter()
+  } catch (error) {
+    notify.error(error, { title: t('liveDigest.settings.title') })
+  }
 }
 
 // ── Provider Form Lifecycle & Dirty Guard ───────────────────────────
@@ -1049,6 +1156,61 @@ defineExpose({ canLeave, focusProvider })
       </UiButton>
     </div>
 
+    <section
+      v-if="canAccessBackend"
+      class="live-digest-settings-bar"
+      data-testid="live-digest-settings-section"
+      :aria-label="t('liveDigest.settings.title')"
+    >
+      <div class="live-digest-settings-meta">
+        <div class="live-digest-settings-head">
+          <Radio :size="14" aria-hidden="true" />
+          <strong>{{ t('liveDigest.settings.title') }}</strong>
+          <UiBadge variant="outline">live_explainer</UiBadge>
+        </div>
+        <p class="live-digest-settings-hint">{{ liveDigestResolvedHint }}</p>
+      </div>
+
+      <div class="live-digest-settings-controls">
+        <div
+          class="live-digest-mode-segment"
+          role="radiogroup"
+          :aria-label="t('liveDigest.settings.modeLabel')"
+          data-testid="live-digest-mode-switch"
+        >
+          <button
+            v-for="option in liveDigestModeOptions"
+            :key="option.value"
+            type="button"
+            role="radio"
+            class="live-digest-mode-btn ui-pressable"
+            :class="{ 'is-active': liveDigestMode === option.value }"
+            :aria-checked="liveDigestMode === option.value"
+            :disabled="liveDigestSettingsSaving || liveDigestSettingsLoading"
+            :data-mode="option.value"
+            :data-testid="`live-digest-mode-${option.value}`"
+            @click="handleLiveDigestModeChange(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+
+        <div class="live-digest-model-slot">
+          <span class="live-digest-model-label">{{ t('liveDigest.settings.modelSlotLabel') }}</span>
+          <UiSelectField
+            class="live-digest-model-select"
+            :model-value="liveDigestModelValue"
+            :options="liveDigestModelOptions"
+            :aria-label="t('liveDigest.settings.modelSlotLabel')"
+            :placeholder="t('liveDigest.settings.autoFastModelOption')"
+            :disabled="liveDigestSettingsSaving || liveDigestSettingsLoading || liveDigestMode === 'off'"
+            data-testid="live-digest-model-select"
+            @update:model-value="handleLiveDigestModelChange"
+          />
+        </div>
+      </div>
+    </section>
+
     <div class="model-center-shell">
       <div class="model-center-tabs" role="tablist" :aria-label="t('settings.modelCenterResources')">
         <button
@@ -1396,3 +1558,107 @@ defineExpose({ canLeave, focusProvider })
     @pick-template="pickTemplate"
   />
 </template>
+
+<style scoped>
+.live-digest-settings-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-card, 10px);
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
+}
+
+.live-digest-settings-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  flex: 1 1 260px;
+}
+
+.live-digest-settings-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.live-digest-settings-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.live-digest-settings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-digest-mode-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-control-md, 8px);
+  border: 1px solid var(--border-muted);
+  background: var(--bg-primary);
+}
+
+.live-digest-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--radius-control, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.live-digest-mode-btn:hover:not(:disabled):not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.live-digest-mode-btn.is-active {
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary);
+  font-weight: 600;
+}
+
+.live-digest-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.live-digest-model-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-digest-model-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.live-digest-model-select {
+  min-width: 210px;
+}
+</style>

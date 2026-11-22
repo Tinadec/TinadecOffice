@@ -6,6 +6,7 @@ import { createCardRegistry, type CardRegistry } from '../../engine/registry'
 import NavCard from './home/NavCard.vue'
 import ChatCard from './home/ChatCard.vue'
 import HomePickerCard from './home/HomePickerCard.vue'
+import LiveDigestCard from './home/LiveDigestCard.vue'
 import GitCard from './home/GitCard.vue'
 import ApprovalCard from './home/ApprovalCard.vue'
 import OrchestrationCard from './home/OrchestrationCard.vue'
@@ -32,6 +33,7 @@ export function buildUieRegistry(): CardRegistry {
     { type: 'nav', component: NavCard, minWidth: 220, minHeight: 120, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
     { type: 'chat', component: ChatCard, minWidth: 320, minHeight: 200, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
     { type: 'homePicker', component: HomePickerCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '' },
+    { type: 'live-digest', component: LiveDigestCard, minWidth: 280, minHeight: 180, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
     { type: 'git', component: GitCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
     { type: 'approval', component: ApprovalCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
     { type: 'orchestration', component: OrchestrationCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },

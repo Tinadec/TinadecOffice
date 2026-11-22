@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Activity, Bot, Layers3, ListChecks } from '@lucide/vue'
+import { Activity, Bot, Layers3, ListChecks, Radio } from '@lucide/vue'
 import { UiIslandCard } from '@/components/ui'
 import { useSessionPlan } from '@/components/plan/useSessionPlan'
 import type { OrchestrationSnapshotDto } from '@/api'
@@ -14,6 +14,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'open-live-digest': []
   'open-orchestration': []
   'open-agent': []
 }>()
@@ -79,6 +80,10 @@ const isRunning = computed(() => Boolean(props.working || activeWorkers.value > 
       </div>
 
       <div class="bento-widget-links">
+        <button type="button" class="bento-chip-btn" data-testid="session-run-open-live-digest" @click="emit('open-live-digest')">
+          <Radio :size="12" aria-hidden="true" />
+          <span>{{ label('liveDigest.title', 'Live Digest') }}</span>
+        </button>
         <button type="button" class="bento-chip-btn" data-testid="session-run-open-orchestration" @click="emit('open-orchestration')">
           <Layers3 :size="12" aria-hidden="true" />
           <span>{{ label('context.bentoOpenOrchestration', 'Orchestration') }}</span>

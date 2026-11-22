@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue'
+import LiveDigestHeartbeatStrip from '@/components/liveDigest/LiveDigestHeartbeatStrip.vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, GitBranch, Send, ShieldAlert } from '@lucide/vue'
 import { api } from '@/api'
 import { useAgentDirectory } from '@/composables/useAgentDirectory'
+import { selectPrimaryRunId } from '@/composables/useLiveDigest'
 import { useSessionWorktrees } from '@/composables/useSessionWorktrees'
 import { homeController } from '@/controllers/HomeController'
 import { focusDockCard, type InlineDockCardItem } from '@/lib/homeDockSync'
+import { selectionIdentity } from '@/lib/storageScope'
 
 const c = homeController
 const { t } = useI18n()
@@ -143,6 +146,17 @@ const conversation = computed(() => ({
   approvals: c.approvals.value,
   workspaceRoot: c.currentProject.value?.path ?? null,
 }))
+
+const primaryLiveDigestRunId = computed<string | null>(() => {
+  if (!c.selectedSessionId.value) return null
+  return c.stoppableRunId?.value ?? selectPrimaryRunId(c.runs.value)
+})
+
+const liveDigestStorageId = computed<string | undefined>(() => {
+  const sessionKey = c.selectedSessionId.value
+  if (!sessionKey) return undefined
+  return selectionIdentity(sessionKey).storageId
+})
 </script>
 
 <template>
@@ -180,6 +194,16 @@ const conversation = computed(() => ({
         </button>
       </div>
     </aside>
+    <div
+      v-if="primaryLiveDigestRunId"
+      class="chat-live-digest-strip"
+      :class="{ 'has-dock-cards': streamDockCards.length > 0 }"
+    >
+      <LiveDigestHeartbeatStrip
+        :run-id="primaryLiveDigestRunId"
+        :storage-id="liveDigestStorageId"
+      />
+    </div>
     <ChatPanel
       class="chat-card-panel"
       :messages="c.messages.value"
@@ -243,6 +267,18 @@ const conversation = computed(() => ({
   max-height: 88px;
   overflow-y: auto;
   flex-shrink: 0;
+}
+
+.chat-live-digest-strip {
+  padding: 40px 12px 4px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.chat-live-digest-strip.has-dock-cards {
+  padding-top: 2px;
 }
 
 .chat-dock-card {

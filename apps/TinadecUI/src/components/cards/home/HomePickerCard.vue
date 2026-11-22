@@ -145,6 +145,7 @@ function openDiagnostics(tab: 'readiness' | 'events') {
           :working="isWorking"
           :active-run-count="activeRunCount"
           :orchestration="c.orchestration?.value ?? null"
+          @open-live-digest="openCard('live-digest')"
           @open-orchestration="openCard('orchestration')"
           @open-agent="openCard('agent')"
         />
