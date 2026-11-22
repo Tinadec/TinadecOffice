@@ -4,17 +4,11 @@ using Microsoft.Extensions.Logging;
 namespace TinadecCore.Companion;
 
 /// <summary>
-/// Drives autonomy on a quiet schedule. Every pass asks the service which companions are due
-/// (enabled, not paused, interval elapsed, budget left) and ticks them one by one; one failed
-/// companion never stops the others. Nothing is logged above Debug for an idle pass, and shutdown
-/// cancels the wait and the tick, so a closed switch stays closed and a closed host writes nothing.
-///
-/// A scope instance of this module runs in the user scope and in each project scope. Companions
-/// only live in the user scope (see the storage-scope middleware), so a project pass finds an
-/// empty table and is a no-op rather than a second ledger.
+/// Drives persistent Bot due-schedules and bounded autonomy ticks on a quiet background cadence.
 /// </summary>
 public sealed class CompanionAutonomyWorker(
     CompanionAutonomyService autonomy,
+    CompanionPlanningService planning,
     TimeProvider timeProvider,
     ILogger<CompanionAutonomyWorker> logger) : BackgroundService
 {
@@ -22,7 +16,7 @@ public sealed class CompanionAutonomyWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogDebug("Companion autonomy worker started.");
+        logger.LogDebug("Companion autonomy and schedule worker started.");
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -32,6 +26,19 @@ public sealed class CompanionAutonomyWorker(
             catch (OperationCanceledException)
             {
                 break;
+            }
+
+            try
+            {
+                await planning.RunDueSchedulesAsync(timeProvider.GetUtcNow(), stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Companion schedule evaluation pass failed.");
             }
 
             IReadOnlyList<Guid> due;

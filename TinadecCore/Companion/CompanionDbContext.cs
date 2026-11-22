@@ -5,10 +5,8 @@ namespace TinadecCore.Companion;
 /// <summary>
 /// Isolated companion application domain. None of these tables references the work-domain
 /// agent/session/tool tables: a companion is a separate identity with its own memories,
-/// bindings and run history. Every table carries tenant_id, so isolation is a predicate,
-/// never a shared join.
-/// Conversation/message/run/activity tables are defined here even though Task 2 owns their
-/// behaviour, so their schema does not need to be re-created later.
+/// bindings, schedules, plans, todos and run history. Every table carries tenant_id, so
+/// isolation is a predicate, never a shared join.
 /// </summary>
 public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> options) : DbContext(options)
 {
@@ -21,11 +19,13 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
     public DbSet<CompanionConversationMemberRecord> ConversationMembers => Set<CompanionConversationMemberRecord>();
     public DbSet<CompanionMessageRecord> Messages => Set<CompanionMessageRecord>();
     public DbSet<CompanionRunRecord> Runs => Set<CompanionRunRecord>();
-    public DbSet<CompanionEffectRecord> Effects => Set<CompanionEffectRecord>();
     public DbSet<CompanionMandateRecord> Mandates => Set<CompanionMandateRecord>();
     public DbSet<CompanionRecruitmentRecord> Recruitments => Set<CompanionRecruitmentRecord>();
     public DbSet<CompanionActivityRecord> Activities => Set<CompanionActivityRecord>();
     public DbSet<CompanionAvatarRecord> Avatars => Set<CompanionAvatarRecord>();
+    public DbSet<CompanionScheduleRecord> Schedules => Set<CompanionScheduleRecord>();
+    public DbSet<CompanionPlanRecord> Plans => Set<CompanionPlanRecord>();
+    public DbSet<CompanionTodoRecord> Todos => Set<CompanionTodoRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -38,11 +38,9 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.AvatarKey).HasMaxLength(64);
             e.Property(x => x.PersonaDocument).HasMaxLength(65536);
             e.Property(x => x.ModelPurpose).HasMaxLength(64).IsRequired();
-            // The model a companion speaks with: null means "resolve the tenant's route purpose",
-            // set means the named provider instance with the named model overrides the route.
             e.Property(x => x.ModelName).HasMaxLength(256);
             e.Property(x => x.Status).HasMaxLength(16).IsRequired();
-            e.Property(x => x.Role).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(32).IsRequired();
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         });
@@ -133,37 +131,20 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.ToTable("companion_runs");
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            e.Property(x => x.ChannelKind).HasMaxLength(32).IsRequired();
+            e.Property(x => x.ThreadKey).HasMaxLength(256);
             e.Property(x => x.ConfigSnapshotJson).IsRequired();
             e.Property(x => x.LoadedMemoryIdsJson).IsRequired();
             e.Property(x => x.LoadedSkillBindingIdsJson).IsRequired();
+            e.Property(x => x.ClaimToken).HasMaxLength(64);
+            e.Property(x => x.LastError).HasMaxLength(2048);
             e.Property(x => x.ErrorCode).HasMaxLength(64);
             e.Property(x => x.ErrorMessage).HasMaxLength(2048);
             e.HasIndex(x => new { x.TenantId, x.CompanionId, x.Status, x.CreatedAt });
             e.HasIndex(x => new { x.TenantId, x.ConversationId, x.CreatedAt });
-        });
-
-        // The durable wake queue for companion runs. A run row says what the user sees; an effect
-        // row says what the host still owes, so a crash between "message stored" and "reply written"
-        // leaves a claimable row instead of a run that never moves.
-        model.Entity<CompanionEffectRecord>(e =>
-        {
-            e.ToTable("companion_effects");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
-            e.Property(x => x.Status).HasMaxLength(16).IsRequired();
-            e.Property(x => x.PayloadJson).IsRequired();
-            e.Property(x => x.ClaimToken).HasMaxLength(64);
-            e.Property(x => x.LastError).HasMaxLength(2048);
-            // One live effect per run: the enqueue path and the startup self-heal both target the
-            // same run, and a second row would let two executors answer the same message.
-            e.HasIndex(x => new { x.TenantId, x.RunId, x.Kind }).IsUnique().HasFilter("run_id IS NOT NULL");
-            // The claim scan is (status, due) ordered, which the unique run index cannot serve.
             e.HasIndex(x => new { x.Status, x.AvailableAtUnixMs });
         });
 
-        // A standing authorization for one class of autonomous action. Without an approved row the
-        // autonomy tick only records what it WOULD do: an autonomous partner must not act on the
-        // user's sessions and conversations before the user has said it may.
         model.Entity<CompanionMandateRecord>(e =>
         {
             e.ToTable("companion_mandates");
@@ -173,15 +154,10 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.ProposalJson).IsRequired();
             e.Property(x => x.Summary).HasMaxLength(512);
             e.Property(x => x.Revision).IsConcurrencyToken();
-            // One standing answer per action class per companion: re-proposing updates the row
-            // instead of stacking a second question the user cannot tell apart from the first.
             e.HasIndex(x => new { x.TenantId, x.CompanionId, x.Action }).IsUnique();
             e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
         });
 
-        // A companion may ask for a long-lived helper when the same kind of work keeps coming back.
-        // Asking is all it can do: recruiting is a growth of the user's autonomous team, so it is
-        // double-gated — a per-tenant limit and an explicit approval.
         model.Entity<CompanionRecruitmentRecord>(e =>
         {
             e.ToTable("companion_recruitments");
@@ -191,8 +167,6 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.Rationale).HasMaxLength(2048);
             e.Property(x => x.Status).HasMaxLength(16).IsRequired();
             e.Property(x => x.Revision).IsConcurrencyToken();
-            // One open question per proposer: a second pending proposal would be the same request
-            // wearing a different name, and the user cannot answer two of those coherently.
             e.HasIndex(x => new { x.TenantId, x.ProposerId, x.Status });
         });
 
@@ -203,19 +177,11 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
             e.Property(x => x.Summary).HasMaxLength(512).IsRequired();
             e.Property(x => x.Detail).HasMaxLength(2048);
-            // The live feed resumes from a single tenant-monotonic cursor, so (tenant, seq) must be
-            // unique. The filter keeps rows written before this column existed (seq 0) from making
-            // the index impossible to create on an upgraded database.
             e.HasIndex(x => new { x.TenantId, x.Seq }).IsUnique().HasFilter("seq > 0");
             e.HasIndex(x => new { x.TenantId, x.CompanionId, x.CreatedAt });
             e.HasIndex(x => new { x.TenantId, x.CreatedAt });
         });
 
-        // A user-supplied Live2D model directory, copied into Core's own storage. Core never
-        // bundles Cubism Core or a model: this table only records what the user brought and
-        // what model3.json says it can do, so rendering can be added later without a schema
-        // change. SourcePath is relative to the active storage root and is the only pointer to
-        // the copied bytes; the original import path is deliberately not retained.
         model.Entity<CompanionAvatarRecord>(e =>
         {
             e.ToTable("companion_avatars");
@@ -225,6 +191,43 @@ public sealed class CompanionDbContext(DbContextOptions<CompanionDbContext> opti
             e.Property(x => x.SourcePath).HasMaxLength(512).IsRequired();
             e.Property(x => x.CapabilitiesJson).IsRequired();
             e.HasIndex(x => new { x.TenantId, x.CreatedAt });
+        });
+
+        model.Entity<CompanionScheduleRecord>(e =>
+        {
+            e.ToTable("companion_schedules");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Title).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Prompt).IsRequired();
+            e.Property(x => x.CronExpression).HasMaxLength(128);
+            e.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.CompanionId });
+            e.HasIndex(x => new { x.Enabled, x.Status, x.NextRunAtUnixMs });
+        });
+
+        model.Entity<CompanionPlanRecord>(e =>
+        {
+            e.ToTable("companion_plans");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Title).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Summary).HasMaxLength(2048);
+            e.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            e.Property(x => x.StepsJson).IsRequired();
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.CompanionId, x.Status });
+        });
+
+        model.Entity<CompanionTodoRecord>(e =>
+        {
+            e.ToTable("companion_todos");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Title).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(2048);
+            e.Property(x => x.Priority).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.CompanionId, x.Status });
         });
 
         model.UseTinadecSnakeCase();
@@ -244,13 +247,8 @@ public sealed class CompanionAgentRecord
     public string? ModelName { get; set; }
     // active | paused | archived
     public string Status { get; set; } = "active";
-    // autonomous | buddy — a buddy is the sidebar work-buddy (second user, manages sessions);
-    // autonomous is the self-directed partner. Rows predating the column read as autonomous.
+    // autonomous | session_partner
     public string Role { get; set; } = "autonomous";
-    /// <summary>
-    /// Set when another companion recruited this one. The per-tenant recruit limit counts these
-    /// rows, so a user-created companion never consumes the team's own growth budget.
-    /// </summary>
     public Guid? RecruitedByCompanionId { get; set; }
     public bool AutonomyEnabled { get; set; }
     public bool AutonomyPaused { get; set; }
@@ -323,23 +321,19 @@ public sealed class CompanionSettingsRecord
 {
     public Guid TenantId { get; set; }
     public Guid? MainCompanionId { get; set; }
-    // The designated work-buddy shown in the sidebar below "new chat"; null = none designated.
-    public Guid? BuddyCompanionId { get; set; }
     /// <summary>
-    /// How many companions recruited by other companions this tenant may hold. Recruiting is the
-    /// autonomous team growing itself, so it is bounded by default and the bound is the user's to
-    /// change; 0 turns recruiting off entirely.
+    /// How many companions recruited by other companions this tenant may hold; 0 turns recruiting off.
     /// </summary>
     public int RecruitLimit { get; set; } = 3;
+    /// <summary>
+    /// Maximum bot-to-bot relay hop depth in conversations (default 3, clamped 0..10; 0 disables bot-to-bot auto-relay).
+    /// Nullable in schema so upgraded databases with NULL default cleanly to 3 while explicit 0 stays 0.
+    /// </summary>
+    public int? MaxBotHopDepth { get; set; } = 3;
     public bool AutonomyPaused { get; set; }
     public long Revision { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-
-// ─────────────────────────────────────────────
-// Task 2 schema (conversations / messages / runs / activity).
-// Defined now so Task 2 can add behaviour without a second bootstrap migration.
-// ─────────────────────────────────────────────
 
 public sealed class CompanionConversationRecord
 {
@@ -347,9 +341,7 @@ public sealed class CompanionConversationRecord
     public Guid TenantId { get; set; }
     // private | group
     public string Kind { get; set; } = "private";
-    // Who opened it: user | companion. Null on rows that predate the column; readers fall back to
-    // the autonomy activity trail for those instead of guessing from the member list, because every
-    // group carries a user member regardless of who created it.
+    // user | companion
     public string? Origin { get; set; }
     public string? Title { get; set; }
     public Guid? ParentConversationId { get; set; }
@@ -388,6 +380,11 @@ public sealed class CompanionMessageRecord
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>
+/// Durable companion run and its lease state. Lease fencing (<see cref="ClaimToken"/>,
+/// <see cref="ClaimedAtUnixMs"/>, <see cref="AvailableAtUnixMs"/>) lives directly on the run row so
+/// claiming, backoff retries, and crash recovery operate without a separate polling queue table.
+/// </summary>
 public sealed class CompanionRunRecord
 {
     public Guid Id { get; set; }
@@ -397,7 +394,17 @@ public sealed class CompanionRunRecord
     public Guid TriggerMessageId { get; set; }
     // queued | running | completed | failed
     public string Status { get; set; } = "queued";
+    // desktop_chat | session_partner | schedule_tick | external_im
+    public string ChannelKind { get; set; } = "desktop_chat";
+    public string? ThreadKey { get; set; }
     public int Depth { get; set; }
+    public int Attempts { get; set; }
+    public DateTimeOffset AvailableAt { get; set; }
+    public long AvailableAtUnixMs { get; set; }
+    public string? ClaimToken { get; set; }
+    public DateTimeOffset? ClaimedAt { get; set; }
+    public long? ClaimedAtUnixMs { get; set; }
+    public string? LastError { get; set; }
     public long ConfigRevision { get; set; }
     public string ConfigSnapshotJson { get; set; } = "{}";
     public string LoadedMemoryIdsJson { get; set; } = "[]";
@@ -411,50 +418,15 @@ public sealed class CompanionRunRecord
     public DateTimeOffset? FinishedAt { get; set; }
 }
 
-/// <summary>
-/// A unit of work the host still owes, independent of the run row it belongs to. Status is the
-/// lease state (pending/running/done/failed) and <see cref="ClaimToken"/> fences a slow executor
-/// out once another host has reclaimed an expired claim.
-/// </summary>
-public sealed class CompanionEffectRecord
-{
-    public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
-    public Guid? CompanionId { get; set; }
-    public Guid? ConversationId { get; set; }
-    // Null for effects that are not tied to a run; the unique index filters those out.
-    public Guid? RunId { get; set; }
-    // run_reply — the only kind today; kept as a column so a second effect type does not need a
-    // second queue.
-    public string Kind { get; set; } = "run_reply";
-    public string PayloadJson { get; set; } = "{}";
-    // pending | running | done | failed
-    public string Status { get; set; } = "pending";
-    public int Attempts { get; set; }
-    public DateTimeOffset AvailableAt { get; set; }
-    // Same instant as AvailableAt, in a form SQLite can compare and order. Without it the claim
-    // scan would have to load every pending row and compare in memory.
-    public long AvailableAtUnixMs { get; set; }
-    public string? ClaimToken { get; set; }
-    public DateTimeOffset? ClaimedAt { get; set; }
-    // Claim expiry, likewise numeric for the reclaim scan.
-    public long? ClaimedAtUnixMs { get; set; }
-    public string? LastError { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-}
-
 public sealed class CompanionMandateRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public Guid CompanionId { get; set; }
-    // create_group | invite | send_message — one standing answer per action class.
+    // create_group | invite | send_message
     public string Action { get; set; } = string.Empty;
     // proposed | approved | denied
     public string Status { get; set; } = "proposed";
-    // The decision the tick wanted to take when it asked. Approving authorizes the CLASS of action,
-    // but this payload is what the user read before saying yes, so it stays on the row.
     public string ProposalJson { get; set; } = "{}";
     public string? Summary { get; set; }
     public long Revision { get; set; }
@@ -467,14 +439,12 @@ public sealed class CompanionRecruitmentRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    /// <summary>The companion that asked for a helper; never the recruited one, which does not exist yet.</summary>
     public Guid ProposerId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? PersonaDocument { get; set; }
     public string? Rationale { get; set; }
     // proposed | approved | denied
     public string Status { get; set; } = "proposed";
-    /// <summary>Set once approved: the companion this proposal created.</summary>
     public Guid? CreatedCompanionId { get; set; }
     public long Revision { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -486,10 +456,7 @@ public sealed class CompanionActivityRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    // Tenant-monotonic order of the activity feed. Rows written before this column existed read 0
-    // and stay behind every new row, which is exactly their age.
     public long Seq { get; set; }
-    // run_started | run_completed | message_sent | group_created | autonomy_skipped | ...
     public string Kind { get; set; } = string.Empty;
     public Guid? CompanionId { get; set; }
     public Guid? ConversationId { get; set; }
@@ -499,22 +466,68 @@ public sealed class CompanionActivityRecord
     public DateTimeOffset CreatedAt { get; set; }
 }
 
-/// <summary>
-/// One imported Live2D model directory. The row owns no rendering state: capabilities are what
-/// model3.json declared at import time, and SourcePath points at the copy under Core's storage
-/// root so a later renderer can load it without the user's original directory.
-/// </summary>
 public sealed class CompanionAvatarRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public string Name { get; set; } = string.Empty;
-    // live2d — the only kind accepted today; a column rather than a constant so a second
-    // format can be added without rewriting existing rows.
     public string Kind { get; set; } = "live2d";
-    // Relative to the active storage root, forward-slash separated. Never an absolute path:
-    // the storage scope can move, and a stale absolute path would point at nothing.
     public string SourcePath { get; set; } = string.Empty;
     public string CapabilitiesJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class CompanionScheduleRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid CompanionId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Prompt { get; set; } = string.Empty;
+    public string? CronExpression { get; set; }
+    public DateTimeOffset? RunAt { get; set; }
+    public DateTimeOffset? NextRunAt { get; set; }
+    public long? NextRunAtUnixMs { get; set; }
+    public DateTimeOffset? LastRunAt { get; set; }
+    public Guid? TargetConversationId { get; set; }
+    public bool OneShot { get; set; }
+    public bool Enabled { get; set; } = true;
+    // active | paused | completed
+    public string Status { get; set; } = "active";
+    public long Revision { get; set; } = 1;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class CompanionPlanRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid CompanionId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Summary { get; set; }
+    // active | completed | paused | archived
+    public string Status { get; set; } = "active";
+    public string StepsJson { get; set; } = "[]";
+    public long Revision { get; set; } = 1;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class CompanionTodoRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid CompanionId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    // low | medium | high
+    public string Priority { get; set; } = "medium";
+    // pending | in_progress | done | cancelled
+    public string Status { get; set; } = "pending";
+    public DateTimeOffset? DueAt { get; set; }
+    public Guid? PlanId { get; set; }
+    public long Revision { get; set; } = 1;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }

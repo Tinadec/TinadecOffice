@@ -17,10 +17,11 @@ namespace TinadecCore.Companion;
 public sealed class CompanionConversationService(
     IDbContextFactory<CompanionDbContext> dbFactory,
     ITenantContextAccessor tenant,
-    ICompanionRuntime runtime)
+    ICompanionRuntime runtime,
+    ICompanionChannel? channel = null)
 {
-    private const int MaxDepth = 3;
     private const int DefaultTurnBudget = 6;
+    private readonly ICompanionChannel _channel = channel ?? new CompanionChannelService(dbFactory, runtime);
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -442,172 +443,24 @@ public sealed class CompanionConversationService(
     }
 
     /// <summary>
-    /// Persists the user message and the runs it owes. A message is never rejected because a wake
-    /// was skipped (paused, over budget, too deep); the skip is reported alongside the message.
+    /// Persists the inbound message via <see cref="ICompanionChannel"/> and creates the runs it owes.
     /// </summary>
     public async Task<object> PostMessageAsync(
         Guid conversationId, CompanionMessagePostRequest input, string? headerIdempotencyKey, CancellationToken cancellationToken = default)
     {
-        var tenantId = TenantId;
-        var body = input.Body?.Trim();
-        if (string.IsNullOrEmpty(body)) throw Invalid("body is required.");
         var idempotencyKey = TrimToNull(input.IdempotencyKey) ?? TrimToNull(headerIdempotencyKey);
-        if (idempotencyKey is { Length: > 256 }) throw Invalid("idempotency_key must be at most 256 characters.");
-
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var conversation = await db.Conversations
-            .SingleOrDefaultAsync(x => x.Id == conversationId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false)
-            ?? throw ConversationNotFound();
-
-        if (idempotencyKey is not null)
-        {
-            var replayed = await db.Messages.AsNoTracking().SingleOrDefaultAsync(
-                x => x.TenantId == tenantId && x.ConversationId == conversationId && x.IdempotencyKey == idempotencyKey,
-                cancellationToken).ConfigureAwait(false);
-            if (replayed is not null)
-                return await DuplicateResponseAsync(db, tenantId, conversationId, replayed, cancellationToken).ConfigureAwait(false);
-        }
-
-        var members = await db.ConversationMembers.AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.ConversationId == conversationId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var activeCompanionIds = members
-            .Where(x => x.MemberKind == "companion" && x.Status == "active" && x.CompanionId is not null)
-            .Select(x => x.CompanionId!.Value)
-            .Distinct()
-            .ToList();
-        var companions = await db.Companions.AsNoTracking()
-            .Where(x => x.TenantId == tenantId && activeCompanionIds.Contains(x.Id))
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-
-        var requested = (input.AddressedTo ?? []).Distinct().ToList();
-        var addressed = requested.Count > 0
-            ? requested
-            : ResolveMentions(body, companions);
-        if (addressed.Any(id => !activeCompanionIds.Contains(id)))
-            throw new CompanionException("companion_not_member", "addressed_to contains a companion that is not an active member of this conversation.", 400);
-        if (addressed.Count == 0 && conversation.Kind == "private") addressed = activeCompanionIds;
-
-        var previousUserSeq = await db.Messages.AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.ConversationId == conversationId && x.AuthorKind == "user")
-            .Select(x => (long?)x.Seq)
-            .MaxAsync(cancellationToken).ConfigureAwait(false) ?? 0;
-
-        var now = DateTimeOffset.UtcNow;
-        var message = await CompanionMessages.AppendAsync(
-            db, tenantId, conversationId, "user", null, body, addressed, idempotencyKey, now, cancellationToken).ConfigureAwait(false);
-
-        var skipped = new List<object>();
-        var runs = new List<CompanionRunRecord>();
-        var turnBudget = conversation.TurnBudget <= 0 ? DefaultTurnBudget : conversation.TurnBudget;
-        foreach (var companionId in addressed.Distinct())
-        {
-            var companion = companions.FirstOrDefault(x => x.Id == companionId);
-            if (companion is null)
-            {
-                skipped.Add(Skip(companionId, "companion_not_found"));
-                continue;
-            }
-            if (conversation.AutonomyPaused)
-            {
-                skipped.Add(Skip(companionId, "conversation_paused"));
-                continue;
-            }
-            if (companion.Status != "active" || companion.AutonomyPaused)
-            {
-                skipped.Add(Skip(companionId, "companion_paused"));
-                continue;
-            }
-            var used = await (
-                from run in db.Runs.AsNoTracking()
-                join trigger in db.Messages.AsNoTracking() on run.TriggerMessageId equals trigger.Id
-                where run.TenantId == tenantId && run.ConversationId == conversationId
-                    && run.CompanionId == companionId && trigger.Seq >= previousUserSeq
-                select run.Id).CountAsync(cancellationToken).ConfigureAwait(false);
-            if (used >= turnBudget)
-            {
-                skipped.Add(Skip(companionId, "turn_budget"));
-                continue;
-            }
-            // Only a companion-authored trigger advances depth. This endpoint accepts user messages
-            // only, so a posted message starts at 0; the rule is explicit because Task 3 reuses the
-            // same wake path with companion-authored triggers.
-            var depth = 0;
-            if (message.AuthorKind == "companion")
-            {
-                var previous = await db.Runs.AsNoTracking()
-                    .Where(x => x.TenantId == tenantId && x.ConversationId == conversationId && x.CompanionId == companionId)
-                    .MaxAsync(x => (int?)x.Depth, cancellationToken).ConfigureAwait(false);
-                depth = (previous ?? -1) + 1;
-            }
-            if (depth > MaxDepth)
-            {
-                skipped.Add(Skip(companionId, "depth_limit"));
-                continue;
-            }
-            runs.Add(new CompanionRunRecord
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenantId,
-                CompanionId = companionId,
-                ConversationId = conversationId,
-                TriggerMessageId = message.Id,
-                Status = "queued",
-                Depth = depth,
-                ConfigRevision = companion.Revision,
-                ConfigSnapshotJson = "{}",
-                LoadedMemoryIdsJson = "[]",
-                LoadedSkillBindingIdsJson = "[]",
-                Rounds = 0,
-                CreatedAt = now
-            });
-        }
-        foreach (var run in runs) db.Runs.Add(run);
-        // The effect is written in the same transaction as the run it serves: a host that dies
-        // between these two writes would otherwise leave a run nobody can pick up. EnqueueAsync
-        // below only wakes the loop; it no longer creates the row.
-        foreach (var run in runs) db.Effects.Add(CompanionRuntime.NewEffect(run));
-        conversation.LastMessageAt = now;
-        db.Activities.Add(new CompanionActivityRecord
-        {
-            Id = Guid.NewGuid(),
-            TenantId = tenantId,
-            Kind = "message_sent",
-            CompanionId = null,
-            ConversationId = conversationId,
-            Summary = $"用户发言：{Preview(body, 40)}",
-            PayloadJson = JsonSerializer.Serialize(new
-            {
-                message_id = message.Id,
-                author_kind = "user",
-                addressed_to = addressed,
-                preview = Preview(body, 80),
-                run_ids = runs.Select(x => x.Id).ToList()
-            }),
-            CreatedAt = now
-        });
-
-        try
-        {
-            await CompanionActivities.SaveAsync(db, tenantId,
-                token => CompanionMessages.SaveAsync(db, message, tenantId, conversationId, token), cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException)
-        {
-            throw new CompanionException("companion_duplicate_message", "The message could not be stored without colliding with a concurrent write.", 409);
-        }
-
-        var messageJson = CompanionContracts.MessageJson(message, "用户", addressed);
-        foreach (var run in runs)
-            await runtime.EnqueueAsync(run.Id, cancellationToken).ConfigureAwait(false);
-
-        return new
-        {
-            message = messageJson,
-            runs = runs.Select(CompanionContracts.RunJson).ToList(),
-            skipped_runs = skipped,
-            duplicate = false
-        };
+        var envelope = new CompanionEnvelope(
+            ChannelKind: input.ChannelKind ?? "desktop_chat",
+            ThreadKey: input.ThreadKey,
+            ConversationId: conversationId,
+            AuthorKind: "user",
+            AuthorCompanionId: null,
+            Body: input.Body ?? string.Empty,
+            AddressedTo: input.AddressedTo,
+            HopDepth: 0,
+            IdempotencyKey: idempotencyKey);
+        var result = await _channel.OnInboundMessageAsync(TenantId, envelope, cancellationToken).ConfigureAwait(false);
+        return result.Json;
     }
 
     // ── runs & activity ──

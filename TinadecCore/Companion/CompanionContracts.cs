@@ -3,19 +3,16 @@ using System.Text.Json;
 namespace TinadecCore.Companion;
 
 /// <summary>
-/// HTTP request bodies for the companion surface. Minimal API binds these with the host's
-/// snake_case JSON policy (model_purpose, persona_document, ...); every field is optional on
-/// PATCH so "absent" and "set to null" stay distinguishable where the contract needs it.
+/// HTTP request bodies and JSON projections for the companion surface.
 /// </summary>
-public sealed record CompanionAutonomyRequest(bool? Enabled = null, bool? Paused = null, int? IntervalMinutes = null, int? DailyActionBudget = null);
+public sealed record CompanionAutonomyRequest(
+    bool? Enabled = null,
+    bool? Paused = null,
+    int? IntervalMinutes = null,
+    int? DailyActionBudget = null);
 
-/// <summary>One answer to one standing authorization: approved lets that action class run unattended.</summary>
 public sealed record CompanionMandateDecisionRequest(string? Decision = null);
 
-/// <summary>
-/// A gesture the user made at the companion's face. It records the interaction; it is not a
-/// message and never becomes one — the companion is told about it, it does not say anything back.
-/// </summary>
 public sealed record CompanionEmoteRequest(string? Emote = null);
 
 public sealed record CompanionCreateRequest(
@@ -34,9 +31,6 @@ public sealed record CompanionPatchRequest(
     string? Avatar = null,
     string? PersonaDocument = null,
     string? ModelPurpose = null,
-    // Absent leaves the model untouched; an empty string clears it back to the route purpose;
-    // otherwise "<providerInstanceId>|<model>" pins one model, exactly what the detail returns.
-    // The separator is a pipe because model names themselves contain slashes.
     string? Model = null,
     string? Role = null,
     CompanionAutonomyRequest? Autonomy = null);
@@ -64,29 +58,94 @@ public sealed record CompanionConnectionCreateRequest(
     string? Name = null,
     string? Endpoint = null,
     string? CredentialRef = null,
-    string? Authorization = null);
+    string? Authorization = null,
+    string? Driver = null,
+    string? ProfileId = null);
 
-public sealed record CompanionConnectionPatchRequest(string? Authorization = null, bool? Enabled = null);
+public sealed record CompanionConnectionPatchRequest(
+    string? Authorization = null,
+    bool? Enabled = null,
+    string? Endpoint = null,
+    string? Driver = null,
+    string? ProfileId = null);
 
-public sealed record CompanionConversationCreateRequest(string? Kind = null, string? Title = null, IReadOnlyList<Guid>? CompanionIds = null);
+public sealed record CompanionConversationCreateRequest(
+    string? Kind = null,
+    string? Title = null,
+    IReadOnlyList<Guid>? CompanionIds = null);
 
 public sealed record CompanionInviteRequest(Guid? CompanionId = null, bool? ShareHistory = null);
 
-public sealed record CompanionMessagePostRequest(string? Body = null, IReadOnlyList<Guid>? AddressedTo = null, string? IdempotencyKey = null);
+public sealed record CompanionMessagePostRequest(
+    string? Body = null,
+    IReadOnlyList<Guid>? AddressedTo = null,
+    string? ChannelKind = null,
+    string? ThreadKey = null,
+    string? IdempotencyKey = null);
 
 public sealed record CompanionPauseRequest(bool? Paused = null);
 
-/// <summary>
-/// A directory the user picked on their own disk. Core copies it into its storage root, so this
-/// path is only read during import and never stored.
-/// </summary>
 public sealed record CompanionAvatarImportRequest(string? Path = null);
 
-/// <summary>
-/// A companion-domain refusal. Endpoints translate it verbatim: the code is part of the
-/// contract (companion_not_found / companion_revision_conflict / ...), never a generic
-/// conflict, and the status is the one the caller can branch on.
-/// </summary>
+public sealed record CompanionSdkImportRequest(
+    string? Path = null,
+    string? FileName = null,
+    string? ContentBase64 = null,
+    string? WasmBase64 = null);
+
+public sealed record CompanionScheduleCreateRequest(
+    string? Title = null,
+    string? Prompt = null,
+    string? CronExpression = null,
+    DateTimeOffset? RunAt = null,
+    bool? OneShot = null,
+    Guid? TargetConversationId = null,
+    bool? Enabled = null);
+
+public sealed record CompanionSchedulePatchRequest(
+    string? Title = null,
+    string? Prompt = null,
+    string? CronExpression = null,
+    DateTimeOffset? RunAt = null,
+    bool? OneShot = null,
+    Guid? TargetConversationId = null,
+    bool? Enabled = null,
+    string? Status = null);
+
+public sealed record CompanionPlanStepDto(
+    string? Id = null,
+    string? Title = null,
+    string? Status = null,
+    string? Note = null);
+
+public sealed record CompanionPlanCreateRequest(
+    string? Title = null,
+    string? Summary = null,
+    string? Status = null,
+    IReadOnlyList<CompanionPlanStepDto>? Steps = null);
+
+public sealed record CompanionPlanPatchRequest(
+    string? Title = null,
+    string? Summary = null,
+    string? Status = null,
+    IReadOnlyList<CompanionPlanStepDto>? Steps = null);
+
+public sealed record CompanionTodoCreateRequest(
+    string? Title = null,
+    string? Note = null,
+    string? Priority = null,
+    string? Status = null,
+    DateTimeOffset? DueAt = null,
+    Guid? PlanId = null);
+
+public sealed record CompanionTodoPatchRequest(
+    string? Title = null,
+    string? Note = null,
+    string? Priority = null,
+    string? Status = null,
+    DateTimeOffset? DueAt = null,
+    Guid? PlanId = null);
+
 public sealed class CompanionException(string code, string message, int statusCode) : Exception(message)
 {
     public string Code { get; } = code;
@@ -103,6 +162,11 @@ internal sealed record CompanionCounts(
 
 internal static class CompanionContracts
 {
+    private static readonly JsonSerializerOptions SnakeCase = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
+
     internal static object ToJson(CompanionAgentRecord row, CompanionCounts counts) => new
     {
         id = row.Id,
@@ -157,17 +221,20 @@ internal static class CompanionContracts
         }
     };
 
-    // Only facts this piece owns: a live run is thinking; a paused identity or a paused tenant is
-    // paused; otherwise there is nothing happening. The vocabulary is fixed by the contract.
     private static string CurrentActivity(CompanionAgentRecord row, CompanionCounts counts) =>
         counts.HasRunningRun ? "thinking"
         : row.Status == "paused" || row.AutonomyPaused || counts.AutonomyPausedGlobally ? "paused"
         : "idle";
 
-    // Rows created before the role column carry the schema bootstrap's empty default; they are
-    // autonomous partners, never an unknown third role.
+    /// <summary>
+    /// Normalizes stored role strings onto the two supported Companion roles:
+    /// <c>autonomous</c> (Companion Bot) and <c>session_partner</c>. Legacy <c>buddy</c> or empty
+    /// values read cleanly as <c>autonomous</c>.
+    /// </summary>
     internal static string NormalizeRole(string? role) =>
-        string.IsNullOrEmpty(role) ? "autonomous" : role;
+        string.Equals(role, "session_partner", StringComparison.OrdinalIgnoreCase)
+            ? "session_partner"
+            : "autonomous";
 
     internal static object ToJson(CompanionMemoryRecord row) => new
     {
@@ -182,6 +249,42 @@ internal static class CompanionContracts
         created_at = row.CreatedAt,
         updated_at = row.UpdatedAt
     };
+
+    internal static object ToMemoryJson(
+        TinadecCore.Contracts.Dtos.MemoryItemLedgerDto item,
+        Guid companionId,
+        string? sourceKindOverride = null,
+        Guid? sourceConversationId = null,
+        Guid? sourceMessageId = null) => new
+    {
+        id = item.Id,
+        companion_id = companionId,
+        content = item.Content,
+        kind = item.Kind,
+        section = item.Section,
+        in_hot_markdown = item.InHotMarkdown,
+        source_kind = sourceKindOverride ?? InferMemorySourceKind(item),
+        source_conversation_id = sourceConversationId ?? item.SourceSessionId,
+        source_message_id = sourceMessageId,
+        index_status = item.Status == "active" ? "indexed" : "deleted",
+        revision = (long)Math.Max(1, item.CurrentVersion),
+        created_at = item.CreatedAt,
+        updated_at = item.UpdatedAt
+    };
+
+    private static string InferMemorySourceKind(TinadecCore.Contracts.Dtos.MemoryItemLedgerDto item)
+    {
+        var latestReason = item.Versions.Count > 0 ? item.Versions[^1].Reason : null;
+        if (latestReason is not null)
+        {
+            if (latestReason.Contains("group_message", StringComparison.OrdinalIgnoreCase)) return "group_message";
+            if (latestReason.Contains("companion_run", StringComparison.OrdinalIgnoreCase)
+                || latestReason.Contains("distill", StringComparison.OrdinalIgnoreCase)
+                || latestReason.Contains("tool", StringComparison.OrdinalIgnoreCase))
+                return "companion_run";
+        }
+        return item.SourceRunId is { } rid && rid != Guid.Empty ? "companion_run" : "user";
+    }
 
     internal static object ToJson(CompanionSkillBindingRecord row) => new
     {
@@ -198,33 +301,34 @@ internal static class CompanionContracts
         revision = row.Revision
     };
 
-    internal static object ToJson(CompanionConnectionBindingRecord row) => new
+    internal static object ToJson(CompanionConnectionBindingRecord row)
     {
-        id = row.Id,
-        companion_id = row.CompanionId,
-        kind = row.Kind,
-        name = row.Name,
-        endpoint = row.Endpoint,
-        authorization = row.Authorization,
-        runtime_status = row.RuntimeStatus,
-        enabled = row.Enabled,
-        last_checked_at = row.LastCheckedAt,
-        revision = row.Revision
-    };
+        var (driver, profileId) = ParseBrowserBinding(row);
+        return new
+        {
+            id = row.Id,
+            companion_id = row.CompanionId,
+            kind = row.Kind,
+            name = row.Name,
+            endpoint = row.Endpoint,
+            driver,
+            profile_id = profileId,
+            authorization = row.Authorization,
+            runtime_status = EffectiveRuntimeStatus(row),
+            enabled = row.Enabled,
+            last_checked_at = row.LastCheckedAt,
+            revision = row.Revision
+        };
+    }
 
-    // The host JSON policy omits null properties. main_companion_id is explicitly nullable in
-    // the contract ("no row" answers null, revision 0), so it travels as a dictionary entry.
     internal static Dictionary<string, object?> ToJson(CompanionSettingsRecord? row) => new()
     {
         ["main_companion_id"] = row?.MainCompanionId,
-        ["buddy_companion_id"] = row?.BuddyCompanionId,
-        // How many companions other companions may recruit; 0 turns recruiting off.
         ["recruit_limit"] = row?.RecruitLimit ?? 3,
+        ["max_bot_hop_depth"] = Math.Clamp(row?.MaxBotHopDepth ?? 3, 0, 10),
         ["autonomy_paused"] = row?.AutonomyPaused ?? false,
         ["revision"] = row?.Revision ?? 0
     };
-
-    // ── conversations / messages / runs / activity (Task 2) ──
 
     internal static object ConversationJson(
         CompanionConversationRecord row, int messageCount, string? lastMessagePreview, IReadOnlyList<object> members,
@@ -232,11 +336,7 @@ internal static class CompanionContracts
     {
         id = row.Id,
         kind = row.Kind,
-        // user | companion: who opened this conversation. The member list cannot answer this —
-        // every group carries a user member regardless of who created it.
         origin,
-        // Whether this user may read the transcript. Always true today (the user is a member of
-        // every conversation this endpoint returns); it travels so the UI never has to assume.
         can_open = canOpen,
         title = row.Title,
         parent_conversation_id = row.ParentConversationId,
@@ -278,7 +378,10 @@ internal static class CompanionContracts
         conversation_id = row.ConversationId,
         trigger_message_id = row.TriggerMessageId,
         status = row.Status,
+        channel_kind = row.ChannelKind,
+        thread_key = row.ThreadKey,
         depth = row.Depth,
+        hop_depth = row.Depth,
         config_revision = row.ConfigRevision,
         loaded_memory_ids = ParseGuids(row.LoadedMemoryIdsJson),
         loaded_skill_binding_ids = ParseGuids(row.LoadedSkillBindingIdsJson),
@@ -335,20 +438,152 @@ internal static class CompanionContracts
         decided_at = row.DecidedAt
     };
 
-    internal static object ConnectionOverviewJson(CompanionConnectionBindingRecord row, string? companionName) => new
+    internal static object ConnectionOverviewJson(CompanionConnectionBindingRecord row, string? companionName)
+    {
+        var (driver, profileId) = ParseBrowserBinding(row);
+        return new
+        {
+            id = row.Id,
+            companion_id = row.CompanionId,
+            companion_name = companionName,
+            kind = row.Kind,
+            name = row.Name,
+            endpoint = row.Endpoint,
+            driver,
+            profile_id = profileId,
+            authorization = row.Authorization,
+            runtime_status = EffectiveRuntimeStatus(row),
+            enabled = row.Enabled,
+            last_checked_at = row.LastCheckedAt,
+            revision = row.Revision
+        };
+    }
+
+    internal static string EffectiveRuntimeStatus(CompanionConnectionBindingRecord row)
+    {
+        if (string.Equals(row.Kind, "work_session", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!row.Enabled || string.Equals(row.Authorization, "revoked", StringComparison.OrdinalIgnoreCase))
+                return "disconnected";
+            return string.Equals(row.Authorization, "authorized", StringComparison.OrdinalIgnoreCase)
+                ? "connected"
+                : "configured";
+        }
+
+        if (string.Equals(row.Kind, "browser", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!row.Enabled || string.Equals(row.Authorization, "revoked", StringComparison.OrdinalIgnoreCase))
+                return "disconnected";
+            if (!string.Equals(row.Authorization, "authorized", StringComparison.OrdinalIgnoreCase))
+                return "configured";
+            return row.RuntimeStatus is "connected" or "active" or "unavailable"
+                ? row.RuntimeStatus
+                : "connected";
+        }
+
+        return row.RuntimeStatus;
+    }
+
+    internal static (string? Driver, string? ProfileId) ParseBrowserBinding(CompanionConnectionBindingRecord row)
+    {
+        if (!string.Equals(row.Kind, "browser", StringComparison.OrdinalIgnoreCase))
+            return (null, null);
+
+        var raw = row.Endpoint?.Trim();
+        string driver = "builtin_electron";
+        string? profileId = string.IsNullOrWhiteSpace(row.CredentialRef) ? null : row.CredentialRef.Trim();
+
+        if (!string.IsNullOrEmpty(raw))
+        {
+            var colon = raw.IndexOf(':');
+            if (colon > 0)
+            {
+                var head = raw[..colon].Trim().ToLowerInvariant();
+                var tail = raw[(colon + 1)..].Trim();
+                if (head is "builtin_electron" or "ego_lite")
+                {
+                    driver = head;
+                    if (!string.IsNullOrEmpty(tail)) profileId ??= tail;
+                }
+            }
+            else if (raw.Equals("ego_lite", StringComparison.OrdinalIgnoreCase)
+                || raw.Equals("builtin_electron", StringComparison.OrdinalIgnoreCase))
+            {
+                driver = raw.ToLowerInvariant();
+            }
+        }
+
+        return (driver, profileId);
+    }
+
+    internal static object ScheduleJson(CompanionScheduleRecord row) => new
     {
         id = row.Id,
         companion_id = row.CompanionId,
-        companion_name = companionName,
-        kind = row.Kind,
-        name = row.Name,
-        endpoint = row.Endpoint,
-        authorization = row.Authorization,
-        runtime_status = row.RuntimeStatus,
+        title = row.Title,
+        prompt = row.Prompt,
+        cron_expression = row.CronExpression,
+        run_at = row.RunAt,
+        next_run_at = row.NextRunAt,
+        last_run_at = row.LastRunAt,
+        target_conversation_id = row.TargetConversationId,
+        one_shot = row.OneShot,
         enabled = row.Enabled,
-        last_checked_at = row.LastCheckedAt,
-        revision = row.Revision
+        status = row.Status,
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt
     };
+
+    internal static object PlanJson(CompanionPlanRecord row) => new
+    {
+        id = row.Id,
+        companion_id = row.CompanionId,
+        title = row.Title,
+        summary = row.Summary,
+        status = row.Status,
+        steps = ParsePlanSteps(row.StepsJson),
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt
+    };
+
+    internal static object TodoJson(CompanionTodoRecord row) => new
+    {
+        id = row.Id,
+        companion_id = row.CompanionId,
+        title = row.Title,
+        note = row.Note,
+        priority = row.Priority,
+        status = row.Status,
+        due_at = row.DueAt,
+        plan_id = row.PlanId,
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt
+    };
+
+    internal static IReadOnlyList<object> ParsePlanSteps(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var items = JsonSerializer.Deserialize<CompanionPlanStepDto[]>(json, SnakeCase) ?? [];
+            return items
+                .Select((step, idx) => (object)new
+                {
+                    id = string.IsNullOrWhiteSpace(step.Id) ? $"step-{idx + 1}" : step.Id.Trim(),
+                    title = step.Title ?? string.Empty,
+                    status = string.IsNullOrWhiteSpace(step.Status) ? "pending" : step.Status.Trim().ToLowerInvariant(),
+                    note = step.Note
+                })
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     private static IReadOnlyList<Guid> ParseGuids(string json)
     {

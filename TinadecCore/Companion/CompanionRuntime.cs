@@ -1,73 +1,48 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Companion;
 
-/// <summary>Hand-off between the message endpoint and the background run loop.</summary>
+/// <summary>Hand-off between channel/message endpoints and the background run loop.</summary>
 public interface ICompanionRuntime
 {
     ValueTask EnqueueAsync(Guid runId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Host knobs for draining the durable companion effect queue.</summary>
+/// <summary>Host knobs for draining due companion runs.</summary>
 public sealed class CompanionRunOptions
 {
-    /// <summary>
-    /// False leaves the queue intact instead of draining it. Tests drive
-    /// <see cref="CompanionRuntime.RunPassAsync"/> themselves so a background tick cannot race them.
-    /// </summary>
     public bool DrainEnabled { get; set; } = true;
-
     public int PollIntervalMilliseconds { get; set; } = 5000;
-
-    /// <summary>How long a claim stays owned before another pass may take it back.</summary>
     public int ClaimLeaseSeconds { get; set; } = 300;
-
     public int MaxAttempts { get; set; } = 5;
-
-    /// <summary>First retry wait in seconds; doubles per attempt. Small, because a companion reply
-    /// is one model call and a person is waiting for it.</summary>
     public double BackoffBaseSeconds { get; set; } = 2;
 }
 
 /// <summary>
-/// Executes the runs a user message owes, one at a time, off the request thread. The run row carries
-/// its own tenant id, so nothing here reads a request-scoped tenant: the hosted instance runs in the
-/// host container while endpoints only enqueue. A run freezes the companion's configuration before
-/// the model is called and writes at most one reply message, so a companion reply can never cascade
-/// into another companion's turn.
-///
-/// The companion's only tools are the four management verbs (list sessions, read a run, dispatch a
-/// task, create a workspace); it holds no code tool and never executes anything inside a work
-/// session. A dispatch starts an ordinary run there, under that session's own permission policy.
-///
-/// The queue is a table, not a channel: <c>companion_effects</c> rows are claimed under a lease, so
-/// a host that dies mid-run leaves a row the next host can reclaim instead of a run that never
-/// moves.
+/// Executes queued companion runs under lease fencing directly on <see cref="CompanionRunRecord"/>,
+/// streams live token deltas, tool call status, and avatar stage cues through
+/// <see cref="ICompanionStreamBroker"/>, and hands off any <c>@Name</c> peer mentions in group
+/// replies to <see cref="ICompanionChannel.OnMentionAsync"/> (governed by <c>max_bot_hop_depth</c>).
 /// </summary>
 public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
 {
-    internal const string RunReplyKind = "run_reply";
-    /// <summary>Feed kind the desktop supervisor board reads to show what a companion dispatched.</summary>
     internal const string DispatchActivityKind = "companion_dispatched";
     private const int MaxMemories = 6;
     private const int MaxContextMessages = 30;
     private const int MaxErrorMessage = 2048;
     private const int MaxBatch = 4;
-    // Bounded like a standing member's turn: a companion manages sessions, it does not work in
-    // them, so a model that keeps calling tools is stopped rather than allowed to loop.
     private const int MaxToolRounds = 6;
     private const int TaskPreviewLength = 80;
-    private static readonly TimeSpan SelfHealInterval = TimeSpan.FromSeconds(30);
-    // One day: long enough to inspect a failed reply after the fact, short enough that the queue
-    // table stays a queue and not a transcript.
-    private static readonly TimeSpan EffectRetention = TimeSpan.FromDays(1);
 
     private static readonly JsonSerializerOptions SnakeCase = new(JsonSerializerDefaults.Web)
     {
@@ -81,11 +56,10 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
     private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger<CompanionRuntime> _logger;
     private readonly CompanionRunOptions _options;
-    // Optional so a module-only host (or a test of the queue itself) still runs a companion with
-    // no tools; the composition root supplies the real management gateway.
     private readonly ICompanionWorkGateway? _workGateway;
-    private DateTimeOffset _lastHealAt = DateTimeOffset.MinValue;
-    private DateTimeOffset _lastPruneAt = DateTimeOffset.MinValue;
+    private readonly ICompanionStreamBroker? _streamBroker;
+    private readonly IServiceProvider? _services;
+    private readonly IContextMemoryService? _contextMemory;
 
     public CompanionRuntime(
         IDbContextFactory<CompanionDbContext> dbFactory,
@@ -93,19 +67,21 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         ILogger<CompanionRuntime> logger,
         Microsoft.Extensions.Configuration.IConfiguration? configuration = null,
         CompanionRunOptions? options = null,
-        ICompanionWorkGateway? workGateway = null)
+        ICompanionWorkGateway? workGateway = null,
+        ICompanionStreamBroker? streamBroker = null,
+        IServiceProvider? services = null,
+        IContextMemoryService? contextMemory = null)
     {
         _dbFactory = dbFactory;
         _chatClients = chatClients;
         _logger = logger;
         _options = options ?? ReadOptions(configuration);
         _workGateway = workGateway;
+        _streamBroker = streamBroker;
+        _services = services;
+        _contextMemory = contextMemory ?? services?.GetService<IContextMemoryService>();
     }
 
-    /// <summary>
-    /// Read by hand rather than through the options binder: this module's package set does not
-    /// carry the binder, and the four knobs do not justify adding it.
-    /// </summary>
     private static CompanionRunOptions ReadOptions(Microsoft.Extensions.Configuration.IConfiguration? configuration)
     {
         var options = new CompanionRunOptions();
@@ -115,51 +91,33 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         if (int.TryParse(configuration[section + "PollIntervalMilliseconds"], out var poll)) options.PollIntervalMilliseconds = poll;
         if (int.TryParse(configuration[section + "ClaimLeaseSeconds"], out var lease)) options.ClaimLeaseSeconds = lease;
         if (int.TryParse(configuration[section + "MaxAttempts"], out var attempts)) options.MaxAttempts = attempts;
-        // Invariant culture: a fractional backoff written as "0.5" must not be read as 5 (or
-        // rejected) just because the host's locale uses a comma as the decimal separator.
         if (double.TryParse(configuration[section + "BackoffBaseSeconds"],
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var backoff))
             options.BackoffBaseSeconds = backoff;
         return options;
     }
 
-    internal sealed record EffectClaim(Guid Id, Guid TenantId, Guid RunId, string Token, int Attempts);
+    internal sealed record RunClaim(Guid RunId, Guid TenantId, string Token, int Attempts);
 
-    /// <summary>Raised when a run cannot continue; <paramref name="retryable"/> decides whether the
-    /// effect goes back on the queue or settles as failed.</summary>
     private sealed class RunAbortException(string code, string message, bool retryable) : Exception(message)
     {
         public string Code { get; } = code;
         public bool Retryable { get; } = retryable;
     }
 
-    /// <summary>
-    /// Makes the run claimable and wakes the loop. The message path already writes the effect in the
-    /// same transaction as the run; this is the idempotent net for any other caller.
-    /// </summary>
     public async ValueTask EnqueueAsync(Guid runId, CancellationToken cancellationToken = default)
     {
         try
         {
+            var now = DateTimeOffset.UtcNow;
+            var nowMs = now.ToUnixTimeMilliseconds();
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var run = await db.Runs.AsNoTracking()
-                .SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
-            if (run is null) return;
-            var exists = await db.Effects.AsNoTracking()
-                .AnyAsync(x => x.RunId == runId && x.Kind == RunReplyKind, cancellationToken).ConfigureAwait(false);
-            if (!exists)
-            {
-                db.Effects.Add(NewEffect(run));
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (DbUpdateException)
-                {
-                    // A concurrent writer inserted the same row first; the unique (run, kind) index
-                    // is the authority and the row it wrote is equally claimable.
-                }
-            }
+            await db.Runs
+                .Where(x => x.Id == runId && x.Status == "queued" && x.AvailableAtUnixMs <= 0)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.AvailableAt, now)
+                    .SetProperty(x => x.AvailableAtUnixMs, nowMs), cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -167,40 +125,17 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         }
         catch (Exception exception)
         {
-            // The request already committed the run: failing to nudge the loop must not fail the
-            // message. The poll pass still finds the row and startup self-heal covers the gap.
-            _logger.LogWarning(exception, "Companion run {RunId} could not be queued for execution.", runId);
+            _logger.LogWarning(exception, "Companion run {RunId} could not be primed for execution.", runId);
         }
-        // One pending wake-up is enough: the pass drains every due row, so a count that piles up
-        // per message would only make the loop spin on an empty queue.
-        if (_signal.CurrentCount == 0) _signal.Release();
-    }
 
-    internal static CompanionEffectRecord NewEffect(CompanionRunRecord run)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return new CompanionEffectRecord
-        {
-            Id = Guid.NewGuid(),
-            TenantId = run.TenantId,
-            CompanionId = run.CompanionId,
-            ConversationId = run.ConversationId,
-            RunId = run.Id,
-            Kind = RunReplyKind,
-            PayloadJson = JsonSerializer.Serialize(new { run_id = run.Id, companion_id = run.CompanionId }),
-            Status = "pending",
-            AvailableAt = now,
-            AvailableAtUnixMs = now.ToUnixTimeMilliseconds(),
-            CreatedAt = now,
-            UpdatedAt = now
-        };
+        if (_signal.CurrentCount == 0) _signal.Release();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!_options.DrainEnabled)
         {
-            _logger.LogInformation("Companion run drain is disabled; owed effects stay in companion_effects.");
+            _logger.LogInformation("Companion run drain is disabled; queued runs stay in companion_runs.");
             return;
         }
 
@@ -208,8 +143,6 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         var backlog = false;
         while (!stoppingToken.IsCancellationRequested)
         {
-            // A pass that settled rows may have left more due; go again without paying the poll
-            // interval, which would otherwise throttle a burst of messages to one batch per tick.
             if (!backlog)
             {
                 try
@@ -232,21 +165,13 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             }
             catch (Exception exception)
             {
-                // One bad pass must not take the loop with it; rows keep their last visible state.
-                _logger.LogError(exception, "Companion effect pass failed.");
+                _logger.LogError(exception, "Companion run pass failed.");
             }
         }
     }
 
-    /// <summary>
-    /// One drain pass: heal runs that lost their effect, reclaim expired leases, then claim and
-    /// execute due rows serially. The old channel loop was single-reader and a companion reply is a
-    /// single model call someone is waiting on, so concurrency buys nothing here.
-    /// </summary>
     internal async Task<int> RunPassAsync(CancellationToken cancellationToken = default)
     {
-        await SelfHealAsync(cancellationToken).ConfigureAwait(false);
-        await PruneSettledAsync(cancellationToken).ConfigureAwait(false);
         await ReclaimExpiredAsync(cancellationToken).ConfigureAwait(false);
 
         var processed = 0;
@@ -270,7 +195,6 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         return processed;
     }
 
-    /// <summary>Public so a test or an operator can settle one run without the background loop.</summary>
     public async Task ExecuteAsync(Guid runId, CancellationToken cancellationToken)
     {
         var claim = await ClaimRunAsync(runId, cancellationToken).ConfigureAwait(false);
@@ -286,198 +210,90 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         }
     }
 
-    // ── queue ──
+    // ── lease queue on companion_runs ──
 
-    /// <summary>
-    /// A run row is what the user sees; an effect row is what the host still owes. If a host died
-    /// between those two writes (or the run predates this queue), the run reads "queued" forever.
-    /// Give every such run the effect it should have had.
-    /// </summary>
-    internal async Task<int> SelfHealAsync(CancellationToken cancellationToken)
-    {
-        var now = DateTimeOffset.UtcNow;
-        if (now - _lastHealAt < SelfHealInterval) return 0;
-        try
-        {
-            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            // Two flat reads instead of a correlated EXISTS: the same query shape has to work on
-            // SQLite and PostgreSQL. Ordered in memory because SQLite cannot ORDER BY a
-            // DateTimeOffset; the scan is bounded by the number of open runs.
-            var queued = (await db.Runs.AsNoTracking()
-                    .Where(run => run.Status == "queued")
-                    .Take(2000)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false))
-                .OrderBy(run => run.CreatedAt)
-                .Take(500)
-                .ToList();
-            if (queued.Count == 0)
-            {
-                _lastHealAt = now;
-                return 0;
-            }
-            var covered = (await db.Effects.AsNoTracking()
-                    .Where(x => x.Kind == RunReplyKind)
-                    .Select(x => new { x.RunId })
-                    .ToListAsync(cancellationToken).ConfigureAwait(false))
-                .Where(x => x.RunId is not null)
-                .Select(x => x.RunId!.Value)
-                .ToHashSet();
-            var orphans = queued.Where(run => !covered.Contains(run.Id)).ToList();
-            if (orphans.Count > 0)
-            {
-                foreach (var run in orphans) db.Effects.Add(NewEffect(run));
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (DbUpdateException)
-                {
-                    // A concurrent enqueue healed a subset; the rows it wrote are already claimable.
-                }
-                _logger.LogInformation("Companion self-heal queued {Count} run(s) that had no effect row.", orphans.Count);
-            }
-            _lastHealAt = now;
-            return orphans.Count;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            // Tables may not exist yet on a cold host; retry next pass instead of giving up.
-            _logger.LogWarning(exception, "Companion self-heal could not run yet.");
-            return 0;
-        }
-    }
-
-    /// <summary>
-    /// Keeps the queue table from growing without bound: a settled effect is only history, and the
-    /// run row already carries the outcome a client reads.
-    /// </summary>
-    internal async Task PruneSettledAsync(CancellationToken cancellationToken)
-    {
-        var now = DateTimeOffset.UtcNow;
-        if (now - _lastPruneAt < SelfHealInterval) return;
-        _lastPruneAt = now;
-        var cutoff = now.Subtract(EffectRetention);
-        try
-        {
-            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var settled = (await db.Effects
-                    .Where(x => x.Status == "done" || x.Status == "failed")
-                    .Take(1000)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false))
-                .Where(x => x.UpdatedAt < cutoff)
-                .Select(x => x.Id)
-                .ToList();
-            if (settled.Count == 0) return;
-            await db.Effects.Where(x => settled.Contains(x.Id)).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            // Retention is housekeeping; a cold or read-only database must not stop the drain.
-            _logger.LogDebug(exception, "Companion effect retention pass skipped.");
-        }
-    }
-
-    /// <summary>
-    /// Returns leases whose owner stopped without settling them. The claim token is the fencing
-    /// boundary: a late executor can no longer settle a row another host has taken.
-    /// </summary>
-    internal async Task ReclaimExpiredAsync(CancellationToken cancellationToken)
+    internal async Task<int> ReclaimExpiredAsync(CancellationToken cancellationToken)
     {
         var beforeMs = DateTimeOffset.UtcNow
             .Subtract(TimeSpan.FromSeconds(Math.Clamp(_options.ClaimLeaseSeconds, 5, 3600)))
             .ToUnixTimeMilliseconds();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var expired = await db.Effects
+        var expired = await db.Runs
             .Where(x => x.Status == "running" && x.ClaimedAtUnixMs != null && x.ClaimedAtUnixMs < beforeMs)
             .OrderBy(x => x.Id)
             .Take(100)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (expired.Count == 0) return;
+        if (expired.Count == 0) return 0;
+
         var now = DateTimeOffset.UtcNow;
+        var nowMs = now.ToUnixTimeMilliseconds();
         foreach (var row in expired)
         {
-            row.Status = "pending";
+            row.Status = "queued";
             row.ClaimToken = null;
             row.ClaimedAt = null;
             row.ClaimedAtUnixMs = null;
             row.AvailableAt = now;
-            row.AvailableAtUnixMs = now.ToUnixTimeMilliseconds();
-            row.LastError = "reclaimed: the previous host stopped before settling this effect";
-            row.UpdatedAt = now;
+            row.AvailableAtUnixMs = nowMs;
+            row.LastError = "reclaimed: the previous host stopped before settling this run";
         }
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return expired.Count;
     }
 
-    internal async Task<IReadOnlyList<EffectClaim>> ClaimDueAsync(int max, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<RunClaim>> ClaimDueAsync(int max, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var nowMs = now.ToUnixTimeMilliseconds();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        // The due comparison and ordering run on the numeric twin: SQLite cannot translate either
-        // operation on a DateTimeOffset.
-        var ids = await db.Effects.AsNoTracking()
-            .Where(x => x.Status == "pending" && x.AvailableAtUnixMs <= nowMs)
+        var candidates = await db.Runs.AsNoTracking()
+            .Where(x => x.Status == "queued" && x.AvailableAtUnixMs <= nowMs)
             .OrderBy(x => x.AvailableAtUnixMs).ThenBy(x => x.Id)
-            .Select(x => x.Id)
+            .Select(x => new { x.Id, x.TenantId, x.Attempts, x.StartedAt })
             .Take(Math.Clamp(max, 1, 20))
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
-        var claims = new List<EffectClaim>();
-        foreach (var id in ids)
+        var claims = new List<RunClaim>();
+        foreach (var item in candidates)
         {
-            var row = await db.Effects.AsNoTracking().SingleAsync(x => x.Id == id, cancellationToken).ConfigureAwait(false);
-            if (row.RunId is not { } runId) continue;
             var token = Guid.NewGuid().ToString("N");
-            var won = await db.Effects
-                .Where(x => x.Id == id && x.Status == "pending")
+            var startedAt = item.StartedAt ?? now;
+            var won = await db.Runs
+                .Where(x => x.Id == item.Id && x.Status == "queued")
                 .ExecuteUpdateAsync(set => set
                     .SetProperty(x => x.Status, "running")
+                    .SetProperty(x => x.StartedAt, startedAt)
                     .SetProperty(x => x.ClaimToken, token)
                     .SetProperty(x => x.ClaimedAt, now)
                     .SetProperty(x => x.ClaimedAtUnixMs, nowMs)
-                    .SetProperty(x => x.Attempts, x => x.Attempts + 1)
-                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+                    .SetProperty(x => x.Attempts, x => x.Attempts + 1), cancellationToken).ConfigureAwait(false);
             if (won != 1) continue;
-            claims.Add(new EffectClaim(row.Id, row.TenantId, runId, token, row.Attempts + 1));
+            claims.Add(new RunClaim(item.Id, item.TenantId, token, item.Attempts + 1));
         }
         return claims;
     }
 
-    private async Task<EffectClaim?> ClaimRunAsync(Guid runId, CancellationToken cancellationToken)
+    private async Task<RunClaim?> ClaimRunAsync(Guid runId, CancellationToken cancellationToken)
     {
+        var now = DateTimeOffset.UtcNow;
+        var nowMs = now.ToUnixTimeMilliseconds();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var run = await db.Runs.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
         if (run is null) return null;
-        var effect = await db.Effects
-            .SingleOrDefaultAsync(x => x.RunId == runId && x.Kind == RunReplyKind, cancellationToken).ConfigureAwait(false);
-        if (effect is null)
-        {
-            effect = NewEffect(run);
-            db.Effects.Add(effect);
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
 
-        var now = DateTimeOffset.UtcNow;
         var token = Guid.NewGuid().ToString("N");
-        var won = await db.Effects
-            .Where(x => x.Id == effect.Id && x.Status == "pending")
+        var startedAt = run.StartedAt ?? now;
+        var won = await db.Runs
+            .Where(x => x.Id == runId && x.Status == "queued")
             .ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.Status, "running")
+                .SetProperty(x => x.StartedAt, startedAt)
                 .SetProperty(x => x.ClaimToken, token)
                 .SetProperty(x => x.ClaimedAt, now)
-                .SetProperty(x => x.ClaimedAtUnixMs, now.ToUnixTimeMilliseconds())
-                .SetProperty(x => x.Attempts, x => x.Attempts + 1)
-                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        return won == 1 ? new EffectClaim(effect.Id, effect.TenantId, runId, token, effect.Attempts + 1) : null;
+                .SetProperty(x => x.ClaimedAtUnixMs, nowMs)
+                .SetProperty(x => x.Attempts, x => x.Attempts + 1), cancellationToken).ConfigureAwait(false);
+        return won == 1 ? new RunClaim(run.Id, run.TenantId, token, run.Attempts + 1) : null;
     }
 
     private TimeSpan Backoff(int attempts)
@@ -489,38 +305,22 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
 
     // ── execute ──
 
-    private async Task<bool> ExecuteClaimAsync(EffectClaim claim, CancellationToken cancellationToken)
+    private async Task<bool> ExecuteClaimAsync(RunClaim claim, CancellationToken cancellationToken)
     {
         CompanionRunRecord run;
         await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
         {
-            var effect = await db.Effects
-                .SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken)
-                .ConfigureAwait(false);
-            if (effect is null) return false; // another host owns it now
-
             var row = await db.Runs
-                .SingleOrDefaultAsync(x => x.Id == claim.RunId && x.TenantId == claim.TenantId, cancellationToken)
+                .SingleOrDefaultAsync(
+                    x => x.Id == claim.RunId && x.TenantId == claim.TenantId && x.Status == "running" && x.ClaimToken == claim.Token,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            if (row is null)
+            if (row is null) return false;
+
+            if (claim.Attempts == 1)
             {
-                await SettleEffectAsync(db, effect, "done", "the run this effect belongs to no longer exists", cancellationToken)
-                    .ConfigureAwait(false);
-                return false;
-            }
-            if (row.Status is "completed" or "failed")
-            {
-                // Someone settled the run already (an operator, or a duplicate from before the
-                // unique index existed). Nothing is owed.
-                await SettleEffectAsync(db, effect, "done", null, cancellationToken).ConfigureAwait(false);
-                return false;
-            }
-            if (row.Status == "queued")
-            {
-                row.Status = "running";
-                row.StartedAt = DateTimeOffset.UtcNow;
-                // The feed reports a run transition as `companion.run`, so the transition has to
-                // exist as a durable row before anyone can subscribe to it.
+                var startedAt = row.StartedAt ?? DateTimeOffset.UtcNow;
+                row.StartedAt = startedAt;
                 db.Activities.Add(new CompanionActivityRecord
                 {
                     Id = Guid.NewGuid(),
@@ -529,28 +329,22 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                     CompanionId = row.CompanionId,
                     ConversationId = row.ConversationId,
                     Summary = "伙伴开始回复",
-                    PayloadJson = JsonSerializer.Serialize(new { run_id = row.Id, status = "running" }),
-                    CreatedAt = row.StartedAt.Value
+                    PayloadJson = JsonSerializer.Serialize(new { run_id = row.Id, status = "running", hop_depth = row.Depth }),
+                    CreatedAt = startedAt
                 });
+                await CompanionActivities.SaveAsync(db, row.TenantId, cancellationToken).ConfigureAwait(false);
             }
-            // A run left "running" by a dead host resumes in place; its claim was reclaimed above.
             run = row;
-            await CompanionActivities.SaveAsync(db, run.TenantId, cancellationToken).ConfigureAwait(false);
         }
+
+        _streamBroker?.PublishStageCue(
+            run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+            emotion: "thinking", speaking: false, intensity: 0.5);
 
         try
         {
-            var prompt = await FreezeAsync(run, cancellationToken).ConfigureAwait(false);
-            if (prompt is null)
-            {
-                // The run moved on under us; do not overwrite whoever moved it.
-                await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-                var effect = await db.Effects
-                    .SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken)
-                    .ConfigureAwait(false);
-                if (effect is not null) await SettleEffectAsync(db, effect, "done", null, cancellationToken).ConfigureAwait(false);
-                return false;
-            }
+            var prompt = await FreezeAsync(run, claim.Token, cancellationToken).ConfigureAwait(false);
+            if (prompt is null) return false;
 
             var resolution = prompt.ProviderId is { } providerId
                 ? await _chatClients.ResolveModelChatAsync(providerId, prompt.ModelName, cancellationToken).ConfigureAwait(false)
@@ -569,50 +363,60 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                 throw new RunAbortException("companion_run_failed", "The companion produced no reply.", retryable: true);
 
             await CompleteAsync(run, claim, reply, cancellationToken).ConfigureAwait(false);
+            if (prompt.TriggerAuthorKind == "user")
+            {
+                await TryDistillTurnMemoryAsync(
+                    run.TenantId, run.CompanionId, run.ConversationId, run.Id, prompt.TriggerBody, reply, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            _streamBroker?.PublishStageCue(
+                run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                emotion: "idle", speaking: false, intensity: 0.25);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            _streamBroker?.PublishStageCue(
+                run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                emotion: "idle", speaking: false, intensity: 0.2);
             await ReleaseClaimAsync(claim, "interrupted by host shutdown", CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (RunAbortException abort)
         {
+            _streamBroker?.PublishStageCue(
+                run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                emotion: "concerned", speaking: false, intensity: 0.6);
             return await FailClaimAsync(claim, abort.Code, abort.Message, abort.Retryable, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
+            _streamBroker?.PublishStageCue(
+                run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                emotion: "concerned", speaking: false, intensity: 0.6);
             return await FailClaimAsync(claim, "companion_run_failed", exception.Message, retryable: true, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    private static async Task SettleEffectAsync(
-        CompanionDbContext db, CompanionEffectRecord effect, string status, string? note, CancellationToken cancellationToken)
-    {
-        effect.Status = status;
-        effect.LastError = note;
-        effect.ClaimToken = null;
-        effect.ClaimedAt = null;
-        effect.ClaimedAtUnixMs = null;
-        effect.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-
     // ── freeze ──
 
-    private sealed record FrozenPrompt(Guid? ProviderId, string? ModelName, string ModelPurpose, string Instructions, List<ChatMessage> Messages);
+    private sealed record SelectedCompanionMemory(Guid Id, string Content, string? Kind, DateTimeOffset UpdatedAt);
 
-    /// <summary>
-    /// Reads the companion, its private memories, enabled skills and the recent transcript, then
-    /// writes the frozen configuration onto the run. Returns null when the run moved on while this
-    /// host was reading it; a companion that is gone or archived aborts the run without a retry.
-    /// </summary>
-    private async Task<FrozenPrompt?> FreezeAsync(CompanionRunRecord run, CancellationToken cancellationToken)
+    private sealed record FrozenPrompt(
+        Guid? ProviderId,
+        string? ModelName,
+        string ModelPurpose,
+        string Instructions,
+        List<ChatMessage> Messages,
+        string TriggerBody,
+        string TriggerAuthorKind);
+
+    private async Task<FrozenPrompt?> FreezeAsync(CompanionRunRecord run, string claimToken, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var row = await db.Runs.SingleOrDefaultAsync(x => x.Id == run.Id && x.Status == "running", cancellationToken).ConfigureAwait(false);
+        var row = await db.Runs.SingleOrDefaultAsync(
+            x => x.Id == run.Id && x.Status == "running" && x.ClaimToken == claimToken, cancellationToken).ConfigureAwait(false);
         if (row is null) return null;
 
         var companion = await db.Companions.AsNoTracking()
@@ -621,22 +425,92 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         if (companion is null)
             throw new RunAbortException("companion_not_found", "Companion not found.", retryable: false);
 
-        var triggerBody = await db.Messages.AsNoTracking()
+        var triggerRow = await db.Messages.AsNoTracking()
             .Where(x => x.Id == row.TriggerMessageId && x.ConversationId == row.ConversationId && x.TenantId == row.TenantId)
-            .Select(x => x.Body)
-            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
+            .Select(x => new { x.Body, x.AuthorKind })
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var triggerBody = triggerRow?.Body ?? string.Empty;
+        var triggerAuthorKind = triggerRow?.AuthorKind ?? "user";
 
-        // Only this companion's indexed memories take part: group content is never merged into a
-        // member's private memory, and another companion's rows are not even a candidate.
-        var allMemories = await db.Memories.AsNoTracking()
-            .Where(x => x.TenantId == row.TenantId && x.CompanionId == companion.Id && x.IndexStatus == "indexed")
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var memories = SelectMemories(allMemories, triggerBody);
+        List<SelectedCompanionMemory> memories;
+        string? coreCompanionMarkdown = null;
+        string? principalProfileMarkdown = null;
+        var projectMemoryOverviews = new List<(string ProjectName, string Markdown)>();
+
+        if (_contextMemory is not null)
+        {
+            await CompanionService.BackfillLegacyMemoriesCoreAsync(
+                db, _contextMemory, row.TenantId, companion.Id, cancellationToken).ConfigureAwait(false);
+
+            var companionDoc = await _contextMemory.GetDocumentAsync(
+                "companion", companionId: companion.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (companionDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(companionDoc.Markdown))
+            {
+                coreCompanionMarkdown = Truncate(companionDoc.Markdown.Trim(), 2400);
+            }
+
+            var companionItems = await _contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companion.Id,
+                status: "active",
+                includeVersions: false,
+                limit: 100,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            memories = SelectMemories(
+                companionItems.Items.Select(x => new SelectedCompanionMemory(x.Id, x.Content, x.Kind, x.UpdatedAt)).ToList(),
+                triggerBody);
+
+            try
+            {
+                var principalDoc = await _contextMemory.GetDocumentAsync("principal", cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (principalDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(principalDoc.Markdown))
+                {
+                    principalProfileMarkdown = Truncate(principalDoc.Markdown.Trim(), 1600);
+                }
+
+                if (_workGateway is not null)
+                {
+                    var workspaces = await _workGateway.ListWorkspacesAsync(companion.Id, cancellationToken).ConfigureAwait(false);
+                    if (workspaces is { IsSuccess: true, Value: { Count: > 0 } wsList })
+                    {
+                        foreach (var ws in wsList.Take(3))
+                        {
+                            var projDoc = await _contextMemory.GetDocumentAsync(
+                                "project", projectId: ws.ProjectId, workspaceRoot: ws.RootPath, cancellationToken: cancellationToken).ConfigureAwait(false);
+                            if (projDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(projDoc.Markdown))
+                            {
+                                projectMemoryOverviews.Add((ws.Name, Truncate(projDoc.Markdown.Trim(), 1000)));
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Could not load read-only L3/L2 memory context for companion {CompanionId}.", companion.Id);
+            }
+        }
+        else
+        {
+            var allMemories = await db.Memories.AsNoTracking()
+                .Where(x => x.TenantId == row.TenantId && x.CompanionId == companion.Id && x.IndexStatus == "indexed")
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            memories = SelectMemories(
+                allMemories.Select(x => new SelectedCompanionMemory(x.Id, x.Content, x.SourceKind, x.UpdatedAt)).ToList(),
+                triggerBody);
+        }
 
         var skills = (await db.SkillBindings
                 .Where(x => x.TenantId == row.TenantId && x.CompanionId == companion.Id && x.Enabled)
                 .ToListAsync(cancellationToken).ConfigureAwait(false))
             .OrderBy(x => x.Name, StringComparer.Ordinal)
+            .ToList();
+
+        var todos = (await db.Todos.AsNoTracking()
+                .Where(x => x.TenantId == row.TenantId && x.CompanionId == companion.Id && x.Status != "done" && x.Status != "cancelled")
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderByDescending(x => x.UpdatedAt)
+            .Take(8)
             .ToList();
 
         var now = DateTimeOffset.UtcNow;
@@ -645,11 +519,12 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             companion_id = companion.Id,
             revision = companion.Revision,
             name = companion.Name,
+            role = CompanionContracts.NormalizeRole(companion.Role),
             persona_document = companion.PersonaDocument,
             model_purpose = companion.ModelPurpose,
             model_provider_id = companion.ModelProviderId,
             model = companion.ModelName,
-            memories = memories.Select(x => new { id = x.Id, content = x.Content }),
+            memories = memories.Select(x => new { id = x.Id, content = x.Content, kind = x.Kind }),
             skills = skills.Select(x => new { id = x.Id, name = x.Name, instructions = x.Instructions })
         }, SnakeCase);
         row.ConfigRevision = companion.Revision;
@@ -663,49 +538,79 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         var messages = await TranscriptAsync(db, row, cancellationToken).ConfigureAwait(false);
-        return new FrozenPrompt(companion.ModelProviderId, companion.ModelName, companion.ModelPurpose, Instructions(companion, memories, skills), messages);
+        return new FrozenPrompt(
+            companion.ModelProviderId,
+            companion.ModelName,
+            companion.ModelPurpose,
+            Instructions(companion, memories, coreCompanionMarkdown, principalProfileMarkdown, projectMemoryOverviews, skills, todos),
+            messages,
+            triggerBody,
+            triggerAuthorKind);
     }
 
     private static string Instructions(
         CompanionAgentRecord companion,
-        IReadOnlyList<CompanionMemoryRecord> memories,
-        IReadOnlyList<CompanionSkillBindingRecord> skills)
+        IReadOnlyList<SelectedCompanionMemory> memories,
+        string? coreCompanionMarkdown,
+        string? principalProfileMarkdown,
+        IReadOnlyList<(string ProjectName, string Markdown)> projectMemoryOverviews,
+        IReadOnlyList<CompanionSkillBindingRecord> skills,
+        IReadOnlyList<CompanionTodoRecord> openTodos)
     {
         var persona = string.IsNullOrWhiteSpace(companion.PersonaDocument) ? DefaultPersona : companion.PersonaDocument.Trim();
-        var text = new System.Text.StringBuilder(persona);
+        var text = new StringBuilder(persona);
         text.AppendLine().AppendLine();
-        text.AppendLine($"你是伙伴域中的伙伴「{companion.Name}」。你只与本会话的成员交流。");
+        var roleLabel = CompanionContracts.NormalizeRole(companion.Role) == "session_partner" ? "会话拍档" : "伙伴";
+        text.AppendLine($"你是伙伴域中的{roleLabel}「{companion.Name}」，定位为用户的跨工作区、跨设备总指挥官与个人幕僚长（Commander & Personal Chief-of-Staff）。你只与本会话的成员交流。");
         text.AppendLine();
-        // The environment is exposed as verbs, not as a briefing. Everything the user's work looks
-        // like — which sessions exist, what each is doing, which projects are registered, what a
-        // session has already been asked — is one call away. Writing it into this prompt instead
-        // would spend tokens on facts the turn usually does not need, and would go stale between
-        // the freeze and the model call.
-        text.AppendLine("你可以随时查询这个工作环境，需要时自己决定查什么：");
-        text.AppendLine("- companion_list_sessions：本租户的工作会话及其最近一次运行");
-        text.AppendLine("- companion_session_detail：某个会话的权限模式、是否正在运行、最近的对话内容");
-        text.AppendLine("- companion_read_run：一次运行的状态、摘要与失败原因");
-        text.AppendLine("- companion_list_workspaces：已登记的项目工作区及其会话数量");
-        text.AppendLine("- companion_dispatch：把任务作为用户消息写入一个工作会话并启动运行");
-        text.AppendLine("- companion_create_workspace：新建或复用项目工作区");
-        text.AppendLine("- companion_relay：给另一个伙伴（搭子或别的自主伙伴）发一条消息");
+        text.AppendLine("### 指挥职责与隔离边界");
+        text.AppendLine("- **严守执行隔离**：你绝不直接读写代码文件、不直接执行 Shell/Git/MCP 命令。所有工程变更必须通过已授权的 `work_session` 连接器派发给目标工作会话中的工程智能体（在其自身审批门下执行）。");
+        text.AppendLine("- **已授权工作区的完整指挥权**：在你持有 `work_session` 授权的工作区内（`*` 全局或指定项目），你拥有顶层统筹与指挥权——可随时查看可用模式（`companion_list_modes`）、新建工作会话（`companion_create_session`）、派发任务（`companion_dispatch`）、盘中纠偏引导（`companion_steer_run`）、紧急喊停（`companion_cancel_run`）、只读旁路问询（`companion_side_question`）以及查看待批审批项（`companion_list_approvals`）。");
+        text.AppendLine("- **尊重与克制原则（Respectful Restraint）**：对于用户自己手动创建并正在推进的会话，除非用户明确授权你接手，或者你观察到明显的死循环/高危误操作需要保护性喊停，否则严禁无故插手、抢夺或打断用户的手动会话。");
+        text.AppendLine("- **多伙伴协同**：如需与专业分工伙伴协作，可使用 `companion_relay`（或在群聊中 `@伙伴名字`，受 `max_bot_hop_depth` 跳数上限约束）。");
+        text.AppendLine("- **回流与内联卡片汇报**：当收到工作会话状态回流（`awaiting_approval` 待审批、`browser_handoff` 浏览器人工接管、`completed` 完成、`failed` 失败）时，用精炼清晰的摘要向用户说明关键进展或待确认风险，配合界面内联工作会话卡片供用户一键批准/拒绝/接管，不要重复触发同一派活。");
         text.AppendLine();
-        text.AppendLine("没有其他工具：不能读写文件、执行命令、使用 Git、MCP、浏览器或外部设备。"
-            + "派活是管理动作，不需要工具审批；真正写代码的是工作会话里的智能体，它们自己的审批门照旧。");
-        text.AppendLine("派活之前值得先看一眼：那个会话是不是已经在做同一件事（companion_session_detail 的最近对话会告诉你）。"
-            + "重复派活对用户是噪音，但也不必为了确认而每次都查——你自己判断。");
-        text.AppendLine("遇到需要别人来安排的工作，可以给搭子发消息（companion_relay）；搭子也可以把活派回给你所在的会话。"
-            + "伙伴之间的消息只是消息，收到的一方会用自己的工具和授权来处理，不会因为你说了什么就必须执行。");
-        text.AppendLine("不泄露其他成员的私有信息，群聊内容也不会自动成为任何成员的私有记忆。");
+        text.AppendLine("### 受控工具清单");
+        text.AppendLine("- 工作区与会话指挥：`companion_list_modes` / `companion_list_workspaces` / `companion_create_workspace` / `companion_list_sessions` / `companion_create_session` / `companion_session_detail` / `companion_read_run` / `companion_dispatch` / `companion_steer_run` / `companion_cancel_run` / `companion_side_question` / `companion_list_approvals` / `companion_relay`");
+        text.AppendLine("- 记忆检索与维护：`companion_memory_remember`（维护你自己的私有记忆）/ `companion_memory_search`（检索私有记忆 + 只读 L3 用户画像与 L2 项目记忆）/ `companion_project_note`（仅当策略允许时写入带溯源标记的项目笔记，否则请通过 `companion_dispatch` 交由工程会话验证并沉淀）");
+        text.AppendLine("- 个人日程/计划/待办：`companion_list_schedules` / `companion_upsert_schedule` / `companion_delete_schedule` / `companion_list_plans` / `companion_upsert_plan` / `companion_list_todos` / `companion_upsert_todo`");
+
+        if (!string.IsNullOrWhiteSpace(principalProfileMarkdown))
+        {
+            text.AppendLine().AppendLine("### L3 用户全局画像（只读参考）");
+            text.AppendLine(principalProfileMarkdown);
+        }
+
+        if (projectMemoryOverviews.Count > 0)
+        {
+            text.AppendLine().AppendLine("### L2 已连接项目核心记忆（只读概览）");
+            foreach (var (projectName, markdown) in projectMemoryOverviews)
+            {
+                text.AppendLine($"#### 项目：{projectName}");
+                text.AppendLine(markdown);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(coreCompanionMarkdown))
+        {
+            text.AppendLine().AppendLine("### 你的核心私有记忆文档（只有你自己可见）");
+            text.AppendLine(coreCompanionMarkdown);
+        }
+
         if (memories.Count > 0)
         {
-            text.AppendLine().AppendLine("你记得的事实（只有你自己可见）：");
+            text.AppendLine().AppendLine("你记得的相关事实（只有你自己可见）：");
             foreach (var memory in memories) text.AppendLine($"- {memory.Content}");
+        }
+        if (openTodos.Count > 0)
+        {
+            text.AppendLine().AppendLine("你当前未完成的待办：");
+            foreach (var todo in openTodos) text.AppendLine($"- [{todo.Priority}/{todo.Status}] {todo.Title}");
         }
         var withInstructions = skills.Where(x => !string.IsNullOrWhiteSpace(x.Instructions)).ToList();
         if (withInstructions.Count > 0)
         {
-            text.AppendLine().AppendLine("可参考的工作手册（仅作说明，不执行工具）：");
+            text.AppendLine().AppendLine("可参考的工作手册（仅作说明）：");
             foreach (var skill in withInstructions) text.AppendLine($"- {skill.Name}：{skill.Instructions!.Trim()}");
         }
         return text.ToString().TrimEnd();
@@ -732,8 +637,6 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             messages.Add(row.AuthorKind switch
             {
                 "system" => new ChatMessage(ChatRole.System, $"系统：{row.Body}"),
-                // The companion's own past turns stay assistant turns; another companion speaks as a
-                // named participant, never as this companion.
                 "companion" when row.AuthorCompanionId == run.CompanionId => new ChatMessage(ChatRole.Assistant, row.Body),
                 "companion" => new ChatMessage(ChatRole.User,
                     $"{(row.AuthorCompanionId is { } id ? names.GetValueOrDefault(id, "伙伴") : "伙伴")}：{row.Body}"),
@@ -744,22 +647,17 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         return messages;
     }
 
-    // ── tools ──
+    // ── streaming & bounded tool loop ──
 
-    /// <summary>
-    /// One companion turn with a bounded tool loop, the same shape as a standing member's turn:
-    /// declarations only (no invokable functions reach the model), every call answered in the
-    /// same round, and the loop stops at <see cref="MaxToolRounds"/>. The surface comes from
-    /// <see cref="CompanionToolCatalog"/> alone — a hallucinated code tool is answered with a
-    /// structured refusal, never executed.
-    /// </summary>
     private async Task<string> RunTurnAsync(
         CompanionRunRecord run,
         FrozenPrompt prompt,
         IChatClient client,
         CancellationToken cancellationToken)
     {
-        List<AITool> tools = _workGateway is null
+        var planning = _services?.GetService<CompanionPlanningService>();
+        var hasTools = _workGateway is not null || planning is not null || _contextMemory is not null;
+        List<AITool> tools = !hasTools
             ? []
             : CompanionToolCatalog.Tools
                 .Select(tool => (AITool)AIFunctionFactory.CreateDeclaration(tool.Id, tool.Description, tool.InputSchema, null))
@@ -771,77 +669,374 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             AllowMultipleToolCalls = tools.Count > 0,
             Tools = tools.Count == 0 ? null : tools
         };
+
         var messages = prompt.Messages.ToList();
+        var deltaSeq = 0;
+
         for (var round = 0; round < MaxToolRounds; round++)
         {
-            var response = await client.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
-            var replies = response.Messages.Count != 0
-                ? response.Messages.ToList()
-                : [new ChatMessage(ChatRole.Assistant, response.Text ?? string.Empty)];
+            var (replies, text, seqAfter) = await StreamOrCompleteRoundAsync(
+                run, client, messages, options, deltaSeq, cancellationToken).ConfigureAwait(false);
+            deltaSeq = seqAfter;
             messages.AddRange(replies);
-            var calls = replies.SelectMany(message => message.Contents).OfType<FunctionCallContent>()
-                .Where(call => !call.InformationalOnly && !string.IsNullOrWhiteSpace(call.Name)).ToList();
-            if (calls.Count == 0) return response.Text?.Trim() ?? string.Empty;
 
-            var results = new List<AIContent>();
+            var calls = replies.SelectMany(message => message.Contents).OfType<FunctionCallContent>()
+                .Where(call => !call.InformationalOnly && !string.IsNullOrWhiteSpace(call.Name))
+                .ToList();
+            if (calls.Count == 0) return text.Trim();
+
+            var results = new List<AIContent>(calls.Count);
             foreach (var call in calls)
             {
                 var callId = string.IsNullOrWhiteSpace(call.CallId) ? $"companion-{round}-{results.Count}" : call.CallId;
-                results.Add(new FunctionResultContent(
-                    callId,
-                    await ExecuteToolAsync(run, call.Name, call.Arguments, cancellationToken).ConfigureAwait(false)));
+                var argsPreview = call.Arguments is null
+                    ? null
+                    : Truncate(JsonSerializer.Serialize(call.Arguments, SnakeCase), 240);
+                _streamBroker?.PublishToolCall(
+                    run.TenantId, run.Id, run.CompanionId, run.ConversationId,
+                    callId, call.Name, "started", argsPreview, null);
+
+                var toolOutput = await ExecuteToolAsync(
+                    run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                    call.Name, call.Arguments, _workGateway, planning, cancellationToken).ConfigureAwait(false);
+                var isError = toolOutput.Contains("\"error\":", StringComparison.Ordinal);
+
+                _streamBroker?.PublishToolCall(
+                    run.TenantId, run.Id, run.CompanionId, run.ConversationId,
+                    callId, call.Name, isError ? "failed" : "completed",
+                    argsPreview, Truncate(toolOutput, 240));
+
+                results.Add(new FunctionResultContent(callId, toolOutput));
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
         }
 
-        // The cap was reached while the model kept calling tools. Ask once more with the tools
-        // taken away: an empty reply would make the effect retry, repeating side effects such as
-        // a dispatch that already happened.
         var closing = new ChatOptions
         {
             Instructions = prompt.Instructions,
             ToolMode = ChatToolMode.None,
             AllowMultipleToolCalls = false
         };
-        var last = await client.GetResponseAsync(messages, closing, cancellationToken).ConfigureAwait(false);
-        return last.Text?.Trim() ?? string.Empty;
+        var (_, closingText, _) = await StreamOrCompleteRoundAsync(
+            run, client, messages, closing, deltaSeq, cancellationToken).ConfigureAwait(false);
+        return closingText.Trim();
     }
 
     /// <summary>
-    /// The client message id a dispatch is stored under. Same run + same target + same text is the
-    /// same dispatch, so a retried turn hits the coordinator's own idempotency instead of appending
-    /// a duplicate.
+    /// Streams live deltas via <see cref="IChatClient.GetStreamingResponseAsync"/> into
+    /// <see cref="ICompanionStreamBroker"/>, falling back transparently to
+    /// <see cref="IChatClient.GetResponseAsync"/> when a scripted test mock yields zero stream chunks.
     /// </summary>
-    private static string DispatchKey(Guid runId, Guid sessionId, string task)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sessionId.ToString("N") + "\n" + task.Trim()));
-        return $"companion-dispatch-{runId:N}-{Convert.ToHexString(hash)[..16].ToLowerInvariant()}";
-    }
-
-    private async Task<string> ExecuteToolAsync(
+    private async Task<(List<ChatMessage> Messages, string Text, int NextSeq)> StreamOrCompleteRoundAsync(
         CompanionRunRecord run,
-        string name,
-        IDictionary<string, object?>? arguments,
+        IChatClient client,
+        IList<ChatMessage> messages,
+        ChatOptions options,
+        int deltaSeq,
         CancellationToken cancellationToken)
     {
-        if (_workGateway is not { } gateway)
-            return Failure("tool_unavailable", "The companion work gateway is not registered in this host.");
+        var updates = new List<ChatResponseUpdate>();
+        var textBuilder = new StringBuilder();
+        var announcedSpeaking = false;
 
+        await foreach (var update in client.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+        {
+            updates.Add(update);
+            if (!string.IsNullOrEmpty(update.Text))
+            {
+                if (!announcedSpeaking)
+                {
+                    announcedSpeaking = true;
+                    _streamBroker?.PublishStageCue(
+                        run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                        emotion: "speaking", speaking: true, intensity: 0.75);
+                }
+                deltaSeq++;
+                textBuilder.Append(update.Text);
+                _streamBroker?.PublishDelta(
+                    run.TenantId, run.Id, run.CompanionId, run.ConversationId,
+                    update.Text, deltaSeq);
+            }
+        }
+
+        if (updates.Count > 0)
+        {
+            var aggregated = updates.ToChatResponse();
+            var builtMessages = aggregated.Messages.Count != 0
+                ? aggregated.Messages.ToList()
+                : [new ChatMessage(ChatRole.Assistant, textBuilder.ToString())];
+            return (builtMessages, aggregated.Text ?? textBuilder.ToString(), deltaSeq);
+        }
+
+        var fallback = await client.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var fallbackText = fallback.Text ?? string.Empty;
+        if (!string.IsNullOrEmpty(fallbackText))
+        {
+            _streamBroker?.PublishStageCue(
+                run.TenantId, run.CompanionId, run.ConversationId, run.Id,
+                emotion: "speaking", speaking: true, intensity: 0.75);
+            deltaSeq++;
+            _streamBroker?.PublishDelta(
+                run.TenantId, run.Id, run.CompanionId, run.ConversationId,
+                fallbackText, deltaSeq);
+        }
+        var fallbackMessages = fallback.Messages.Count != 0
+            ? fallback.Messages.ToList()
+            : [new ChatMessage(ChatRole.Assistant, fallbackText)];
+        return (fallbackMessages, fallbackText, deltaSeq);
+    }
+
+    private static string DispatchKey(Guid scopeId, Guid sessionId, string task)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sessionId.ToString("N") + "\n" + task.Trim()));
+        return $"companion-dispatch-{scopeId:N}-{Convert.ToHexString(hash)[..16].ToLowerInvariant()}";
+    }
+
+    internal async Task<string> ExecuteToolAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid? conversationId,
+        Guid scopeId,
+        string name,
+        IDictionary<string, object?>? arguments,
+        ICompanionWorkGateway? gateway,
+        CompanionPlanningService? planning,
+        CancellationToken cancellationToken)
+    {
         var args = JsonSerializer.SerializeToElement(arguments ?? new Dictionary<string, object?>(), SnakeCase);
         switch (name)
         {
+            case CompanionToolCatalog.ListSchedules:
+                return planning is null
+                    ? Failure("tool_unavailable", "Companion planning service is not registered.")
+                    : JsonSerializer.Serialize(await planning.ListSchedulesCoreAsync(tenantId, companionId, cancellationToken).ConfigureAwait(false), SnakeCase);
+
+            case CompanionToolCatalog.UpsertSchedule:
+            {
+                if (planning is null)
+                    return Failure("tool_unavailable", "Companion planning service is not registered.");
+                try
+                {
+                    var runAt = TryDateTimeOffsetArg(args, "run_at");
+                    var targetConv = TryGuidArg(args, "target_conversation_id", out var parsedConv) ? parsedConv : conversationId;
+                    if (TryGuidArg(args, "schedule_id", out var scheduleId))
+                    {
+                        var patched = await planning.PatchScheduleCoreAsync(
+                            tenantId,
+                            companionId,
+                            scheduleId,
+                            expectedRevision: -1,
+                            new CompanionSchedulePatchRequest(
+                                Title: StringArg(args, "title"),
+                                Prompt: StringArg(args, "prompt"),
+                                CronExpression: StringArg(args, "cron_expression"),
+                                RunAt: runAt,
+                                OneShot: BoolArg(args, "one_shot"),
+                                TargetConversationId: targetConv,
+                                Enabled: BoolArg(args, "enabled")),
+                            cancellationToken).ConfigureAwait(false);
+                        return patched is null
+                            ? Failure("schedule_not_found", "Schedule not found.")
+                            : JsonSerializer.Serialize(patched, SnakeCase);
+                    }
+
+                    var created = await planning.CreateScheduleCoreAsync(
+                        tenantId,
+                        companionId,
+                        new CompanionScheduleCreateRequest(
+                            Title: StringArg(args, "title"),
+                            Prompt: StringArg(args, "prompt"),
+                            CronExpression: StringArg(args, "cron_expression"),
+                            RunAt: runAt,
+                            OneShot: BoolArg(args, "one_shot"),
+                            TargetConversationId: targetConv,
+                            Enabled: BoolArg(args, "enabled")),
+                        cancellationToken).ConfigureAwait(false);
+                    return JsonSerializer.Serialize(created, SnakeCase);
+                }
+                catch (CompanionException ex)
+                {
+                    return Failure(ex.Code, ex.Message);
+                }
+            }
+
+            case CompanionToolCatalog.DeleteSchedule:
+            {
+                if (planning is null)
+                    return Failure("tool_unavailable", "Companion planning service is not registered.");
+                if (!TryGuidArg(args, "schedule_id", out var scheduleId))
+                    return Failure("invalid_arguments", "schedule_id must be a non-empty GUID.");
+                var deleted = await planning.DeleteScheduleCoreAsync(tenantId, companionId, scheduleId, -1, cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new { deleted, schedule_id = scheduleId }, SnakeCase);
+            }
+
+            case CompanionToolCatalog.ListPlans:
+                return planning is null
+                    ? Failure("tool_unavailable", "Companion planning service is not registered.")
+                    : JsonSerializer.Serialize(await planning.ListPlansCoreAsync(tenantId, companionId, cancellationToken).ConfigureAwait(false), SnakeCase);
+
+            case CompanionToolCatalog.UpsertPlan:
+            {
+                if (planning is null)
+                    return Failure("tool_unavailable", "Companion planning service is not registered.");
+                try
+                {
+                    var steps = ParseStepsArg(args);
+                    if (TryGuidArg(args, "plan_id", out var planId))
+                    {
+                        var patched = await planning.PatchPlanCoreAsync(
+                            tenantId,
+                            companionId,
+                            planId,
+                            expectedRevision: -1,
+                            new CompanionPlanPatchRequest(
+                                Title: StringArg(args, "title"),
+                                Summary: StringArg(args, "summary"),
+                                Status: StringArg(args, "status"),
+                                Steps: steps),
+                            cancellationToken).ConfigureAwait(false);
+                        return patched is null
+                            ? Failure("plan_not_found", "Plan not found.")
+                            : JsonSerializer.Serialize(patched, SnakeCase);
+                    }
+
+                    var created = await planning.CreatePlanCoreAsync(
+                        tenantId,
+                        companionId,
+                        new CompanionPlanCreateRequest(
+                            Title: StringArg(args, "title"),
+                            Summary: StringArg(args, "summary"),
+                            Status: StringArg(args, "status"),
+                            Steps: steps),
+                        cancellationToken).ConfigureAwait(false);
+                    return JsonSerializer.Serialize(created, SnakeCase);
+                }
+                catch (CompanionException ex)
+                {
+                    return Failure(ex.Code, ex.Message);
+                }
+            }
+
+            case CompanionToolCatalog.ListTodos:
+                return planning is null
+                    ? Failure("tool_unavailable", "Companion planning service is not registered.")
+                    : JsonSerializer.Serialize(await planning.ListTodosCoreAsync(tenantId, companionId, cancellationToken).ConfigureAwait(false), SnakeCase);
+
+            case CompanionToolCatalog.UpsertTodo:
+            {
+                if (planning is null)
+                    return Failure("tool_unavailable", "Companion planning service is not registered.");
+                try
+                {
+                    var dueAt = TryDateTimeOffsetArg(args, "due_at");
+                    Guid? planId = TryGuidArg(args, "plan_id", out var parsedPlan) ? parsedPlan : null;
+                    if (TryGuidArg(args, "todo_id", out var todoId))
+                    {
+                        var patched = await planning.PatchTodoCoreAsync(
+                            tenantId,
+                            companionId,
+                            todoId,
+                            expectedRevision: -1,
+                            new CompanionTodoPatchRequest(
+                                Title: StringArg(args, "title"),
+                                Note: StringArg(args, "note"),
+                                Priority: StringArg(args, "priority"),
+                                Status: StringArg(args, "status"),
+                                DueAt: dueAt,
+                                PlanId: planId),
+                            cancellationToken).ConfigureAwait(false);
+                        return patched is null
+                            ? Failure("todo_not_found", "Todo not found.")
+                            : JsonSerializer.Serialize(patched, SnakeCase);
+                    }
+
+                    var created = await planning.CreateTodoCoreAsync(
+                        tenantId,
+                        companionId,
+                        new CompanionTodoCreateRequest(
+                            Title: StringArg(args, "title"),
+                            Note: StringArg(args, "note"),
+                            Priority: StringArg(args, "priority"),
+                            Status: StringArg(args, "status"),
+                            DueAt: dueAt,
+                            PlanId: planId),
+                        cancellationToken).ConfigureAwait(false);
+                    return JsonSerializer.Serialize(created, SnakeCase);
+                }
+                catch (CompanionException ex)
+                {
+                    return Failure(ex.Code, ex.Message);
+                }
+            }
+
+            case CompanionToolCatalog.MemoryRemember:
+                return await ExecuteMemoryRememberAsync(tenantId, companionId, conversationId, scopeId, args, cancellationToken)
+                    .ConfigureAwait(false);
+
+            case CompanionToolCatalog.MemorySearch:
+                return await ExecuteMemorySearchAsync(tenantId, companionId, args, gateway, cancellationToken)
+                    .ConfigureAwait(false);
+
+            case CompanionToolCatalog.ProjectNote:
+                return await ExecuteProjectNoteAsync(tenantId, companionId, scopeId, args, gateway, cancellationToken)
+                    .ConfigureAwait(false);
+        }
+
+        if (gateway is null)
+            return Failure("tool_unavailable", "The companion work gateway is not registered in this host.");
+
+        switch (name)
+        {
+            case CompanionToolCatalog.ListModes:
+                return Serialize(await gateway.ListModesAsync(companionId, cancellationToken).ConfigureAwait(false));
+
             case CompanionToolCatalog.ListSessions:
-                return Serialize(await gateway.ListSessionsAsync(cancellationToken).ConfigureAwait(false));
+            {
+                Guid? filterProjectId = TryGuidArg(args, "project_id", out var parsedProject) ? parsedProject : null;
+                return Serialize(await gateway.ListSessionsAsync(companionId, filterProjectId, cancellationToken).ConfigureAwait(false));
+            }
+
+            case CompanionToolCatalog.CreateSession:
+            {
+                Guid? projectId = TryGuidArg(args, "project_id", out var parsedProj) ? parsedProj : null;
+                Guid? modeVersionId = null;
+                if (StringArg(args, "mode_version_id") is { Length: > 0 } rawMode)
+                {
+                    if (!Guid.TryParse(rawMode, out var parsedMode) || parsedMode == Guid.Empty)
+                        return Failure("invalid_arguments", "mode_version_id must be a valid UUID when provided.");
+                    modeVersionId = parsedMode;
+                }
+                var title = StringArg(args, "title");
+                var created = await gateway.CreateSessionAsync(
+                    companionId, conversationId, projectId, title, modeVersionId, cancellationToken).ConfigureAwait(false);
+                if (created is { IsSuccess: true, Value: { } createdSession })
+                {
+                    await RecordCommandActivityAsync(
+                        tenantId, companionId, conversationId, "companion_session_created",
+                        $"伙伴新建了工作会话「{createdSession.Title}」",
+                        null,
+                        new
+                        {
+                            session_id = createdSession.Id,
+                            session_title = createdSession.Title,
+                            project_id = createdSession.ProjectId,
+                            project_name = createdSession.ProjectName,
+                            mode_name = createdSession.ModeName
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                return Serialize(created);
+            }
 
             case CompanionToolCatalog.ListWorkspaces:
-                return Serialize(await gateway.ListWorkspacesAsync(cancellationToken).ConfigureAwait(false));
+                return Serialize(await gateway.ListWorkspacesAsync(companionId, cancellationToken).ConfigureAwait(false));
 
             case CompanionToolCatalog.SessionDetail:
             {
                 if (!TryGuidArg(args, "session_id", out var detailSessionId))
                     return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
                 var limit = IntArg(args, "limit") ?? 20;
-                return Serialize(await gateway.ReadSessionAsync(detailSessionId, limit, cancellationToken)
+                return Serialize(await gateway.ReadSessionAsync(companionId, detailSessionId, limit, cancellationToken)
                     .ConfigureAwait(false));
             }
 
@@ -852,19 +1047,17 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                 var body = StringArg(args, "content");
                 if (string.IsNullOrWhiteSpace(body))
                     return Failure("invalid_arguments", "content is required.");
-                // Keyed on facts that survive an effect retry, like dispatch: the same run saying the
-                // same thing to the same companion is one message, not two.
-                var relayKey = $"companion-relay-{run.Id:N}-{targetCompanionId:N}-"
+                var relayKey = $"companion-relay-{scopeId:N}-{targetCompanionId:N}-"
                     + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body.Trim())))[..12].ToLowerInvariant();
                 return Serialize(await gateway.RelayToCompanionAsync(
-                    run.CompanionId, targetCompanionId, body, relayKey, cancellationToken).ConfigureAwait(false));
+                    companionId, targetCompanionId, body, relayKey, cancellationToken).ConfigureAwait(false));
             }
 
             case CompanionToolCatalog.ReadRun:
             {
                 if (!TryGuidArg(args, "run_id", out var runId))
                     return Failure("invalid_arguments", "run_id must be a non-empty GUID.");
-                return Serialize(await gateway.ReadRunAsync(runId, cancellationToken).ConfigureAwait(false));
+                return Serialize(await gateway.ReadRunAsync(companionId, runId, cancellationToken).ConfigureAwait(false));
             }
 
             case CompanionToolCatalog.Dispatch:
@@ -874,14 +1067,103 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                 var task = StringArg(args, "task");
                 if (string.IsNullOrWhiteSpace(task))
                     return Failure("invalid_arguments", "task is required.");
-                // Derived from facts that survive an effect retry: the run row is the same row, and
-                // the dispatch text is the same text. A fresh GUID here would let a replayed turn
-                // append a second task message to the user's session.
+                Guid? modeVersionId = null;
+                if (StringArg(args, "mode_version_id") is { Length: > 0 } rawModeVersion)
+                {
+                    if (!Guid.TryParse(rawModeVersion, out var parsedModeVersion) || parsedModeVersion == Guid.Empty)
+                        return Failure("invalid_arguments", "mode_version_id must be a valid UUID when provided.");
+                    modeVersionId = parsedModeVersion;
+                }
+                var worktree = BoolArg(args, "worktree");
                 var result = await gateway.DispatchAsync(
-                    sessionId, task, DispatchKey(run.Id, sessionId, task), cancellationToken).ConfigureAwait(false);
+                    companionId,
+                    sessionId,
+                    task,
+                    DispatchKey(scopeId, sessionId, task),
+                    modeVersionId,
+                    worktree,
+                    conversationId,
+                    cancellationToken).ConfigureAwait(false);
                 if (result is { IsSuccess: true, Value: { } dispatch })
-                    await RecordDispatchAsync(run, task.Trim(), dispatch, cancellationToken).ConfigureAwait(false);
+                {
+                    await RecordDispatchAsync(tenantId, companionId, conversationId, scopeId, task.Trim(), dispatch, modeVersionId, worktree, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 return Serialize(result);
+            }
+
+            case CompanionToolCatalog.SteerRun:
+            {
+                if (!TryGuidArg(args, "session_id", out var steerSessionId))
+                    return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
+                var guidance = StringArg(args, "guidance");
+                if (string.IsNullOrWhiteSpace(guidance))
+                    return Failure("invalid_arguments", "guidance is required.");
+                Guid? targetRunId = TryGuidArg(args, "run_id", out var parsedSteerRun) ? parsedSteerRun : null;
+                var steerKey = DispatchKey(scopeId, steerSessionId, "steer:" + guidance);
+                var steerResult = await gateway.SteerRunAsync(
+                    companionId, conversationId, steerSessionId, targetRunId, guidance, steerKey, cancellationToken).ConfigureAwait(false);
+                if (steerResult is { IsSuccess: true, Value: { } steered })
+                {
+                    await RecordCommandActivityAsync(
+                        tenantId, companionId, conversationId, "companion_steered",
+                        "伙伴向运行中的工作会话注入了引导纠偏",
+                        Truncate(guidance.Trim(), 500),
+                        new
+                        {
+                            session_id = steered.SessionId,
+                            run_id = steered.RunId,
+                            status = steered.Status,
+                            guidance_preview = Truncate(guidance.Trim(), TaskPreviewLength)
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                return Serialize(steerResult);
+            }
+
+            case CompanionToolCatalog.CancelRun:
+            {
+                if (!TryGuidArg(args, "session_id", out var cancelSessionId))
+                    return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
+                Guid? cancelRunId = TryGuidArg(args, "run_id", out var parsedCancelRun) ? parsedCancelRun : null;
+                var reason = StringArg(args, "reason");
+                var cancelResult = await gateway.CancelRunAsync(
+                    companionId, cancelSessionId, cancelRunId, reason, cancellationToken).ConfigureAwait(false);
+                if (cancelResult is { IsSuccess: true, Value: { } cancelled })
+                {
+                    await RecordCommandActivityAsync(
+                        tenantId, companionId, conversationId, "companion_run_cancelled",
+                        "伙伴喊停了工作会话运行",
+                        reason is null ? null : Truncate(reason.Trim(), 300),
+                        new
+                        {
+                            session_id = cancelled.SessionId,
+                            run_id = cancelled.RunId,
+                            status = cancelled.Status,
+                            reason
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                return Serialize(cancelResult);
+            }
+
+            case CompanionToolCatalog.SideQuestion:
+            {
+                if (!TryGuidArg(args, "session_id", out var sideSessionId))
+                    return Failure("invalid_arguments", "session_id must be a non-empty GUID.");
+                var question = StringArg(args, "question");
+                if (string.IsNullOrWhiteSpace(question))
+                    return Failure("invalid_arguments", "question is required.");
+                Guid? sideRunId = TryGuidArg(args, "run_id", out var parsedSideRun) ? parsedSideRun : null;
+                return Serialize(await gateway.SideQuestionAsync(
+                    companionId, sideSessionId, sideRunId, question, cancellationToken).ConfigureAwait(false));
+            }
+
+            case CompanionToolCatalog.ListApprovals:
+            {
+                Guid? approvalSessionId = TryGuidArg(args, "session_id", out var parsedAppSession) ? parsedAppSession : null;
+                return Serialize(await gateway.ListApprovalsAsync(
+                    companionId, approvalSessionId, cancellationToken).ConfigureAwait(false));
             }
 
             case CompanionToolCatalog.CreateWorkspace:
@@ -892,28 +1174,357 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                     return Failure("invalid_arguments", "name is required.");
                 if (string.IsNullOrWhiteSpace(path))
                     return Failure("invalid_arguments", "path is required.");
-                return Serialize(await gateway.CreateWorkspaceAsync(workspaceName, path, cancellationToken).ConfigureAwait(false));
+                return Serialize(await gateway.CreateWorkspaceAsync(companionId, workspaceName, path, cancellationToken).ConfigureAwait(false));
             }
 
             default:
-                // The model may invent a tool it does not have (or reach for a code tool it was
-                // told it lacks). Answer in the same structured shape as any other refusal so the
-                // turn continues instead of failing.
                 return Failure("unknown_tool",
-                    $"'{name}' is not one of the companion's tools. You have exactly: "
+                    $"'{name}' is not one of the companion's tools. You have: "
                     + string.Join(", ", CompanionToolCatalog.Tools.Select(tool => tool.Id)) + ".");
         }
     }
 
-    /// <summary>
-    /// The supervisor board's only way to learn that this companion dispatched work: a durable
-    /// activity row. Best-effort — the dispatch already happened, so failing to record its feed
-    /// row must not turn a successful management action into a failed turn.
-    /// </summary>
-    private async Task RecordDispatchAsync(
-        CompanionRunRecord run,
-        string task,
-        CompanionWorkDispatch dispatch,
+    private async Task<string> ExecuteMemoryRememberAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid? conversationId,
+        Guid scopeId,
+        JsonElement args,
+        CancellationToken cancellationToken)
+    {
+        var action = (StringArg(args, "action") ?? "add").Trim().ToLowerInvariant();
+        if (action is not ("add" or "supersede" or "revoke"))
+            return Failure("invalid_arguments", "action must be add, supersede, or revoke.");
+
+        if (_contextMemory is not null)
+        {
+            try
+            {
+                if (action == "revoke")
+                {
+                    if (!TryGuidArg(args, "item_id", out var revokeId))
+                        return Failure("invalid_arguments", "item_id is required when action is revoke.");
+                    var owned = await _contextMemory.ListItemsAsync(
+                        scope: "companion", companionId: companionId, status: "active", includeVersions: false, limit: 200, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                    if (owned.Items.All(x => x.Id != revokeId))
+                        return Failure("memory_not_found", "Active private memory item was not found for this companion.");
+                    var revoked = await _contextMemory.RevokeItemAsync(
+                        revokeId, StringArg(args, "reason") ?? "Revoked by companion_memory_remember", cancellationToken).ConfigureAwait(false);
+                    return JsonSerializer.Serialize(new { action = "revoke", id = revoked.Id, status = revoked.Status }, SnakeCase);
+                }
+
+                var content = StringArg(args, "content")?.Trim();
+                if (string.IsNullOrEmpty(content))
+                    return Failure("invalid_arguments", "content is required when action is add or supersede.");
+
+                Guid? supersedeId = null;
+                if (action == "supersede")
+                {
+                    if (!TryGuidArg(args, "item_id", out var targetId))
+                        return Failure("invalid_arguments", "item_id is required when action is supersede.");
+                    var owned = await _contextMemory.ListItemsAsync(
+                        scope: "companion", companionId: companionId, status: "active", includeVersions: false, limit: 200, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                    if (owned.Items.All(x => x.Id != targetId))
+                        return Failure("memory_not_found", "Active private memory item was not found for this companion.");
+                    supersedeId = targetId;
+                }
+
+                var upserted = await _contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+                {
+                    Scope = "companion",
+                    CompanionId = companionId,
+                    Kind = StringArg(args, "kind") ?? "fact",
+                    Section = StringArg(args, "section"),
+                    Content = content,
+                    SourceSessionId = conversationId,
+                    SourceRunId = scopeId,
+                    SupersedeItemId = supersedeId,
+                    Reason = StringArg(args, "reason") ?? "tool:companion_memory_remember",
+                    IsCompanionWriter = true
+                }, cancellationToken).ConfigureAwait(false);
+
+                return JsonSerializer.Serialize(new
+                {
+                    action,
+                    id = upserted.Id,
+                    kind = upserted.Kind,
+                    section = upserted.Section,
+                    content = upserted.Content,
+                    in_hot_markdown = upserted.InHotMarkdown,
+                    version = upserted.CurrentVersion
+                }, SnakeCase);
+            }
+            catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException or InvalidOperationException)
+            {
+                return Failure("memory_operation_failed", ex.Message);
+            }
+        }
+
+        // Fallback when IContextMemoryService is not wired in minimal unit test hosts.
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        if (action == "revoke")
+        {
+            if (!TryGuidArg(args, "item_id", out var legacyRevokeId))
+                return Failure("invalid_arguments", "item_id is required when action is revoke.");
+            var existing = await db.Memories.SingleOrDefaultAsync(
+                x => x.Id == legacyRevokeId && x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed",
+                cancellationToken).ConfigureAwait(false);
+            if (existing is null)
+                return Failure("memory_not_found", "Memory item not found.");
+            existing.IndexStatus = "deleted";
+            existing.Revision++;
+            existing.UpdatedAt = now;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return JsonSerializer.Serialize(new { action = "revoke", id = existing.Id, status = "revoked" }, SnakeCase);
+        }
+
+        var fallbackContent = StringArg(args, "content")?.Trim();
+        if (string.IsNullOrEmpty(fallbackContent))
+            return Failure("invalid_arguments", "content is required.");
+        if (action == "supersede" && TryGuidArg(args, "item_id", out var legacySupersedeId))
+        {
+            var oldRow = await db.Memories.SingleOrDefaultAsync(
+                x => x.Id == legacySupersedeId && x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed",
+                cancellationToken).ConfigureAwait(false);
+            if (oldRow is not null)
+            {
+                oldRow.Content = fallbackContent;
+                oldRow.Revision++;
+                oldRow.UpdatedAt = now;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.Serialize(new { action = "supersede", id = oldRow.Id, content = oldRow.Content }, SnakeCase);
+            }
+        }
+
+        var createdRow = new CompanionMemoryRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CompanionId = companionId,
+            Content = fallbackContent,
+            SourceKind = "companion_run",
+            SourceConversationId = conversationId,
+            Visibility = "private",
+            IndexStatus = "indexed",
+            Revision = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.Memories.Add(createdRow);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new { action = "add", id = createdRow.Id, content = createdRow.Content }, SnakeCase);
+    }
+
+    private async Task<string> ExecuteMemorySearchAsync(
+        Guid tenantId,
+        Guid companionId,
+        JsonElement args,
+        ICompanionWorkGateway? gateway,
+        CancellationToken cancellationToken)
+    {
+        var query = StringArg(args, "query")?.Trim();
+        var scopeFilter = (StringArg(args, "scope") ?? "all").Trim().ToLowerInvariant();
+        var limit = Math.Clamp(IntArg(args, "limit") ?? 10, 1, 50);
+        Guid? requestedProjectId = TryGuidArg(args, "project_id", out var parsedProject) ? parsedProject : null;
+
+        if (_contextMemory is null)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var rowsQuery = db.Memories.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed");
+            if (!string.IsNullOrEmpty(query))
+                rowsQuery = rowsQuery.Where(x => EF.Functions.Like(x.Content, $"%{query}%"));
+            var rows = (await rowsQuery.ToListAsync(cancellationToken).ConfigureAwait(false))
+                .OrderByDescending(x => x.UpdatedAt)
+                .Take(limit)
+                .Select(x => new { id = x.Id, scope = "companion", kind = x.SourceKind, content = x.Content, updated_at = x.UpdatedAt })
+                .ToList();
+            return JsonSerializer.Serialize(new
+            {
+                companion_memories = rows,
+                principal_memories = Array.Empty<object>(),
+                project_memories = Array.Empty<object>()
+            }, SnakeCase);
+        }
+
+        var companionList = new List<object>();
+        var principalList = new List<object>();
+        var projectList = new List<object>();
+
+        if (scopeFilter is "all" or "companion")
+        {
+            var res = await _contextMemory.ListItemsAsync(
+                scope: "companion", companionId: companionId, status: "active", query: query, includeVersions: false, limit: limit, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            companionList.AddRange(res.Items.Select(ProjectSearchItem));
+        }
+
+        if (scopeFilter is "all" or "principal")
+        {
+            var res = await _contextMemory.ListItemsAsync(
+                scope: "principal", status: "active", query: query, includeVersions: false, limit: limit, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            principalList.AddRange(res.Items.Select(ProjectSearchItem));
+        }
+
+        if (scopeFilter is "all" or "project")
+        {
+            HashSet<Guid>? allowedProjects = null;
+            if (gateway is not null)
+            {
+                var wsResult = await gateway.ListWorkspacesAsync(companionId, cancellationToken).ConfigureAwait(false);
+                if (wsResult is { IsSuccess: true, Value: { } wsItems })
+                    allowedProjects = wsResult.Value.Select(w => w.ProjectId).ToHashSet();
+            }
+
+            if (requestedProjectId is { } explicitPid)
+            {
+                if (allowedProjects is null || allowedProjects.Contains(explicitPid))
+                {
+                    var res = await _contextMemory.ListItemsAsync(
+                        scope: "project", projectId: explicitPid, status: "active", query: query, includeVersions: false, limit: limit, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                    projectList.AddRange(res.Items.Select(ProjectSearchItem));
+                }
+            }
+            else if (allowedProjects is null || allowedProjects.Count > 0)
+            {
+                var res = await _contextMemory.ListItemsAsync(
+                    scope: "project", status: "active", query: query, includeVersions: false, limit: limit, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                projectList.AddRange(res.Items
+                    .Where(item => allowedProjects is null || (item.ProjectId is { } pid && allowedProjects.Contains(pid)))
+                    .Take(limit)
+                    .Select(ProjectSearchItem));
+            }
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            companion_memories = companionList,
+            principal_memories = principalList,
+            project_memories = projectList
+        }, SnakeCase);
+
+        static object ProjectSearchItem(MemoryItemLedgerDto item) => new
+        {
+            id = item.Id,
+            scope = item.Scope,
+            kind = item.Kind,
+            section = item.Section,
+            project_id = item.ProjectId,
+            content = item.Content,
+            in_hot_markdown = item.InHotMarkdown,
+            updated_at = item.UpdatedAt
+        };
+    }
+
+    private async Task<string> ExecuteProjectNoteAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid scopeId,
+        JsonElement args,
+        ICompanionWorkGateway? gateway,
+        CancellationToken cancellationToken)
+    {
+        var content = StringArg(args, "content")?.Trim();
+        if (string.IsNullOrEmpty(content))
+            return Failure("invalid_arguments", "content is required.");
+
+        if (_contextMemory is null)
+            return Failure("tool_unavailable", "Context memory service is not registered in this host.");
+
+        var policy = await _contextMemory.GetPolicyAsync(cancellationToken).ConfigureAwait(false);
+        if (!policy.CompanionCanWriteProjectMemory)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "project_memory_read_only",
+                policy = "companion_can_write_project_memory=false",
+                recommended_tool = CompanionToolCatalog.Dispatch,
+                message = "Companions have read-only access to L2 project memory by default (companion_can_write_project_memory is false in runtime.toml). Use companion_dispatch to have the project's work session verify and record project memory, or ask the user to enable companion_can_write_project_memory."
+            }, SnakeCase);
+        }
+
+        Guid? projectId = TryGuidArg(args, "project_id", out var parsedProject) ? parsedProject : null;
+        var workspaceRoot = StringArg(args, "workspace_root")?.Trim();
+
+        if (gateway is not null && projectId is { } targetPid)
+        {
+            var workspaces = await gateway.ListWorkspacesAsync(companionId, cancellationToken).ConfigureAwait(false);
+            if (!workspaces.IsSuccess || workspaces.Value is null || workspaces.Value.All(w => w.ProjectId != targetPid))
+            {
+                return Failure("work_session_unauthorized", "This companion is not authorized to write notes to the requested project workspace.");
+            }
+        }
+
+        string companionName;
+        await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
+        {
+            companionName = await db.Companions.AsNoTracking()
+                .Where(x => x.Id == companionId && x.TenantId == tenantId)
+                .Select(x => x.Name)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? "Companion";
+        }
+
+        try
+        {
+            var taggedContent = content.StartsWith("[Companion:", StringComparison.OrdinalIgnoreCase)
+                ? content
+                : $"[Companion:{companionName}] {content}";
+            var created = await _contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+            {
+                Scope = "project",
+                ProjectId = projectId,
+                WorkspaceRoot = workspaceRoot,
+                CompanionId = companionId,
+                Kind = StringArg(args, "kind") ?? "fact",
+                Section = StringArg(args, "section"),
+                Content = taggedContent,
+                SourceRunId = scopeId,
+                Reason = $"Recorded by Companion {companionName} ({companionId:D}): {StringArg(args, "reason") ?? "companion_project_note"}",
+                IsCompanionWriter = true
+            }, cancellationToken).ConfigureAwait(false);
+
+            return JsonSerializer.Serialize(new
+            {
+                id = created.Id,
+                scope = created.Scope,
+                project_id = created.ProjectId,
+                kind = created.Kind,
+                section = created.Section,
+                content = created.Content,
+                provenance_companion_id = companionId,
+                provenance_companion_name = companionName
+            }, SnakeCase);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "project_memory_read_only",
+                policy = "companion_can_write_project_memory=false",
+                recommended_tool = CompanionToolCatalog.Dispatch,
+                message = ex.Message
+            }, SnakeCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return Failure("project_note_failed", ex.Message);
+        }
+    }
+
+    private async Task RecordCommandActivityAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid? conversationId,
+        string kind,
+        string summary,
+        string? detail,
+        object payload,
         CancellationToken cancellationToken)
     {
         try
@@ -922,10 +1533,48 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             db.Activities.Add(new CompanionActivityRecord
             {
                 Id = Guid.NewGuid(),
-                TenantId = run.TenantId,
+                TenantId = tenantId,
+                Kind = kind,
+                CompanionId = companionId,
+                ConversationId = conversationId,
+                Summary = summary,
+                Detail = detail,
+                PayloadJson = JsonSerializer.Serialize(payload, SnakeCase),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not record companion command activity {Kind}.", kind);
+        }
+    }
+
+    private async Task RecordDispatchAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid? conversationId,
+        Guid scopeId,
+        string task,
+        CompanionWorkDispatch dispatch,
+        Guid? modeVersionId,
+        bool? worktree,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            db.Activities.Add(new CompanionActivityRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
                 Kind = DispatchActivityKind,
-                CompanionId = run.CompanionId,
-                ConversationId = run.ConversationId,
+                CompanionId = companionId,
+                ConversationId = conversationId,
                 Summary = $"伙伴派活到会话「{dispatch.SessionTitle}」",
                 Detail = Truncate(task, 500),
                 PayloadJson = JsonSerializer.Serialize(new
@@ -933,11 +1582,13 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
                     session_id = dispatch.SessionId,
                     run_id = dispatch.RunId,
                     session_title = dispatch.SessionTitle,
-                    task_preview = Truncate(task, TaskPreviewLength)
+                    task_preview = Truncate(task, TaskPreviewLength),
+                    mode_version_id = modeVersionId,
+                    worktree
                 }, SnakeCase),
                 CreatedAt = DateTimeOffset.UtcNow
             });
-            await CompanionActivities.SaveAsync(db, run.TenantId, cancellationToken).ConfigureAwait(false);
+            await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -945,7 +1596,7 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "Could not record the companion dispatch activity for run {RunId}.", run.Id);
+            _logger.LogWarning(exception, "Could not record the companion dispatch activity for scope {ScopeId}.", scopeId);
         }
     }
 
@@ -964,13 +1615,45 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             ? value.GetString()
             : null;
 
+    private static bool? BoolArg(JsonElement args, string name) =>
+        args.ValueKind == JsonValueKind.Object
+        && args.TryGetProperty(name, out var value)
+        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
+
+    private static DateTimeOffset? TryDateTimeOffsetArg(JsonElement args, string name) =>
+        StringArg(args, name) is { Length: > 0 } raw && DateTimeOffset.TryParse(raw, out var parsed)
+            ? parsed
+            : null;
+
+    private static IReadOnlyList<CompanionPlanStepDto>? ParseStepsArg(JsonElement args)
+    {
+        if (args.ValueKind != JsonValueKind.Object
+            || !args.TryGetProperty("steps", out var stepsEl)
+            || stepsEl.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        var list = new List<CompanionPlanStepDto>();
+        foreach (var item in stepsEl.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            list.Add(new CompanionPlanStepDto(
+                Id: StringArg(item, "id"),
+                Title: StringArg(item, "title"),
+                Status: StringArg(item, "status"),
+                Note: StringArg(item, "note")));
+        }
+        return list;
+    }
+
     private static bool TryGuidArg(JsonElement args, string name, out Guid value)
     {
         value = Guid.Empty;
         return Guid.TryParse(StringArg(args, name), out value) && value != Guid.Empty;
     }
 
-    /// <summary>A whole number argument, or null when absent or not a number.</summary>
     private static int? IntArg(JsonElement args, string name) =>
         args.ValueKind == JsonValueKind.Object
         && args.TryGetProperty(name, out var value)
@@ -979,11 +1662,7 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             ? number
             : null;
 
-    /// <summary>
-    /// Keyword/containment match against the trigger message, then the most recently updated rows
-    /// fill the remaining slots so the budget is always used deliberately rather than randomly.
-    /// </summary>
-    private static List<CompanionMemoryRecord> SelectMemories(IReadOnlyList<CompanionMemoryRecord> memories, string body)
+    private static List<SelectedCompanionMemory> SelectMemories(IReadOnlyList<SelectedCompanionMemory> memories, string body)
     {
         if (memories.Count == 0) return [];
         var terms = Terms(body);
@@ -1010,6 +1689,147 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         return scored;
     }
 
+    private static readonly Regex ExplicitMemorySignalRegex = new(
+        @"(?:请记住|记住|记一下|我喜欢|我不喜欢|我偏好|我的偏好|以后默认|以后请|总是使用|不要再|remember\s+that|please\s+remember|i\s+prefer|my\s+preference\s+is|always\s+use|never\s+use)[:：]?\s*(?<fact>[^\r\n]{6,220})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly HashSet<string> TrivialGreetings = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hi", "hello", "hey", "ok", "okay", "thanks", "thank you", "ping",
+        "你好", "您好", "嗨", "早", "早安", "晚安", "在吗", "好的", "好", "收到", "谢谢", "多谢", "嗯", "哦"
+    };
+
+    /// <summary>
+    /// Lightweight, bounded post-turn memory distillation into <see cref="IContextMemoryService"/>
+    /// (<c>scope = "companion"</c>), skipping greetings/empty turns and avoiding extra LLM round-trips.
+    /// </summary>
+    internal async Task TryDistillTurnMemoryAsync(
+        Guid tenantId,
+        Guid companionId,
+        Guid? conversationId,
+        Guid? sourceRunId,
+        string? userInput,
+        string? companionReply,
+        CancellationToken cancellationToken)
+    {
+        if (_contextMemory is null || string.IsNullOrWhiteSpace(userInput)) return;
+
+        var trimmed = userInput.Trim();
+        if (trimmed.Length < 10
+            || TrivialGreetings.Contains(trimmed.TrimEnd('!', '！', '.', '。', '~', '～', '?', '？'))
+            || trimmed.StartsWith("[工作会话回流", StringComparison.Ordinal)
+            || trimmed.StartsWith("[定时任务", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var matches = ExplicitMemorySignalRegex.Matches(trimmed);
+        if (matches.Count == 0) return;
+
+        try
+        {
+            var policy = await _contextMemory.GetPolicyAsync(cancellationToken).ConfigureAwait(false);
+            if (string.Equals(policy.EvolutionMode, "off", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(policy.EvolutionMode, "disabled", StringComparison.OrdinalIgnoreCase)
+                || policy.CandidateOnly)
+            {
+                return;
+            }
+
+            var existing = await _contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companionId,
+                status: "active",
+                includeVersions: false,
+                limit: 100,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var seen = existing.Items.Select(x => x.Content.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var added = 0;
+            foreach (Match match in matches)
+            {
+                if (added >= 2) break;
+                var candidate = match.Value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (candidate.Length is < 8 or > 240) continue;
+                if (!seen.Add(candidate)) continue;
+
+                var kind = candidate.Contains("喜欢", StringComparison.Ordinal)
+                    || candidate.Contains("偏好", StringComparison.Ordinal)
+                    || candidate.Contains("默认", StringComparison.Ordinal)
+                    || candidate.Contains("prefer", StringComparison.OrdinalIgnoreCase)
+                        ? "bond"
+                        : "fact";
+
+                await _contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+                {
+                    Scope = "companion",
+                    CompanionId = companionId,
+                    Kind = kind,
+                    Content = candidate,
+                    SourceSessionId = conversationId,
+                    SourceRunId = sourceRunId,
+                    Reason = "post_turn_distillation",
+                    IsCompanionWriter = true,
+                    RespectEvolutionMode = true
+                }, cancellationToken).ConfigureAwait(false);
+                added++;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Bounded post-turn memory distillation skipped for companion {CompanionId}.", companionId);
+        }
+    }
+
+    internal async Task TryDistillAutonomyOutcomeAsync(
+        Guid companionId,
+        string action,
+        string summary,
+        Guid? conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (_contextMemory is null || string.IsNullOrWhiteSpace(summary) || action is "none") return;
+
+        try
+        {
+            var policy = await _contextMemory.GetPolicyAsync(cancellationToken).ConfigureAwait(false);
+            if (string.Equals(policy.EvolutionMode, "off", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(policy.EvolutionMode, "disabled", StringComparison.OrdinalIgnoreCase)
+                || policy.CandidateOnly)
+            {
+                return;
+            }
+
+            var note = Truncate(summary.Replace('\r', ' ').Replace('\n', ' ').Trim(), 200);
+            var existing = await _contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companionId,
+                status: "active",
+                kind: "episode",
+                includeVersions: false,
+                limit: 30,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (existing.Items.Any(x => string.Equals(x.Content.Trim(), note, StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            await _contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+            {
+                Scope = "companion",
+                CompanionId = companionId,
+                Kind = "episode",
+                Content = note,
+                SourceSessionId = conversationId,
+                Reason = $"post_autonomy_distillation:{action}",
+                IsCompanionWriter = true,
+                RespectEvolutionMode = true
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Bounded post-autonomy memory distillation skipped for companion {CompanionId}.", companionId);
+        }
+    }
+
     private static string[] Terms(string body)
     {
         char[] separators = [' ', '\n', '\r', '\t', ',', '，', '.', '。', '?', '？', '!', '！', '、', ';', '；', ':', '：', '(', ')', '（', '）', '"', '“', '”'];
@@ -1019,124 +1839,139 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
             .ToArray();
     }
 
-    // ── settle ──
+    // ── settle & bot-to-bot mention relay ──
 
-    private async Task CompleteAsync(CompanionRunRecord run, EffectClaim claim, string reply, CancellationToken cancellationToken)
+    private async Task CompleteAsync(CompanionRunRecord run, RunClaim claim, string reply, CancellationToken cancellationToken)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var effect = await db.Effects
-            .SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken)
-            .ConfigureAwait(false);
-        // The lease moved to another host: it owns the reply now, and writing one here would answer
-        // the same message twice.
-        if (effect is null) return;
+        CompanionMessageRecord message;
+        CompanionRunRecord settledRun;
+        List<Guid> peerMentions;
 
-        var row = await db.Runs.SingleOrDefaultAsync(x => x.Id == run.Id && x.Status == "running", cancellationToken).ConfigureAwait(false);
-        if (row is null)
+        await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
         {
-            await SettleEffectAsync(db, effect, "done", "the run was settled by someone else", cancellationToken).ConfigureAwait(false);
-            return;
-        }
-        var conversation = await db.Conversations
-            .SingleOrDefaultAsync(x => x.Id == row.ConversationId && x.TenantId == row.TenantId, cancellationToken).ConfigureAwait(false);
-        if (conversation is null)
-        {
-            await SettleRunFailedAsync(db, effect, row, "companion_run_failed", "Conversation not found.", cancellationToken)
+            var row = await db.Runs.SingleOrDefaultAsync(
+                x => x.Id == run.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken).ConfigureAwait(false);
+            if (row is null) return;
+
+            var conversation = await db.Conversations
+                .SingleOrDefaultAsync(x => x.Id == row.ConversationId && x.TenantId == row.TenantId, cancellationToken).ConfigureAwait(false);
+            if (conversation is null)
+            {
+                await SettleRunFailedAsync(db, row, "companion_run_failed", "Conversation not found.", cancellationToken)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var activePeerIds = await db.ConversationMembers.AsNoTracking()
+                .Where(x => x.TenantId == row.TenantId && x.ConversationId == row.ConversationId
+                    && x.MemberKind == "companion" && x.Status == "active"
+                    && x.CompanionId != null && x.CompanionId != row.CompanionId)
+                .Select(x => x.CompanionId!.Value)
+                .Distinct()
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var activePeers = activePeerIds.Count == 0
+                ? []
+                : await db.Companions.AsNoTracking()
+                    .Where(x => x.TenantId == row.TenantId && activePeerIds.Contains(x.Id))
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+            peerMentions = CompanionChannelService.ResolveMentions(reply, activePeers, row.CompanionId);
+
+            var now = DateTimeOffset.UtcNow;
+            message = await CompanionMessages.AppendAsync(
+                db, row.TenantId, row.ConversationId, "companion", row.CompanionId, reply, peerMentions, null, now, cancellationToken)
                 .ConfigureAwait(false);
-            return;
+            row.Status = "completed";
+            row.ReplyMessageId = message.Id;
+            row.Rounds = Math.Max(1, row.Rounds + 1);
+            row.FinishedAt = now;
+            row.ClaimToken = null;
+            row.ClaimedAt = null;
+            row.ClaimedAtUnixMs = null;
+            row.LastError = null;
+            conversation.LastMessageAt = now;
+
+            var name = await db.Companions.AsNoTracking()
+                .Where(x => x.Id == row.CompanionId && x.TenantId == row.TenantId)
+                .Select(x => x.Name)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? "伙伴";
+            db.Activities.Add(new CompanionActivityRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = row.TenantId,
+                Kind = "run_completed",
+                CompanionId = row.CompanionId,
+                ConversationId = row.ConversationId,
+                Summary = $"伙伴 {name} 完成了回复",
+                Detail = Truncate(reply, 500),
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    run_id = row.Id,
+                    reply_message_id = message.Id,
+                    hop_depth = row.Depth,
+                    mentioned_companion_ids = peerMentions
+                }),
+                CreatedAt = now
+            });
+
+            try
+            {
+                await CompanionActivities.SaveAsync(db, row.TenantId,
+                    token => CompanionMessages.SaveAsync(db, message, row.TenantId, row.ConversationId, token), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (DbUpdateException exception)
+            {
+                _logger.LogWarning(exception, "Companion reply for run {RunId} could not allocate a message sequence.", row.Id);
+                await FailClaimAsync(claim, "companion_run_failed", "The reply could not be stored.", retryable: true, cancellationToken)
+                    .ConfigureAwait(false);
+                return;
+            }
+            settledRun = row;
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var message = await CompanionMessages.AppendAsync(
-            db, row.TenantId, row.ConversationId, "companion", row.CompanionId, reply, [], null, now, cancellationToken).ConfigureAwait(false);
-        row.Status = "completed";
-        row.ReplyMessageId = message.Id;
-        row.Rounds = 1;
-        row.FinishedAt = now;
-        conversation.LastMessageAt = now;
-        effect.Status = "done";
-        effect.LastError = null;
-        effect.ClaimToken = null;
-        effect.ClaimedAt = null;
-        effect.ClaimedAtUnixMs = null;
-        effect.UpdatedAt = now;
-        var name = await db.Companions.AsNoTracking()
-            .Where(x => x.Id == row.CompanionId && x.TenantId == row.TenantId)
-            .Select(x => x.Name)
-            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? "伙伴";
-        db.Activities.Add(new CompanionActivityRecord
+        if (peerMentions.Count > 0)
         {
-            Id = Guid.NewGuid(),
-            TenantId = row.TenantId,
-            Kind = "run_completed",
-            CompanionId = row.CompanionId,
-            ConversationId = row.ConversationId,
-            Summary = $"伙伴 {name} 完成了回复",
-            Detail = Truncate(reply, 500),
-            PayloadJson = JsonSerializer.Serialize(new { run_id = row.Id, reply_message_id = message.Id }),
-            CreatedAt = now
-        });
-        try
-        {
-            await CompanionActivities.SaveAsync(db, row.TenantId,
-                token => CompanionMessages.SaveAsync(db, message, row.TenantId, row.ConversationId, token), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (DbUpdateException exception)
-        {
-            _logger.LogWarning(exception, "Companion reply for run {RunId} could not allocate a message sequence.", row.Id);
-            await FailClaimAsync(claim, "companion_run_failed", "The reply could not be stored.", retryable: true, cancellationToken)
+            var channel = _services?.GetService<ICompanionChannel>()
+                ?? new CompanionChannelService(_dbFactory, this);
+            await channel.OnMentionAsync(settledRun.TenantId, settledRun, message, peerMentions, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    /// <summary>
-    /// Puts the claim back for a later pass. The run keeps reading "running" to clients, which is
-    /// true: this host still owes it a reply, just not before the backoff has elapsed. Returns true
-    /// only when the run reached a terminal state, so a pass counts settled runs and not retries.
-    /// </summary>
     private async Task<bool> FailClaimAsync(
-        EffectClaim claim, string code, string message, bool retryable, CancellationToken cancellationToken)
+        RunClaim claim, string code, string message, bool retryable, CancellationToken cancellationToken)
     {
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var effect = await db.Effects
-                .SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken)
-                .ConfigureAwait(false);
-            if (effect is null) return false;
             var row = await db.Runs
-                .SingleOrDefaultAsync(x => x.Id == claim.RunId && x.TenantId == claim.TenantId, cancellationToken)
+                .SingleOrDefaultAsync(
+                    x => x.Id == claim.RunId && x.TenantId == claim.TenantId && x.Status == "running" && x.ClaimToken == claim.Token,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            if (row is null)
-            {
-                await SettleEffectAsync(db, effect, "failed", Truncate(message, MaxErrorMessage), cancellationToken).ConfigureAwait(false);
-                return true;
-            }
+            if (row is null) return false;
 
             var exhausted = !retryable || claim.Attempts >= Math.Max(1, _options.MaxAttempts);
             if (exhausted)
             {
-                await SettleRunFailedAsync(db, effect, row, code, message, cancellationToken).ConfigureAwait(false);
+                await SettleRunFailedAsync(db, row, code, message, cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
             var now = DateTimeOffset.UtcNow;
-            effect.Status = "pending";
-            effect.ClaimToken = null;
-            effect.ClaimedAt = null;
-            effect.ClaimedAtUnixMs = null;
             var next = now.Add(Backoff(claim.Attempts));
-            effect.AvailableAt = next;
-            effect.AvailableAtUnixMs = next.ToUnixTimeMilliseconds();
-            effect.LastError = Truncate(message, MaxErrorMessage);
-            effect.UpdatedAt = now;
+            row.Status = "queued";
+            row.ClaimToken = null;
+            row.ClaimedAt = null;
+            row.ClaimedAtUnixMs = null;
+            row.AvailableAt = next;
+            row.AvailableAtUnixMs = next.ToUnixTimeMilliseconds();
+            row.LastError = Truncate(message, MaxErrorMessage);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return false;
         }
         catch (OperationCanceledException)
         {
-            // The host is stopping; the lease stays and is reclaimed by whoever runs next.
             return false;
         }
         catch (Exception exception)
@@ -1146,50 +1981,46 @@ public sealed class CompanionRuntime : BackgroundService, ICompanionRuntime
         }
     }
 
-    /// <summary>
-    /// A run whose owner is gone (host shutdown) goes back to pending rather than failed: the next
-    /// host should finish the reply, and the effect is the thing that carries that intent.
-    /// </summary>
-    private async Task ReleaseClaimAsync(EffectClaim claim, string note, CancellationToken cancellationToken)
+    private async Task ReleaseClaimAsync(RunClaim claim, string note, CancellationToken cancellationToken)
     {
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var effect = await db.Effects
-                .SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, cancellationToken)
+            var row = await db.Runs
+                .SingleOrDefaultAsync(
+                    x => x.Id == claim.RunId && x.Status == "running" && x.ClaimToken == claim.Token,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            if (effect is null) return;
-            effect.Status = "pending";
-            effect.ClaimToken = null;
-            effect.ClaimedAt = null;
-            effect.ClaimedAtUnixMs = null;
-            effect.AvailableAt = DateTimeOffset.UtcNow;
-            effect.AvailableAtUnixMs = effect.AvailableAt.ToUnixTimeMilliseconds();
-            effect.LastError = Truncate(note, MaxErrorMessage);
-            effect.UpdatedAt = effect.AvailableAt;
+            if (row is null) return;
+            var now = DateTimeOffset.UtcNow;
+            row.Status = "queued";
+            row.ClaimToken = null;
+            row.ClaimedAt = null;
+            row.ClaimedAtUnixMs = null;
+            row.AvailableAt = now;
+            row.AvailableAtUnixMs = now.ToUnixTimeMilliseconds();
+            row.LastError = Truncate(note, MaxErrorMessage);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "Could not release the claim on companion effect {EffectId}.", claim.Id);
+            _logger.LogWarning(exception, "Could not release the claim on companion run {RunId}.", claim.RunId);
         }
     }
 
     private async Task SettleRunFailedAsync(
-        CompanionDbContext db, CompanionEffectRecord effect, CompanionRunRecord row,
+        CompanionDbContext db, CompanionRunRecord row,
         string code, string message, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         row.Status = "failed";
         row.ErrorCode = code;
         row.ErrorMessage = Truncate(message, MaxErrorMessage);
+        row.LastError = Truncate(message, MaxErrorMessage);
+        row.ClaimToken = null;
+        row.ClaimedAt = null;
+        row.ClaimedAtUnixMs = null;
         row.FinishedAt = now;
-        effect.Status = "failed";
-        effect.LastError = Truncate(message, MaxErrorMessage);
-        effect.ClaimToken = null;
-        effect.ClaimedAt = null;
-        effect.ClaimedAtUnixMs = null;
-        effect.UpdatedAt = now;
         var name = await db.Companions.AsNoTracking()
             .Where(x => x.Id == row.CompanionId && x.TenantId == row.TenantId)
             .Select(x => x.Name)

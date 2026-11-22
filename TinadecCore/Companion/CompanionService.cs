@@ -1,6 +1,8 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Companion;
 
@@ -8,16 +10,24 @@ namespace TinadecCore.Companion;
 /// Companion domain read/write surface. Every predicate starts from the verified tenant id;
 /// a companion id that is missing or belongs to another tenant is the same null answer, so
 /// endpoints cannot be used to probe other tenants. Nothing here touches work-domain tables
-/// or a model.
+/// directly: work-session views route through <see cref="ICompanionWorkGateway"/> and layered
+/// memory routes through <see cref="IContextMemoryService"/>.
 /// </summary>
-public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFactory, ITenantContextAccessor tenant)
+public sealed class CompanionService(
+    IDbContextFactory<CompanionDbContext> dbFactory,
+    ITenantContextAccessor tenant,
+    ICompanionStreamBroker? streamBroker = null,
+    IContextMemoryService? contextMemory = null,
+    ICompanionWorkGateway? workGateway = null)
 {
+    internal const string WorkSessionBindingDeletedActivityKind = "work_session_binding_deleted";
     private const int MaxPersonaBytes = 64 * 1024;
     private static readonly string[] MemorySourceKinds = ["user", "companion_run", "group_message"];
     private static readonly string[] SkillSourceKinds = ["manual", "pack"];
-    private static readonly string[] ConnectionKinds = ["mcp", "server", "phone", "external_agent"];
+    private static readonly string[] ConnectionKinds = ["mcp", "server", "phone", "external_agent", "work_session", "browser"];
+    private static readonly string[] BrowserDrivers = ["builtin_electron", "ego_lite"];
     private static readonly string[] AuthorizationStates = ["configured", "authorized", "revoked"];
-    private static readonly string[] CompanionRoles = ["autonomous", "buddy"];
+    private static readonly string[] CompanionRoles = ["autonomous", "session_partner"];
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -97,7 +107,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             row.PersonaDocument = input.PersonaDocument;
         }
         if (input.ModelPurpose is not null) row.ModelPurpose = NormalizePurpose(input.ModelPurpose, row.ModelPurpose);
-        if (input.Role is not null) row.Role = NormalizeChoice(input.Role, row.Role, CompanionRoles, "role");
+        if (input.Role is not null) row.Role = NormalizeChoice(input.Role, CompanionContracts.NormalizeRole(row.Role), CompanionRoles, "role");
         if (input.Model is { } model)
         {
             // "Absent" and "clear" differ here: an empty string drops the pin and falls back to the
@@ -131,7 +141,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         return CompanionContracts.ToDetailJson(row, counts.GetValueOrDefault(row.Id, EmptyCounts));
     }
 
-    // ── memories ──
+    // ── memories (unified via IContextMemoryService with lazy legacy backfill) ──
 
     public async Task<object> ListMemoriesAsync(Guid companionId, string? query, int? limit, CancellationToken cancellationToken = default)
     {
@@ -139,6 +149,23 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
         var take = Math.Clamp(limit ?? 20, 1, 100);
+
+        if (contextMemory is not null)
+        {
+            await EnsureLegacyMemoriesBackfilledAsync(db, tenantId, companionId, cancellationToken).ConfigureAwait(false);
+            var listed = await contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companionId,
+                status: "active",
+                query: TrimToNull(query),
+                includeVersions: true,
+                limit: take,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return listed.Items
+                .Select(item => CompanionContracts.ToMemoryJson(item, companionId))
+                .ToList();
+        }
+
         var rowsQuery = db.Memories.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed");
         var term = query?.Trim();
@@ -161,6 +188,23 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         var now = DateTimeOffset.UtcNow;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+
+        if (contextMemory is not null)
+        {
+            await EnsureLegacyMemoriesBackfilledAsync(db, tenantId, companionId, cancellationToken).ConfigureAwait(false);
+            var created = await contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+            {
+                Scope = "companion",
+                CompanionId = companionId,
+                Kind = MapSourceKindToMemoryKind(sourceKind),
+                Content = content,
+                SourceSessionId = input.SourceConversationId,
+                Reason = $"source_kind:{sourceKind}",
+                IsCompanionWriter = sourceKind != "user"
+            }, cancellationToken).ConfigureAwait(false);
+            return CompanionContracts.ToMemoryJson(created, companionId, sourceKind, input.SourceConversationId, input.SourceMessageId);
+        }
+
         var row = new CompanionMemoryRecord
         {
             Id = Guid.NewGuid(),
@@ -188,6 +232,59 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         if (string.IsNullOrEmpty(content)) throw Invalid("content is required.");
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+
+        if (contextMemory is not null)
+        {
+            await EnsureLegacyMemoriesBackfilledAsync(db, tenantId, companionId, cancellationToken).ConfigureAwait(false);
+            var active = await contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companionId,
+                status: "active",
+                includeVersions: true,
+                limit: 200,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var existing = active.Items.FirstOrDefault(x => x.Id == memoryId);
+            if (existing is null) throw NotFound("Memory not found.");
+            EnsureRevision(Math.Max(1, existing.CurrentVersion), expectedRevision);
+
+            if (existing.InHotMarkdown)
+            {
+                var doc = await contextMemory.GetDocumentAsync("companion", companionId: companionId, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                var singleLine = content.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                var anchorPattern = new Regex($@"^-\s+.*?<!--\s*mem:{Regex.Escape(memoryId.ToString("D"))}(?:\s+[^>]*)?\s*-->\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+                if (anchorPattern.IsMatch(doc.Markdown))
+                {
+                    var updatedMarkdown = anchorPattern.Replace(doc.Markdown, $"- {singleLine} <!-- mem:{memoryId:D} -->", 1);
+                    var updatedDoc = await contextMemory.UpdateDocumentAsync(
+                        "companion",
+                        new UpdateMemoryDocumentRequest
+                        {
+                            CompanionId = companionId,
+                            Markdown = updatedMarkdown,
+                            ExpectedContentHash = doc.ContentHash,
+                            Reason = "Updated via Companion Memory API"
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                    var updatedItem = updatedDoc.Items.FirstOrDefault(x => x.Id == memoryId);
+                    if (updatedItem is not null)
+                        return CompanionContracts.ToMemoryJson(updatedItem, companionId);
+                }
+            }
+
+            var superseded = await contextMemory.UpsertItemAsync(new UpsertMemoryItemRequest
+            {
+                Scope = "companion",
+                CompanionId = companionId,
+                Kind = existing.Kind,
+                Section = existing.Section,
+                Content = content,
+                SupersedeItemId = memoryId,
+                Reason = "Updated via Companion Memory API"
+            }, cancellationToken).ConfigureAwait(false);
+            return CompanionContracts.ToMemoryJson(superseded, companionId);
+        }
+
         var row = await db.Memories.SingleOrDefaultAsync(
             x => x.Id == memoryId && x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed",
             cancellationToken).ConfigureAwait(false);
@@ -205,6 +302,24 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         var tenantId = TenantId;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+
+        if (contextMemory is not null)
+        {
+            await EnsureLegacyMemoriesBackfilledAsync(db, tenantId, companionId, cancellationToken).ConfigureAwait(false);
+            var active = await contextMemory.ListItemsAsync(
+                scope: "companion",
+                companionId: companionId,
+                status: "active",
+                includeVersions: false,
+                limit: 200,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var existing = active.Items.FirstOrDefault(x => x.Id == memoryId);
+            if (existing is null) return false;
+            EnsureRevision(Math.Max(1, existing.CurrentVersion), expectedRevision);
+            await contextMemory.RevokeItemAsync(memoryId, "Deleted via Companion Memory API", cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         var row = await db.Memories.SingleOrDefaultAsync(
             x => x.Id == memoryId && x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed",
             cancellationToken).ConfigureAwait(false);
@@ -216,6 +331,71 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         await SaveAsync(db, cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    internal static async Task BackfillLegacyMemoriesCoreAsync(
+        CompanionDbContext db,
+        IContextMemoryService memoryService,
+        Guid tenantId,
+        Guid companionId,
+        CancellationToken cancellationToken)
+    {
+        var legacyRows = await db.Memories
+            .Where(x => x.TenantId == tenantId && x.CompanionId == companionId && x.IndexStatus == "indexed")
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (legacyRows.Count == 0) return;
+
+        var existing = await memoryService.ListItemsAsync(
+            scope: "companion",
+            companionId: companionId,
+            status: "active",
+            includeVersions: false,
+            limit: 200,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var existingContents = existing.Items
+            .Select(x => x.Content.Trim())
+            .ToHashSet(StringComparer.Ordinal);
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var legacy in legacyRows.OrderBy(x => x.CreatedAt))
+        {
+            var trimmed = legacy.Content.Trim();
+            if (trimmed.Length > 0 && existingContents.Add(trimmed))
+            {
+                await memoryService.UpsertItemAsync(new UpsertMemoryItemRequest
+                {
+                    Scope = "companion",
+                    CompanionId = companionId,
+                    Kind = MapSourceKindToMemoryKind(legacy.SourceKind),
+                    Content = trimmed,
+                    SourceSessionId = legacy.SourceConversationId,
+                    Reason = $"source_kind:{legacy.SourceKind}",
+                    IsCompanionWriter = legacy.SourceKind != "user"
+                }, cancellationToken).ConfigureAwait(false);
+            }
+
+            legacy.IndexStatus = "migrated";
+            legacy.Revision++;
+            legacy.UpdatedAt = now;
+        }
+
+        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task EnsureLegacyMemoriesBackfilledAsync(
+        CompanionDbContext db,
+        Guid tenantId,
+        Guid companionId,
+        CancellationToken cancellationToken) =>
+        contextMemory is null
+            ? Task.CompletedTask
+            : BackfillLegacyMemoriesCoreAsync(db, contextMemory, tenantId, companionId, cancellationToken);
+
+    private static string MapSourceKindToMemoryKind(string? sourceKind) => sourceKind switch
+    {
+        "companion_run" => "episode",
+        "group_message" => "fact",
+        _ => "bond"
+    };
 
     // ── skills ──
 
@@ -296,7 +476,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         return true;
     }
 
-    // ── connections ──
+    // ── connections & work_session / browser connectors ──
 
     public async Task<object> ListConnectionsAsync(Guid companionId, CancellationToken cancellationToken = default)
     {
@@ -318,9 +498,36 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         var name = RequireName(input.Name);
         var kind = input.Kind?.Trim().ToLowerInvariant();
         if (kind is null || !ConnectionKinds.Contains(kind, StringComparer.Ordinal))
-            throw Invalid("kind must be mcp, server, phone, or external_agent.");
-        var authorization = NormalizeChoice(input.Authorization, "configured", AuthorizationStates, "authorization");
+            throw Invalid("kind must be work_session, browser, mcp, server, phone, or external_agent.");
+
+        var defaultAuth = kind is "work_session" or "browser" ? "authorized" : "configured";
+        var authorization = NormalizeChoice(input.Authorization, defaultAuth, AuthorizationStates, "authorization");
         var now = DateTimeOffset.UtcNow;
+
+        string? endpoint = TrimToNull(input.Endpoint);
+        string? credentialRef = TrimToNull(input.CredentialRef);
+        string runtimeStatus = "unsupported";
+        DateTimeOffset? lastCheckedAt = null;
+
+        if (kind == "work_session")
+        {
+            endpoint ??= "*";
+            runtimeStatus = authorization == "authorized"
+                ? "connected"
+                : authorization == "revoked"
+                    ? "disconnected"
+                    : "configured";
+            lastCheckedAt = now;
+        }
+        else if (kind == "browser")
+        {
+            var (driver, profileId) = NormalizeBrowserInput(input.Driver, input.ProfileId, endpoint, credentialRef);
+            endpoint = string.IsNullOrEmpty(profileId) ? driver : $"{driver}:{profileId}";
+            credentialRef = profileId ?? credentialRef;
+            runtimeStatus = ComputeBrowserRuntimeStatus(driver, authorization, enabled: true);
+            lastCheckedAt = now;
+        }
+
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
         if (await db.ConnectionBindings.AnyAsync(x => x.TenantId == tenantId && x.CompanionId == companionId && x.Name == name, cancellationToken).ConfigureAwait(false))
@@ -332,13 +539,12 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             CompanionId = companionId,
             Kind = kind,
             Name = name,
-            Endpoint = TrimToNull(input.Endpoint),
-            CredentialRef = TrimToNull(input.CredentialRef),
+            Endpoint = endpoint,
+            CredentialRef = credentialRef,
             Authorization = authorization,
-            // No probe exists in this piece: never claim online, and there is no check time.
-            RuntimeStatus = "unsupported",
+            RuntimeStatus = runtimeStatus,
             Enabled = true,
-            LastCheckedAt = null,
+            LastCheckedAt = lastCheckedAt,
             Revision = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -361,10 +567,43 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             cancellationToken).ConfigureAwait(false);
         if (row is null) throw NotFound("Connection binding not found.");
         EnsureRevision(row.Revision, expectedRevision);
+        var now = DateTimeOffset.UtcNow;
         if (authorization is not null) row.Authorization = authorization;
         if (input.Enabled is { } enabled) row.Enabled = enabled;
+        if (input.Endpoint is not null && row.Kind == "work_session")
+        {
+            row.Endpoint = TrimToNull(input.Endpoint) ?? "*";
+        }
+        else if (row.Kind == "browser" && (input.Driver is not null || input.ProfileId is not null || input.Endpoint is not null))
+        {
+            var current = CompanionContracts.ParseBrowserBinding(row);
+            var (driver, profileId) = NormalizeBrowserInput(
+                input.Driver ?? current.Driver,
+                input.ProfileId ?? current.ProfileId,
+                input.Endpoint ?? row.Endpoint,
+                row.CredentialRef);
+            row.Endpoint = string.IsNullOrEmpty(profileId) ? driver : $"{driver}:{profileId}";
+            row.CredentialRef = profileId;
+        }
+
+        if (row.Kind == "work_session")
+        {
+            row.RuntimeStatus = !row.Enabled || row.Authorization == "revoked"
+                ? "disconnected"
+                : row.Authorization == "authorized"
+                    ? "connected"
+                    : "configured";
+            row.LastCheckedAt = now;
+        }
+        else if (row.Kind == "browser")
+        {
+            var (driver, _) = CompanionContracts.ParseBrowserBinding(row);
+            row.RuntimeStatus = ComputeBrowserRuntimeStatus(driver ?? "builtin_electron", row.Authorization, row.Enabled);
+            row.LastCheckedAt = now;
+        }
+
         row.Revision++;
-        row.UpdatedAt = DateTimeOffset.UtcNow;
+        row.UpdatedAt = now;
         await SaveAsync(db, cancellationToken).ConfigureAwait(false);
         return CompanionContracts.ToJson(row);
     }
@@ -379,9 +618,321 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             cancellationToken).ConfigureAwait(false);
         if (row is null) return false;
         EnsureRevision(row.Revision, expectedRevision);
+        var wasWorkSession = string.Equals(row.Kind, "work_session", StringComparison.OrdinalIgnoreCase);
+        var bindingName = row.Name;
         db.ConnectionBindings.Remove(row);
-        await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        if (wasWorkSession)
+        {
+            db.Activities.Add(new CompanionActivityRecord
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Kind = WorkSessionBindingDeletedActivityKind,
+                CompanionId = companionId,
+                Summary = $"已移除工作会话连接「{bindingName}」",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await SaveAsync(db, cancellationToken).ConfigureAwait(false);
+        }
         return true;
+    }
+
+    /// <summary>
+    /// Lists authorized work sessions for <paramref name="companionId"/>, auto-seeding the wildcard
+    /// <c>"*"</c> <c>work_session</c> grant on the default/main companion if missing.
+    /// </summary>
+    public async Task<object> ListWorkSessionsAsync(Guid companionId, Guid? projectId = null, CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await RequireCompanionAsync(db, companionId, cancellationToken).ConfigureAwait(false);
+            await EnsureMainWorkSessionGrantCoreAsync(db, tenantId, companionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (workGateway is null)
+            return Array.Empty<object>();
+
+        var result = await workGateway.ListSessionsAsync(companionId, projectId, cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess || result.Value is null)
+            return Array.Empty<object>();
+
+        return result.Value.Select(session => new
+        {
+            id = session.Id,
+            session_id = session.Id,
+            title = session.Title,
+            session_title = session.Title,
+            project_id = session.ProjectId,
+            project_name = session.ProjectName,
+            mode_name = session.ModeName,
+            view_mode = session.ViewMode ?? "flat",
+            latest_run_id = session.LatestRun?.Id,
+            latest_run_status = session.LatestRun?.Status,
+            latest_run_summary = session.LatestRun?.Summary,
+            latest_run = session.LatestRun is null
+                ? null
+                : new
+                {
+                    id = session.LatestRun.Id,
+                    status = session.LatestRun.Status,
+                    summary = session.LatestRun.Summary
+                },
+            plan_summary = session.PlanSummary,
+            plan_progress = session.PlanProgress is null
+                ? null
+                : new
+                {
+                    done = session.PlanProgress.Done,
+                    total = session.PlanProgress.Total,
+                    current_step = session.PlanProgress.CurrentStep,
+                    summary = session.PlanProgress.Summary ?? session.PlanSummary
+                },
+            pending_approvals = (session.PendingApprovals ?? []).Select(approval => new
+            {
+                approval_id = approval.ApprovalId,
+                tool_id = approval.ToolId,
+                summary = approval.Summary,
+                risk_level = approval.RiskLevel,
+                created_at = approval.CreatedAt
+            }).ToList(),
+            updated_at = session.UpdatedAt
+        }).ToList();
+    }
+
+    public IReadOnlyList<object> DiscoverBrowserProfiles()
+    {
+        var profiles = new List<object>
+        {
+            new
+            {
+                id = "builtin_electron:default",
+                profile_id = "default",
+                name = "Built-in Electron TaskSpace",
+                driver = "builtin_electron",
+                is_default = true,
+                available = true,
+                detail = "Isolated Tinadec Desktop browser TaskSpace"
+            }
+        };
+
+        var egoCliAvailable = IsEgoBrowserAvailable();
+        var discoveredEgoProfiles = DiscoverEgoLiteProfileNames();
+        if (discoveredEgoProfiles.Count == 0)
+        {
+            profiles.Add(new
+            {
+                id = "ego_lite:default",
+                profile_id = "default",
+                name = "Ego Lite (Default)",
+                driver = "ego_lite",
+                is_default = false,
+                available = egoCliAvailable,
+                detail = egoCliAvailable
+                    ? "External Ego Lite persistent browser profile"
+                    : "Install ego-browser CLI / Ego Lite to enable external persistent profiles"
+            });
+        }
+        else
+        {
+            foreach (var profileName in discoveredEgoProfiles)
+            {
+                profiles.Add(new
+                {
+                    id = $"ego_lite:{profileName}",
+                    profile_id = profileName,
+                    name = $"Ego Lite ({profileName})",
+                    driver = "ego_lite",
+                    is_default = false,
+                    available = true,
+                    detail = "External Ego Lite persistent browser profile"
+                });
+            }
+        }
+
+        return profiles;
+    }
+
+    public static async Task EnsureMainWorkSessionGrantCoreAsync(
+        CompanionDbContext db,
+        Guid tenantId,
+        Guid candidateCompanionId,
+        CancellationToken cancellationToken)
+    {
+        if (candidateCompanionId == Guid.Empty) return;
+
+        var hasAnyWorkSessionBinding = await db.ConnectionBindings.AsNoTracking()
+            .AnyAsync(x => x.TenantId == tenantId && x.CompanionId == candidateCompanionId && x.Kind == "work_session", cancellationToken)
+            .ConfigureAwait(false);
+        if (hasAnyWorkSessionBinding) return;
+
+        var wasExplicitlyDeleted = await db.Activities.AsNoTracking()
+            .AnyAsync(x => x.TenantId == tenantId && x.CompanionId == candidateCompanionId && x.Kind == WorkSessionBindingDeletedActivityKind, cancellationToken)
+            .ConfigureAwait(false);
+        if (wasExplicitlyDeleted) return;
+
+        var mainId = await db.Settings.AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => x.MainCompanionId)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+        bool isDefaultOrMain;
+        if (mainId is { } configuredMain && configuredMain != Guid.Empty)
+        {
+            isDefaultOrMain = configuredMain == candidateCompanionId;
+        }
+        else
+        {
+            var activeCompanions = await db.Companions.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.Status == "active")
+                .Select(x => new { x.Id, x.Role, x.CreatedAt })
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var primary = activeCompanions
+                .OrderBy(x => CompanionContracts.NormalizeRole(x.Role) == "autonomous" ? 0 : 1)
+                .ThenBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .FirstOrDefault();
+            isDefaultOrMain = primary?.Id == candidateCompanionId;
+        }
+
+        if (!isDefaultOrMain) return;
+
+        var now = DateTimeOffset.UtcNow;
+        const string defaultName = "work-sessions-all";
+        var nameTaken = await db.ConnectionBindings.AsNoTracking()
+            .AnyAsync(x => x.TenantId == tenantId && x.CompanionId == candidateCompanionId && x.Name == defaultName, cancellationToken)
+            .ConfigureAwait(false);
+        db.ConnectionBindings.Add(new CompanionConnectionBindingRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CompanionId = candidateCompanionId,
+            Kind = "work_session",
+            Name = nameTaken ? $"work-sessions-all-{Guid.NewGuid().ToString("N")[..6]}" : defaultName,
+            Endpoint = "*",
+            Authorization = "authorized",
+            RuntimeStatus = "connected",
+            Enabled = true,
+            LastCheckedAt = now,
+            Revision = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+        }
+    }
+
+    private static (string Driver, string? ProfileId) NormalizeBrowserInput(
+        string? explicitDriver,
+        string? explicitProfileId,
+        string? rawEndpoint,
+        string? rawCredentialRef)
+    {
+        var profileId = TrimToNull(explicitProfileId) ?? TrimToNull(rawCredentialRef);
+        var driverCandidate = TrimToNull(explicitDriver)?.ToLowerInvariant();
+
+        if (driverCandidate is null && !string.IsNullOrWhiteSpace(rawEndpoint))
+        {
+            var raw = rawEndpoint.Trim();
+            var colon = raw.IndexOf(':');
+            if (colon > 0)
+            {
+                driverCandidate = raw[..colon].Trim().ToLowerInvariant();
+                var tail = raw[(colon + 1)..].Trim();
+                if (!string.IsNullOrEmpty(tail)) profileId ??= tail;
+            }
+            else
+            {
+                driverCandidate = raw.ToLowerInvariant();
+            }
+        }
+
+        var driver = driverCandidate ?? "builtin_electron";
+        if (!BrowserDrivers.Contains(driver, StringComparer.Ordinal))
+            throw Invalid("browser connection driver must be builtin_electron or ego_lite.");
+
+        return (driver, profileId);
+    }
+
+    private static string ComputeBrowserRuntimeStatus(string driver, string authorization, bool enabled)
+    {
+        if (!enabled || authorization == "revoked") return "disconnected";
+        if (authorization != "authorized") return "configured";
+        if (driver == "ego_lite")
+            return IsEgoBrowserAvailable() || DiscoverEgoLiteProfileNames().Count > 0 ? "connected" : "unavailable";
+        return "connected";
+    }
+
+    private static bool IsEgoBrowserAvailable()
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(pathEnv))
+        {
+            string[] candidates = OperatingSystem.IsWindows()
+                ? ["ego-browser.exe", "ego-browser.cmd", "ego-browser.bat", "ego-browser"]
+                : ["ego-browser"];
+            foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                foreach (var exe in candidates)
+                {
+                    try
+                    {
+                        if (File.Exists(Path.Combine(dir.Trim(), exe))) return true;
+                    }
+                    catch
+                    {
+                        // Ignore malformed PATH entries.
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static List<string> DiscoverEgoLiteProfileNames()
+    {
+        var names = new List<string>();
+        var roots = new List<string>();
+        try
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var roamingApp = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (!string.IsNullOrEmpty(localApp)) roots.Add(Path.Combine(localApp, "ego-lite", "profiles"));
+            if (!string.IsNullOrEmpty(roamingApp)) roots.Add(Path.Combine(roamingApp, "ego-lite", "profiles"));
+            if (!string.IsNullOrEmpty(home))
+            {
+                roots.Add(Path.Combine(home, ".ego-lite", "profiles"));
+                roots.Add(Path.Combine(home, "Library", "Application Support", "ego-lite", "profiles"));
+            }
+
+            foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var subDir in Directory.EnumerateDirectories(root))
+                {
+                    var name = Path.GetFileName(subDir);
+                    if (!string.IsNullOrWhiteSpace(name) && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        names.Add(name);
+                }
+            }
+        }
+        catch
+        {
+            // Discovery is best-effort and never fails requests.
+        }
+        return names;
     }
 
     // ── settings ──
@@ -398,12 +949,14 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         long expectedRevision,
         bool mainSpecified,
         Guid? mainCompanionId,
-        bool buddySpecified,
-        Guid? buddyCompanionId,
         int? recruitLimit,
+        int? maxBotHopDepth,
         bool? autonomyPaused,
         CancellationToken cancellationToken = default)
     {
+        if (maxBotHopDepth is < 0 or > 10)
+            throw Invalid("max_bot_hop_depth must be between 0 and 10.");
+
         var tenantId = TenantId;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.Settings.SingleOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
@@ -416,13 +969,6 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             if (target is null || target.Status != "active")
                 throw new CompanionException("companion_not_found", "The main companion must be an active companion of this tenant.", 400);
         }
-        if (buddySpecified && buddyCompanionId is { } buddyId)
-        {
-            var target = await db.Companions.AsNoTracking()
-                .SingleOrDefaultAsync(x => x.Id == buddyId && x.TenantId == tenantId, cancellationToken).ConfigureAwait(false);
-            if (target is null || target.Status != "active")
-                throw new CompanionException("companion_not_found", "The buddy companion must be an active companion of this tenant.", 400);
-        }
         var now = DateTimeOffset.UtcNow;
         if (row is null)
         {
@@ -430,8 +976,8 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             {
                 TenantId = tenantId,
                 MainCompanionId = mainSpecified ? mainCompanionId : null,
-                BuddyCompanionId = buddySpecified ? buddyCompanionId : null,
-                RecruitLimit = recruitLimit ?? 3,
+                RecruitLimit = recruitLimit is { } rLimit ? Math.Clamp(rLimit, 0, 20) : 3,
+                MaxBotHopDepth = maxBotHopDepth ?? 3,
                 AutonomyPaused = autonomyPaused ?? false,
                 Revision = 1,
                 UpdatedAt = now
@@ -441,14 +987,12 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         else
         {
             if (mainSpecified) row.MainCompanionId = mainCompanionId;
-            if (buddySpecified) row.BuddyCompanionId = buddyCompanionId;
             if (recruitLimit is { } limit) row.RecruitLimit = Math.Clamp(limit, 0, 20);
+            if (maxBotHopDepth is { } hopDepth) row.MaxBotHopDepth = hopDepth;
             if (autonomyPaused is { } paused) row.AutonomyPaused = paused;
             row.Revision++;
             row.UpdatedAt = now;
         }
-        // The settings feed event is an activity row like any other; the live endpoint maps this
-        // kind to `companion.settings` so a client can tell a designation change from chat traffic.
         db.Activities.Add(new CompanionActivityRecord
         {
             Id = Guid.NewGuid(),
@@ -458,14 +1002,18 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
             {
                 main_companion_id = row.MainCompanionId,
-                buddy_companion_id = row.BuddyCompanionId,
                 recruit_limit = row.RecruitLimit,
+                max_bot_hop_depth = Math.Clamp(row.MaxBotHopDepth ?? 3, 0, 10),
                 autonomy_paused = row.AutonomyPaused,
                 revision = row.Revision
             }),
             CreatedAt = now
         });
         await CompanionActivities.SaveAsync(db, tenantId, token => SaveAsync(db, token), cancellationToken).ConfigureAwait(false);
+        if (mainSpecified && row.MainCompanionId is { } configuredMainId)
+        {
+            await EnsureMainWorkSessionGrantCoreAsync(db, tenantId, configuredMainId, cancellationToken).ConfigureAwait(false);
+        }
         return CompanionContracts.ToJson(row);
     }
 
@@ -473,7 +1021,7 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
 
     private static readonly CompanionCounts EmptyCounts = new(0, 0, 0, null);
 
-    private static async Task<Dictionary<Guid, CompanionCounts>> LoadCountsAsync(
+    private async Task<Dictionary<Guid, CompanionCounts>> LoadCountsAsync(
         CompanionDbContext db,
         Guid tenantId,
         IReadOnlyList<Guid> companionIds,
@@ -487,6 +1035,20 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
             .GroupBy(x => x.CompanionId)
             .Select(group => new { CompanionId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(x => x.CompanionId, x => x.Count, cancellationToken).ConfigureAwait(false);
+        if (contextMemory is not null)
+        {
+            var unified = await contextMemory.ListItemsAsync(
+                scope: "companion",
+                status: "active",
+                includeVersions: false,
+                limit: 200,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            foreach (var group in unified.Items.Where(x => x.CompanionId is not null && companionIds.Contains(x.CompanionId.Value))
+                         .GroupBy(x => x.CompanionId!.Value))
+            {
+                memoryCounts[group.Key] = memoryCounts.GetValueOrDefault(group.Key) + group.Count();
+            }
+        }
         var skillCounts = await db.SkillBindings.AsNoTracking()
             .Where(x => x.TenantId == tenantId && companionIds.Contains(x.CompanionId))
             .GroupBy(x => x.CompanionId)
@@ -840,6 +1402,15 @@ public sealed class CompanionService(IDbContextFactory<CompanionDbContext> dbFac
         };
         db.Activities.Add(row);
         await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        streamBroker?.PublishStageCue(
+            tenantId,
+            companionId,
+            conversationId: null,
+            runId: null,
+            emotion: gesture == "wave" ? "happy" : "affectionate",
+            speaking: false,
+            intensity: 0.85,
+            gesture: gesture);
         return CompanionContracts.ActivityJson(row, null, null);
     }
 

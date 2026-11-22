@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -6,11 +8,15 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Companion;
 
+public sealed record CompanionServedAsset(
+    Stream Stream,
+    string ContentType,
+    string ETag);
+
 /// <summary>
-/// Bring-your-own Live2D model registry. Core never ships Cubism Core or a model; it only copies
-/// what the user selected into its own storage root and records what model3.json declares. The
-/// copy is what makes the row durable: the user may move or delete the original directory, and a
-/// later renderer still has bytes to load.
+/// Bring-your-own Live2D model and Cubism Core SDK registry. Core never bundles Cubism Core or a
+/// model; it only copies what the user selected into its own storage root, blocks executable scripts
+/// inside model directories, and serves pure-data model assets plus the user-imported SDK.
 /// </summary>
 public sealed class CompanionAvatarStore(
     IDbContextFactory<CompanionDbContext> dbFactory,
@@ -18,10 +24,33 @@ public sealed class CompanionAvatarStore(
     StoragePaths paths)
 {
     private const string AvatarDirectory = "companion-avatars";
-    // A Live2D model is a model3.json, a .moc3 and a texture atlas — a few hundred files at most.
-    // The ceilings exist so a mistakenly selected folder fails loudly instead of filling the disk.
+    private const string SdkJsFileName = "live2dcubismcore.min.js";
+    private const string SdkWasmFileName = "live2dcubismcore.wasm";
+    private const string SdkManifestFileName = "sdk-manifest.json";
     private const int MaxAvatarFiles = 2048;
     private const long MaxAvatarBytes = 256L * 1024 * 1024;
+    private const long MaxSdkBytes = 32L * 1024 * 1024;
+
+    private static readonly HashSet<string> ForbiddenModelExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx",
+        ".html", ".htm", ".xhtml", ".svg", ".wasm",
+        ".exe", ".dll", ".bat", ".cmd", ".ps1", ".sh"
+    };
+
+    private static readonly Dictionary<string, string> AllowedModelAssetContentTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".json"] = "application/json; charset=utf-8",
+        [".moc3"] = "application/octet-stream",
+        [".png"] = "image/png",
+        [".webp"] = "image/webp",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".wav"] = "audio/wav",
+        [".mp3"] = "audio/mpeg",
+        [".ogg"] = "audio/ogg",
+        [".txt"] = "text/plain; charset=utf-8"
+    };
 
     private Guid TenantId => tenant.Current.TenantId;
 
@@ -72,7 +101,13 @@ public sealed class CompanionAvatarStore(
 
         var modelJson = Path.Combine(source, "model3.json");
         if (!File.Exists(modelJson))
-            throw new CompanionException("model3_missing", "The model directory does not contain model3.json.", 400);
+        {
+            var candidateModels = Directory.EnumerateFiles(source, "*.model3.json", SearchOption.TopDirectoryOnly).ToArray();
+            if (candidateModels.Length == 1)
+                modelJson = candidateModels[0];
+            else
+                throw new CompanionException("model3_missing", "The model directory does not contain model3.json.", 400);
+        }
         if (IsLink(File.GetAttributes(modelJson)))
             throw new CompanionException("avatar_symlink_rejected", "model3.json must not be a symbolic link or junction.", 400);
 
@@ -168,15 +203,321 @@ public sealed class CompanionAvatarStore(
         return StorageScopePaths.Contained(paths.Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
     }
 
-    private static object ToJson(CompanionAvatarRecord row) => new
+    private object ToJson(CompanionAvatarRecord row)
     {
-        id = row.Id,
-        name = row.Name,
-        kind = row.Kind,
-        source_path = row.SourcePath,
-        capabilities = JsonNode.Parse(row.CapabilitiesJson) ?? new JsonObject(),
-        created_at = row.CreatedAt
-    };
+        var entryModel = "model3.json";
+        try
+        {
+            var dir = ResolveStoredPath(row.SourcePath);
+            if (Directory.Exists(dir) && !File.Exists(Path.Combine(dir, "model3.json")))
+            {
+                var found = Directory.EnumerateFiles(dir, "*.model3.json", SearchOption.TopDirectoryOnly).FirstOrDefault();
+                if (found is not null) entryModel = Path.GetFileName(found);
+            }
+        }
+        catch (CompanionException)
+        {
+            // Keep default entry_model_json if stored path was manually removed.
+        }
+
+        return new
+        {
+            id = row.Id,
+            name = row.Name,
+            kind = row.Kind,
+            source_path = row.SourcePath,
+            entry_model_json = entryModel,
+            capabilities = JsonNode.Parse(row.CapabilitiesJson) ?? new JsonObject(),
+            created_at = row.CreatedAt
+        };
+    }
+
+    /// <summary>
+    /// Opens a pure-data asset file inside an imported Live2D model directory for this tenant.
+    /// Rejects path traversal, symlinks, and executable/active web extensions.
+    /// </summary>
+    public async Task<CompanionServedAsset?> OpenAssetAsync(
+        Guid avatarId, string? relativePath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            throw new CompanionException("avatar_asset_invalid", "Asset path is required.", 400);
+
+        var normalized = relativePath.Replace('\\', '/').TrimStart('/');
+        if (Path.IsPathRooted(normalized)
+            || normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(seg => seg is "." or ".."))
+        {
+            throw new CompanionException("avatar_path_escape", "Asset path must not escape the model directory.", 400);
+        }
+
+        var ext = Path.GetExtension(normalized);
+        if (ForbiddenModelExtensions.Contains(ext))
+            throw new CompanionException("avatar_script_rejected", "Executable or active web assets cannot be served from a Live2D model pack.", 400);
+        if (!AllowedModelAssetContentTypes.TryGetValue(ext, out var contentType))
+            throw new CompanionException("avatar_asset_unsupported", $"Unsupported Live2D asset extension '{ext}'.", 400);
+
+        var tenantId = TenantId;
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.Avatars.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == avatarId && x.TenantId == tenantId, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null) return null;
+
+        var avatarRoot = ResolveStoredPath(row.SourcePath);
+        var filePath = StorageScopePaths.Contained(avatarRoot, normalized.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(filePath)) return null;
+        if (IsLink(File.GetAttributes(filePath)))
+            throw new CompanionException("avatar_symlink_rejected", "Symbolic links cannot be served.", 400);
+
+        var info = new FileInfo(filePath);
+        var etag = $"\"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}\"";
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true);
+        return new CompanionServedAsset(stream, contentType, etag);
+    }
+
+    // ── BYO Cubism Core SDK ──
+
+    public Task<object> GetSdkStatusAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var sdkDir = GetTenantSdkDirectory(TenantId);
+        var jsPath = Path.Combine(sdkDir, SdkJsFileName);
+        var wasmPath = Path.Combine(sdkDir, SdkWasmFileName);
+        var manifestPath = Path.Combine(sdkDir, SdkManifestFileName);
+
+        if (!File.Exists(jsPath))
+        {
+            return Task.FromResult<object>(new
+            {
+                ready = false,
+                installed = false,
+                file_name = (string?)null,
+                sha256 = (string?)null,
+                size_bytes = 0L,
+                has_wasm = false,
+                script_url = (string?)null,
+                wasm_url = (string?)null,
+                updated_at = (DateTimeOffset?)null
+            });
+        }
+
+        string? sha256 = null;
+        string fileName = SdkJsFileName;
+        DateTimeOffset updatedAt = new FileInfo(jsPath).LastWriteTimeUtc;
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                var root = doc.RootElement;
+                if (root.TryGetProperty("file_name", out var fn) && fn.ValueKind == JsonValueKind.String)
+                    fileName = fn.GetString() ?? SdkJsFileName;
+                if (root.TryGetProperty("sha256", out var sh) && sh.ValueKind == JsonValueKind.String)
+                    sha256 = sh.GetString();
+                if (root.TryGetProperty("updated_at", out var up) && up.TryGetDateTimeOffset(out var parsedTime))
+                    updatedAt = parsedTime;
+            }
+            catch (JsonException)
+            {
+                // Recompute below if manifest was corrupted.
+            }
+        }
+
+        sha256 ??= Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(jsPath))).ToLowerInvariant();
+        var hasWasm = File.Exists(wasmPath);
+        var sizeBytes = new FileInfo(jsPath).Length;
+
+        return Task.FromResult<object>(new
+        {
+            ready = true,
+            installed = true,
+            file_name = fileName,
+            sha256,
+            size_bytes = sizeBytes,
+            has_wasm = hasWasm,
+            script_url = $"/api/v1/companion-avatars/sdk/{SdkJsFileName}",
+            wasm_url = hasWasm ? $"/api/v1/companion-avatars/sdk/{SdkWasmFileName}" : null,
+            updated_at = (DateTimeOffset?)updatedAt
+        });
+    }
+
+    public async Task<object> ImportSdkAsync(CompanionSdkImportRequest input, CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantId;
+        byte[] jsBytes;
+        byte[]? wasmBytes = null;
+        string importedFileName = string.IsNullOrWhiteSpace(input.FileName) ? SdkJsFileName : Path.GetFileName(input.FileName.Trim());
+
+        if (!string.IsNullOrWhiteSpace(input.ContentBase64))
+        {
+            try
+            {
+                jsBytes = Convert.FromBase64String(StripDataUrlPrefix(input.ContentBase64));
+            }
+            catch (FormatException)
+            {
+                throw new CompanionException("sdk_invalid_base64", "content_base64 is not valid base64.", 400);
+            }
+
+            if (!string.IsNullOrWhiteSpace(input.WasmBase64))
+            {
+                try
+                {
+                    wasmBytes = Convert.FromBase64String(StripDataUrlPrefix(input.WasmBase64));
+                }
+                catch (FormatException)
+                {
+                    throw new CompanionException("sdk_invalid_base64", "wasm_base64 is not valid base64.", 400);
+                }
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(input.Path))
+        {
+            if (!Path.IsPathRooted(input.Path))
+                throw new CompanionException("sdk_path_not_absolute", "The Cubism Core SDK path must be absolute.", 400);
+
+            var fullPath = Path.GetFullPath(input.Path);
+            string jsSourcePath;
+            if (Directory.Exists(fullPath))
+            {
+                jsSourcePath = Path.Combine(fullPath, SdkJsFileName);
+                if (!File.Exists(jsSourcePath))
+                {
+                    var alt = Path.Combine(fullPath, "live2dcubismcore.js");
+                    if (File.Exists(alt)) jsSourcePath = alt;
+                    else throw new CompanionException("sdk_file_not_found", $"Directory does not contain {SdkJsFileName}.", 400);
+                }
+            }
+            else if (File.Exists(fullPath))
+            {
+                var ext = Path.GetExtension(fullPath);
+                if (!string.Equals(ext, ".js", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(ext, ".mjs", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new CompanionException("sdk_invalid_extension", "Cubism Core SDK file must be a .js file.", 400);
+                }
+                jsSourcePath = fullPath;
+            }
+            else
+            {
+                throw new CompanionException("sdk_file_not_found", "The specified Cubism Core SDK path does not exist.", 400);
+            }
+
+            if (IsLink(File.GetAttributes(jsSourcePath)))
+                throw new CompanionException("sdk_symlink_rejected", "Cubism Core SDK file must not be a symbolic link.", 400);
+
+            var jsInfo = new FileInfo(jsSourcePath);
+            if (jsInfo.Length <= 0 || jsInfo.Length > MaxSdkBytes)
+                throw new CompanionException("sdk_invalid_size", "Cubism Core SDK file is empty or exceeds 32 MiB.", 400);
+
+            importedFileName = jsInfo.Name;
+            jsBytes = await File.ReadAllBytesAsync(jsSourcePath, cancellationToken).ConfigureAwait(false);
+
+            var siblingWasm = Path.Combine(Path.GetDirectoryName(jsSourcePath)!, SdkWasmFileName);
+            if (File.Exists(siblingWasm) && !IsLink(File.GetAttributes(siblingWasm)))
+            {
+                var wasmInfo = new FileInfo(siblingWasm);
+                if (wasmInfo.Length > 0 && wasmInfo.Length <= MaxSdkBytes)
+                    wasmBytes = await File.ReadAllBytesAsync(siblingWasm, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            throw new CompanionException("sdk_input_required", "Provide either path or content_base64 to import Cubism Core SDK.", 400);
+        }
+
+        if (jsBytes.Length == 0 || jsBytes.Length > MaxSdkBytes)
+            throw new CompanionException("sdk_invalid_size", "Cubism Core SDK script is empty or exceeds 32 MiB.", 400);
+
+        var headSample = Encoding.UTF8.GetString(jsBytes, 0, Math.Min(jsBytes.Length, 512)).TrimStart();
+        if (headSample.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+            || headSample.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new CompanionException("sdk_invalid_content", "Imported file appears to be an HTML document, not live2dcubismcore.min.js.", 400);
+        }
+
+        var sha256 = Convert.ToHexString(SHA256.HashData(jsBytes)).ToLowerInvariant();
+        var wasmSha256 = wasmBytes is { Length: > 0 }
+            ? Convert.ToHexString(SHA256.HashData(wasmBytes)).ToLowerInvariant()
+            : null;
+        var now = DateTimeOffset.UtcNow;
+
+        var sdkDir = GetTenantSdkDirectory(tenantId);
+        Directory.CreateDirectory(sdkDir);
+        await File.WriteAllBytesAsync(Path.Combine(sdkDir, SdkJsFileName), jsBytes, cancellationToken).ConfigureAwait(false);
+
+        var targetWasm = Path.Combine(sdkDir, SdkWasmFileName);
+        if (wasmBytes is { Length: > 0 })
+            await File.WriteAllBytesAsync(targetWasm, wasmBytes, cancellationToken).ConfigureAwait(false);
+        else if (File.Exists(targetWasm))
+            File.Delete(targetWasm);
+
+        var manifest = JsonSerializer.Serialize(new
+        {
+            file_name = importedFileName,
+            sha256,
+            size_bytes = (long)jsBytes.Length,
+            has_wasm = wasmBytes is { Length: > 0 },
+            wasm_sha256 = wasmSha256,
+            updated_at = now
+        });
+        await File.WriteAllTextAsync(Path.Combine(sdkDir, SdkManifestFileName), manifest, cancellationToken).ConfigureAwait(false);
+
+        return await GetSdkStatusAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<CompanionServedAsset?> OpenSdkAssetAsync(string? assetName, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var trimmed = assetName?.Trim();
+        string fileName;
+        string contentType;
+        if (string.Equals(trimmed, SdkJsFileName, StringComparison.Ordinal))
+        {
+            fileName = SdkJsFileName;
+            contentType = "text/javascript; charset=utf-8";
+        }
+        else if (string.Equals(trimmed, SdkWasmFileName, StringComparison.Ordinal))
+        {
+            fileName = SdkWasmFileName;
+            contentType = "application/wasm";
+        }
+        else
+        {
+            return Task.FromResult<CompanionServedAsset?>(null);
+        }
+
+        var sdkDir = GetTenantSdkDirectory(TenantId);
+        var fullPath = Path.Combine(sdkDir, fileName);
+        if (!File.Exists(fullPath) || IsLink(File.GetAttributes(fullPath)))
+            return Task.FromResult<CompanionServedAsset?>(null);
+
+        var sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(fullPath))).ToLowerInvariant();
+        var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true);
+        return Task.FromResult<CompanionServedAsset?>(new CompanionServedAsset(stream, contentType, $"\"{sha256}\""));
+    }
+
+    public Task DeleteSdkAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var sdkDir = GetTenantSdkDirectory(TenantId);
+        if (Directory.Exists(sdkDir))
+            DeleteTreeNoFollow(sdkDir);
+        return Task.CompletedTask;
+    }
+
+    private string GetTenantSdkDirectory(Guid tenantId) =>
+        StorageScopePaths.Contained(
+            paths.Root,
+            $"{AvatarDirectory}/sdk/tenants/{tenantId:N}".Replace('/', Path.DirectorySeparatorChar));
+
+    private static string StripDataUrlPrefix(string raw)
+    {
+        var trimmed = raw.Trim();
+        var comma = trimmed.IndexOf(',');
+        return trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && comma >= 0
+            ? trimmed[(comma + 1)..]
+            : trimmed;
+    }
 
     private sealed class CopyBudget
     {
@@ -208,6 +549,14 @@ public sealed class CompanionAvatarStore(
             }
             else
             {
+                var ext = Path.GetExtension(entry);
+                if (ForbiddenModelExtensions.Contains(ext))
+                {
+                    throw new CompanionException(
+                        "avatar_script_rejected",
+                        $"Executable or active web file is not permitted inside a Live2D model directory: {relative}",
+                        400);
+                }
                 // Bounded before the copy, not after: a model is a few hundred files, and selecting
                 // a multi-gigabyte folder by mistake must fail loudly instead of filling the disk.
                 budget.Files++;

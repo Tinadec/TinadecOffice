@@ -24,13 +24,19 @@ public sealed class CompanionAutonomyService(
     ITenantContextAccessor tenant,
     CompanionConversationService conversations,
     IAgentChatClientFactory chatClients,
-    ILogger<CompanionAutonomyService> logger)
+    ILogger<CompanionAutonomyService> logger,
+    CompanionRuntime? runtime = null,
+    CompanionPlanningService? planning = null,
+    ICompanionWorkGateway? workGateway = null,
+    ICompanionStreamBroker? streamBroker = null,
+    IContextMemoryService? contextMemory = null)
 {
     private const string DefaultPersona = "你是一个乐于助人的伙伴。";
     private const int MaxBodyLength = 4000;
     private const int MaxPeersInPrompt = 50;
     private const int MaxGroupsInPrompt = 20;
     private const int MaxActivitySummary = 512;
+    private const int MaxAutonomyToolRounds = 4;
 
     private static readonly JsonSerializerOptions SnakeCase = new(JsonSerializerDefaults.Web)
     {
@@ -69,16 +75,7 @@ public sealed class CompanionAutonomyService(
 
             var facts = await BuildFactsAsync(companion, state.UsedToday, cancellationToken).ConfigureAwait(false);
             using var client = await chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
-            var response = await client.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, facts)],
-                new ChatOptions
-                {
-                    Instructions = BuildInstructions(companion),
-                    ToolMode = ChatToolMode.None,
-                    AllowMultipleToolCalls = false
-                },
-                cancellationToken).ConfigureAwait(false);
-            reply = response.Text?.Trim();
+            reply = await RunAutonomyTurnAsync(companion, facts, client, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -108,7 +105,7 @@ public sealed class CompanionAutonomyService(
             if (gate is not null) return gate;
         }
 
-        return decision.Action switch
+        var outcome = decision.Action switch
         {
             "none" => Refused(null),
             "create_group" => await CreateGroupAsync(companion, decision, cancellationToken).ConfigureAwait(false),
@@ -116,6 +113,21 @@ public sealed class CompanionAutonomyService(
             "send_message" => await SendMessageAsync(companion, decision, cancellationToken).ConfigureAwait(false),
             _ => await SkipAsync(companion, "none", "invalid_decision", null, cancellationToken).ConfigureAwait(false)
         };
+
+        if (decision.Action is "create_group" or "invite" or "send_message" && runtime is not null)
+        {
+            var summary = decision.Action switch
+            {
+                "create_group" => $"自主建立群聊「{decision.Title ?? "群聊"}」",
+                "invite" => $"自主邀请伙伴加入群聊 ({decision.ConversationId})",
+                "send_message" => $"自主发言：{Preview(decision.Body ?? string.Empty, 80)}",
+                _ => string.Empty
+            };
+            await runtime.TryDistillAutonomyOutcomeAsync(
+                companion.Id, decision.Action, summary, decision.ConversationId, cancellationToken).ConfigureAwait(false);
+        }
+
+        return outcome;
     }
 
     /// <summary>
@@ -197,6 +209,16 @@ public sealed class CompanionAutonomyService(
             CreatedAt = now
         });
         await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        streamBroker?.PublishProposal(
+            tenantId,
+            companion.Id,
+            decision.ConversationId,
+            kind: "mandate",
+            proposalId: mandateId,
+            action: decision.Action,
+            status: "proposed",
+            summary: summary,
+            payload: ParseJsonElement(proposal));
 
         return new
         {
@@ -286,6 +308,16 @@ public sealed class CompanionAutonomyService(
             CreatedAt = now
         });
         await CompanionActivities.SaveAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
+        streamBroker?.PublishProposal(
+            tenantId,
+            companion.Id,
+            conversationId: null,
+            kind: "recruitment",
+            proposalId: row.Id,
+            action: "recruit",
+            status: "proposed",
+            summary: Truncate($"伙伴 {companion.Name} 提议招募新伙伴「{name}」", MaxActivitySummary),
+            payload: new { name, rationale = row.Rationale, revision = row.Revision });
 
         return new
         {
@@ -637,14 +669,86 @@ public sealed class CompanionAutonomyService(
         return null;
     }
 
-    // ── prompt ──
+    // ── tool-enabled autonomy turn & prompt ──
+
+    private async Task<string?> RunAutonomyTurnAsync(
+        CompanionAgentRecord companion,
+        string facts,
+        IChatClient client,
+        CancellationToken cancellationToken)
+    {
+        var instructions = BuildInstructions(companion);
+        var canRunTools = runtime is not null && (workGateway is not null || planning is not null || contextMemory is not null);
+        List<AITool> tools = !canRunTools
+            ? []
+            : CompanionToolCatalog.AutonomyTools
+                .Select(tool => (AITool)AIFunctionFactory.CreateDeclaration(tool.Id, tool.Description, tool.InputSchema, null))
+                .ToList();
+
+        var options = new ChatOptions
+        {
+            Instructions = instructions,
+            ToolMode = tools.Count == 0 ? ChatToolMode.None : ChatToolMode.Auto,
+            AllowMultipleToolCalls = tools.Count > 0,
+            Tools = tools.Count == 0 ? null : tools
+        };
+
+        var messages = new List<ChatMessage> { new(ChatRole.User, facts) };
+        var tickScopeId = Guid.NewGuid();
+
+        for (var round = 0; round < MaxAutonomyToolRounds; round++)
+        {
+            var response = await client.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+            var replies = response.Messages.Count != 0
+                ? response.Messages.ToList()
+                : [new ChatMessage(ChatRole.Assistant, response.Text ?? string.Empty)];
+            messages.AddRange(replies);
+
+            var calls = replies.SelectMany(message => message.Contents).OfType<FunctionCallContent>()
+                .Where(call => !call.InformationalOnly && !string.IsNullOrWhiteSpace(call.Name))
+                .ToList();
+            if (calls.Count == 0)
+                return response.Text?.Trim();
+
+            if (runtime is null)
+                return response.Text?.Trim();
+
+            var results = new List<AIContent>(calls.Count);
+            foreach (var call in calls)
+            {
+                var callId = string.IsNullOrWhiteSpace(call.CallId) ? $"autonomy-{round}-{results.Count}" : call.CallId;
+                var toolResult = await runtime.ExecuteToolAsync(
+                    companion.TenantId,
+                    companion.Id,
+                    conversationId: null,
+                    scopeId: tickScopeId,
+                    name: call.Name,
+                    arguments: call.Arguments,
+                    gateway: workGateway,
+                    planning: planning,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                results.Add(new FunctionResultContent(callId, toolResult));
+            }
+            messages.Add(new ChatMessage(ChatRole.Tool, results));
+        }
+
+        var closing = new ChatOptions
+        {
+            Instructions = instructions,
+            ToolMode = ChatToolMode.None,
+            AllowMultipleToolCalls = false
+        };
+        var finalResponse = await client.GetResponseAsync(messages, closing, cancellationToken).ConfigureAwait(false);
+        return finalResponse.Text?.Trim();
+    }
 
     private static string BuildInstructions(CompanionAgentRecord companion)
     {
         var persona = string.IsNullOrWhiteSpace(companion.PersonaDocument) ? DefaultPersona : companion.PersonaDocument.Trim();
         var text = new StringBuilder(persona);
         text.AppendLine().AppendLine();
-        text.AppendLine("你现在可以自主决定是否发起一次行动。只允许以下四种，且只输出一个 JSON 对象；不要解释、不要代码块、不要多余文字。");
+        text.AppendLine("你正在执行一次自主巡检（Autonomy Tick）。在输出最终 JSON 决策之前，你可以先按需调用工具查看会话状态、派发会话任务，或维护你自己的日程（schedules）、计划（plans）与待办（todos）。");
+        text.AppendLine("工具调用结束后，最终回复只输出一个 JSON 行动对象（不要解释、不要代码块）：");
         text.AppendLine("{\"action\":\"none\"}");
         text.AppendLine("{\"action\":\"create_group\",\"title\":\"群名\",\"companion_ids\":[\"伙伴 id\"]}");
         text.AppendLine("{\"action\":\"invite\",\"conversation_id\":\"群 id\",\"companion_id\":\"伙伴 id\",\"share_history\":false}");
@@ -652,12 +756,10 @@ public sealed class CompanionAutonomyService(
         text.AppendLine("{\"action\":\"recruit\",\"name\":\"新伙伴名字\",\"persona_document\":\"它的性格与工作方式\",\"rationale\":\"为什么需要一个长期帮手\"}");
         text.AppendLine();
         text.AppendLine("规则：");
-        text.AppendLine("- 没有值得做的事就返回 {\"action\":\"none\"}，不要为了行动而行动。");
-        text.AppendLine("- 只能使用事实中给出的 id，不得编造；不得邀请不存在、未启用或已在群内的伙伴。");
+        text.AppendLine("- 没有值得打扰用户或伙伴的事（或仅在工具里更新了你自己的计划/待办）就返回 {\"action\":\"none\"}。");
+        text.AppendLine("- 只能使用事实或工具返回中的真实 id，不得编造；不得邀请不存在、未启用或已在群内的伙伴。");
         text.AppendLine("- send_message 的正文不能为空，最多 4000 字。");
-        text.AppendLine("- recruit 只用于反复出现、值得一个长期帮手长期负责的工作；一次性的活不要走 recruit。"
-            + "招募由用户批准后才会生效，你无法自己创建伙伴。");
-        text.AppendLine("- 你不是在被测试，也没有额外的用户指令；不要声称自己执行过任何工具或外部调用。");
+        text.AppendLine("- recruit 只用于反复出现、值得一个长期帮手长期负责的工作；招募由用户批准后才会生效。");
         return text.ToString().TrimEnd();
     }
 
@@ -724,6 +826,16 @@ public sealed class CompanionAutonomyService(
             .Select(x => x.Summary)
             .ToList();
 
+        var activePlansCount = await db.Plans.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.CompanionId == companion.Id && x.Status == "active", cancellationToken)
+            .ConfigureAwait(false);
+        var pendingTodosCount = await db.Todos.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.CompanionId == companion.Id && x.Status != "done" && x.Status != "cancelled", cancellationToken)
+            .ConfigureAwait(false);
+        var activeSchedulesCount = await db.Schedules.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenantId && x.CompanionId == companion.Id && x.Enabled && x.Status == "active", cancellationToken)
+            .ConfigureAwait(false);
+
         var text = new StringBuilder();
         text.AppendLine($"现在：{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC。");
         if (emotes.Count > 0)
@@ -732,6 +844,7 @@ public sealed class CompanionAutonomyService(
             foreach (var emote in emotes) text.AppendLine($"- {emote}");
         }
         text.AppendLine($"今天的自主动作已用 {usedToday} 次，每日上限 {companion.AutonomyDailyBudget} 次。");
+        text.AppendLine($"你的个人看板：进行中计划 {activePlansCount} 个，待办 {pendingTodosCount} 项，启用日程 {activeSchedulesCount} 个。");
         text.AppendLine(recruitLimit <= 0
             ? "招募：已关闭。"
             : $"招募：已用 {recruitedCount} / 上限 {recruitLimit}。");
@@ -750,6 +863,35 @@ public sealed class CompanionAutonomyService(
                 .ToList();
             text.AppendLine($"- 「{group.Title ?? "群聊"}」 (id={group.Id})，成员：{string.Join("、", members)}");
         }
+
+        if (contextMemory is not null)
+        {
+            try
+            {
+                await CompanionService.BackfillLegacyMemoriesCoreAsync(
+                    db, contextMemory, tenantId, companion.Id, cancellationToken).ConfigureAwait(false);
+
+                var companionDoc = await contextMemory.GetDocumentAsync(
+                    "companion", companionId: companion.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (companionDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(companionDoc.Markdown))
+                {
+                    text.AppendLine().AppendLine("你的私有核心记忆：");
+                    text.AppendLine(Truncate(companionDoc.Markdown.Trim(), 1200));
+                }
+
+                var principalDoc = await contextMemory.GetDocumentAsync("principal", cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (principalDoc.ActiveHotCount > 0 && !string.IsNullOrWhiteSpace(principalDoc.Markdown))
+                {
+                    text.AppendLine().AppendLine("L3 用户画像（只读）：");
+                    text.AppendLine(Truncate(principalDoc.Markdown.Trim(), 800));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Could not load context memory facts during autonomy tick for {CompanionId}.", companion.Id);
+            }
+        }
+
         return text.ToString().TrimEnd();
     }
 

@@ -6,10 +6,11 @@ using TinadecCore.Companion;
 namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
-/// Live companion feed. One durable journal (the activity rows, numbered per tenant) is replayed
-/// from the caller's cursor and then followed, so a reconnect resumes exactly where the previous
-/// subscription stopped. The three event names are a projection of the row kind, not a second
-/// stream: run transitions and settings changes are activity rows too.
+/// Live companion SSE feed. Replays durable journal rows from <c>after_seq</c> / <c>Last-Event-ID</c>
+/// and then streams both durable activity wakes and real-time <see cref="ICompanionStreamBroker"/>
+/// frames (<c>companion.delta</c>, <c>companion.tool_call</c>, <c>companion.proposal</c>,
+/// <c>companion.stage_cue</c>, <c>companion.work_session</c>) via <see cref="System.Threading.Channels"/>
+/// with zero database polling.
 /// </summary>
 public static class CompanionEventEndpoints
 {
@@ -18,11 +19,11 @@ public static class CompanionEventEndpoints
     private const string SettingsEvent = "companion.settings";
     private const string SettingsActivityKind = "settings_changed";
 
-    private static readonly TimeSpan FollowPollInterval = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions SseJson = new(JsonSerializerDefaults.Web)
     {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static IEndpointRouteBuilder MapCompanionEventEndpoints(this IEndpointRouteBuilder app)
@@ -35,6 +36,7 @@ public static class CompanionEventEndpoints
         HttpContext context,
         IDbContextFactory<CompanionDbContext> dbFactory,
         ITenantContextAccessor tenant,
+        ICompanionStreamBroker broker,
         long? afterSeq,
         long? after_seq,
         CancellationToken cancellationToken)
@@ -53,47 +55,79 @@ public static class CompanionEventEndpoints
         var tenantId = tenant.Current.TenantId;
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "text/event-stream";
-        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers.CacheControl = "no-cache, no-transform";
         context.Response.Headers["X-Accel-Buffering"] = "no";
 
+        using var subscription = broker.Subscribe(tenantId);
         try
         {
-            // The initial heartbeat publishes the resumed cursor before any event exists, so a
-            // client that reconnects into an idle feed still learns where it stands.
             await WriteHeartbeatAsync(context, cursor, cancellationToken).ConfigureAwait(false);
             await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
-            var lastWrite = DateTimeOffset.UtcNow;
+
+            cursor = await DrainDurableActivitiesAsync(context, dbFactory, tenantId, cursor, cancellationToken)
+                .ConfigureAwait(false);
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-                var rows = await db.Activities.AsNoTracking()
-                    .Where(x => x.TenantId == tenantId && x.Seq > cursor)
-                    .OrderBy(x => x.Seq)
-                    .Take(200)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                var signal = await subscription.ReadOrTimeoutAsync(HeartbeatInterval, cancellationToken)
+                    .ConfigureAwait(false);
 
-                foreach (var row in rows)
-                {
-                    await WriteEventAsync(context, row, cancellationToken).ConfigureAwait(false);
-                    cursor = row.Seq;
-                }
-
-                var now = DateTimeOffset.UtcNow;
-                var wrote = rows.Count > 0;
-                if (wrote || now - lastWrite >= HeartbeatInterval)
+                if (signal is null)
                 {
                     await WriteHeartbeatAsync(context, cursor, cancellationToken).ConfigureAwait(false);
-                    lastWrite = now;
-                    wrote = true;
+                    await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
-                if (wrote) await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
-                await Task.Delay(FollowPollInterval, cancellationToken).ConfigureAwait(false);
+
+                if (signal.IsActivityWake)
+                {
+                    cursor = await DrainDurableActivitiesAsync(context, dbFactory, tenantId, cursor, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(signal.EventName) && signal.DataJson is not null)
+                {
+                    await context.Response.WriteAsync(
+                        $"event: {signal.EventName}\ndata: {signal.DataJson}\n\n",
+                        cancellationToken).ConfigureAwait(false);
+                    await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // The subscriber disconnected. The journal is durable, so nothing is lost.
+            // Subscriber disconnected cleanly.
+        }
+    }
+
+    private static async Task<long> DrainDurableActivitiesAsync(
+        HttpContext context,
+        IDbContextFactory<CompanionDbContext> dbFactory,
+        Guid tenantId,
+        long cursor,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var rows = await db.Activities.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.Seq > cursor)
+                .OrderBy(x => x.Seq)
+                .Take(200)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            if (rows.Count == 0) return cursor;
+
+            foreach (var row in rows)
+            {
+                await WriteEventAsync(context, row, cancellationToken).ConfigureAwait(false);
+                cursor = row.Seq;
+            }
+            await WriteHeartbeatAsync(context, cursor, cancellationToken).ConfigureAwait(false);
+            await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+            if (rows.Count < 200) return cursor;
         }
     }
 

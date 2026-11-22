@@ -10,6 +10,12 @@ namespace TinadecCore.Companion;
 /// </summary>
 internal static class CompanionActivities
 {
+    /// <summary>
+    /// Raised immediately after durable activity rows are committed for a tenant so SSE subscribers
+    /// wake without database polling.
+    /// </summary>
+    internal static event Action<Guid>? ActivitiesCommitted;
+
     internal static async Task<long> NextSeqAsync(CompanionDbContext db, Guid tenantId, CancellationToken cancellationToken) =>
         (await db.Activities.AsNoTracking()
             .Where(x => x.TenantId == tenantId)
@@ -38,10 +44,16 @@ internal static class CompanionActivities
     {
         for (var attempt = 0; ; attempt++)
         {
+            var hasAddedActivities = db.ChangeTracker.Entries<CompanionActivityRecord>()
+                .Any(entry => entry.State == EntityState.Added);
             await AssignSeqAsync(db, tenantId, cancellationToken).ConfigureAwait(false);
             try
             {
                 await save(cancellationToken).ConfigureAwait(false);
+                if (hasAddedActivities)
+                {
+                    ActivitiesCommitted?.Invoke(tenantId);
+                }
                 return;
             }
             catch (DbUpdateException exception) when (attempt < 2 && exception is not DbUpdateConcurrencyException)

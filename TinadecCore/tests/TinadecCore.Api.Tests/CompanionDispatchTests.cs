@@ -196,18 +196,21 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
     }
 
     [Fact]
-    public void CompanionToolSurface_IsExactlyTheSevenManagementTools()
+    public void CompanionToolSurface_IsExactlyTheGovernedManagementMemoryAndArtifactTools()
     {
         var ids = CompanionToolCatalog.Tools.Select(tool => tool.Id).ToArray();
         Assert.Equal(
             new[]
             {
-                "companion_list_sessions", "companion_read_run", "companion_dispatch",
-                // Read-only environment probes: the companion asks for them when it needs them.
+                "companion_list_modes", "companion_list_sessions", "companion_create_session",
+                "companion_read_run", "companion_dispatch", "companion_steer_run",
+                "companion_cancel_run", "companion_side_question", "companion_list_approvals",
                 "companion_list_workspaces", "companion_session_detail",
-                // Agent-to-agent messaging over TinaChat; a message is never an execution order.
-                "companion_relay",
-                "companion_create_workspace"
+                "companion_relay", "companion_create_workspace",
+                "companion_memory_remember", "companion_memory_search", "companion_project_note",
+                "companion_list_schedules", "companion_upsert_schedule", "companion_delete_schedule",
+                "companion_list_plans", "companion_upsert_plan",
+                "companion_list_todos", "companion_upsert_todo"
             },
             ids);
 
@@ -527,8 +530,10 @@ public sealed class CompanionDispatchTests : IAsyncLifetime
             IEnumerable<ChatMessage> messages, ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            await Task.CompletedTask;
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "工作会话已收到。");
+            var response = await GetResponseAsync(messages, options, cancellationToken);
+            yield return new ChatResponseUpdate(
+                ChatRole.Assistant,
+                response.Messages.SelectMany(m => m.Contents).ToList());
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;

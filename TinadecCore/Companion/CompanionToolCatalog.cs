@@ -3,90 +3,194 @@ using System.Text.Json;
 namespace TinadecCore.Companion;
 
 /// <summary>
-/// The companion's entire tool surface. Four management verbs over the user's work sessions and
-/// nothing else — no file, shell, Git, MCP or browser entry exists here, and adding one would turn
-/// a companion into an unapproved executor of the work it is supposed to supervise.
-///
-/// The descriptions are written for the model: when a verb applies, what its arguments mean, and
-/// the conditions under which it is refused (a foreign or missing session, a relative path, a
-/// session that cannot admit another run).
+/// Governed tool catalog for Companion Bots and Session Partners. Covers work-session command &amp;
+/// perception (<see cref="TinadecCore.Abstractions.Ports.ICompanionWorkGateway"/>), unified layered
+/// memory (<see cref="TinadecCore.Abstractions.Ports.IContextMemoryService"/>), and the Bot's own
+/// persistent <c>schedules</c>, <c>plans</c>, and <c>todos</c> — never direct code, shell, Git, or
+/// filesystem execution inside user workspaces.
 /// </summary>
 public static class CompanionToolCatalog
 {
+    public const string ListModes = "companion_list_modes";
     public const string ListSessions = "companion_list_sessions";
+    public const string CreateSession = "companion_create_session";
     public const string ReadRun = "companion_read_run";
     public const string Dispatch = "companion_dispatch";
+    public const string SteerRun = "companion_steer_run";
+    public const string CancelRun = "companion_cancel_run";
+    public const string SideQuestion = "companion_side_question";
+    public const string ListApprovals = "companion_list_approvals";
     public const string CreateWorkspace = "companion_create_workspace";
     public const string ListWorkspaces = "companion_list_workspaces";
     public const string SessionDetail = "companion_session_detail";
     public const string Relay = "companion_relay";
 
+    public const string MemoryRemember = "companion_memory_remember";
+    public const string MemorySearch = "companion_memory_search";
+    public const string ProjectNote = "companion_project_note";
+
+    public const string ListSchedules = "companion_list_schedules";
+    public const string UpsertSchedule = "companion_upsert_schedule";
+    public const string DeleteSchedule = "companion_delete_schedule";
+    public const string ListPlans = "companion_list_plans";
+    public const string UpsertPlan = "companion_upsert_plan";
+    public const string ListTodos = "companion_list_todos";
+    public const string UpsertTodo = "companion_upsert_todo";
+
     public static IReadOnlyList<CompanionToolDeclaration> Tools { get; } =
     [
-        new(ListSessions,
-            "List the work sessions of this workspace, most recently active first, at most 50. Each item has the "
-            + "session id, title, project id and its latest run (id, status, summary) or null when the session has "
-            + "never run. Use this first: companion_dispatch and companion_read_run address sessions and runs by id.",
+        new(ListModes,
+            "List published Agent Modes (Solo, Plan, Team, Spec, Correction, Review, etc.) with their mode_version_id, slug, display_name, and description.",
             Parse("""
                 {"type":"object","properties":{},"additionalProperties":false}
                 """)),
 
+        new(ListSessions,
+            "List active work sessions in authorized workspaces (up to 50), most recently active first, including project, mode, latest run status/summary, live SessionPlan progress, and pending approvals.",
+            Parse("""
+                {"type":"object","properties":{"project_id":{"type":"string","description":"Optional project workspace UUID filter."}},"additionalProperties":false}
+                """)),
+
+        new(CreateSession,
+            "Create a new work session in an authorized project workspace, optionally pinned to a published mode_version_id.",
+            Parse("""
+                {"type":"object","properties":{"project_id":{"type":"string","description":"Project workspace UUID from companion_list_workspaces."},"title":{"type":"string","description":"Concise title for the new work session."},"mode_version_id":{"type":"string","description":"Optional published mode_version_id from companion_list_modes."}},"additionalProperties":false}
+                """)),
+
         new(ReadRun,
-            "Read one run's current status, summary and terminal error category. Use it to check what happened after "
-            + "you dispatched a task, or when a session's latest run looks stuck. A run id that belongs to another "
-            + "tenant or workspace is refused exactly like an id that does not exist (run_not_found), so never treat "
-            + "that refusal as a transient failure to retry.",
+            "Read one work run's current status, summary, plan progress, pending approvals, and terminal error category.",
             Parse("""
                 {"type":"object","properties":{"run_id":{"type":"string","description":"Run id returned by companion_list_sessions or companion_dispatch."}},"required":["run_id"],"additionalProperties":false}
                 """)),
 
         new(Dispatch,
-            "Dispatch a task into an existing work session: the task is written as a user message and a run is started "
-            + "for it. This is a management action and does not ask for tool approval; the agents working inside that "
-            + "session still go through their own approval gates. Refused when session_id does not belong to the "
-            + "current tenant/workspace (session_not_found), when task is blank, or when the session cannot admit the "
-            + "run (for example a busy or at-limit session). The answer is the new run's identifiers, not the work's "
-            + "result — check companion_read_run later.",
+            "Dispatch a task into an authorized work session as a user message and start a run, optionally pinning a formal mode_version_id or isolated Git worktree.",
             Parse("""
-                {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"task":{"type":"string","description":"The full task text to deliver to that session as a user message."}},"required":["session_id","task"],"additionalProperties":false}
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions or companion_create_session."},"task":{"type":"string","description":"Task text to deliver to that session."},"mode_version_id":{"type":"string","description":"Optional published agent mode version UUID."},"worktree":{"type":"boolean","description":"Optional flag to execute inside an isolated Git worktree."}},"required":["session_id","task"],"additionalProperties":false}
+                """)),
+
+        new(SteerRun,
+            "Inject mid-flight steering guidance into an active run (interrupting in-flight model generation cleanly) or follow up on an authorized work session.",
+            Parse("""
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Target work session UUID."},"run_id":{"type":"string","description":"Optional active run UUID; defaults to the session's active root run."},"guidance":{"type":"string","description":"Steering correction or supplementary direction."}},"required":["session_id","guidance"],"additionalProperties":false}
+                """)),
+
+        new(CancelRun,
+            "Stop/cancel an active run inside an authorized work session immediately.",
+            Parse("""
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Target work session UUID."},"run_id":{"type":"string","description":"Optional active run UUID; defaults to the session's active root run."},"reason":{"type":"string","description":"Optional short reason for stopping the run."}},"required":["session_id"],"additionalProperties":false}
+                """)),
+
+        new(SideQuestion,
+            "Ask a strictly read-only side question about a work session or active run (inspecting status, plan progress, pending approvals, and recent transcript without mutating or interrupting the session).",
+            Parse("""
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Target work session UUID."},"run_id":{"type":"string","description":"Optional run UUID."},"question":{"type":"string","description":"Question to inspect against the session's live state and transcript."}},"required":["session_id","question"],"additionalProperties":false}
+                """)),
+
+        new(ListApprovals,
+            "List pending tool approvals waiting on user confirmation across authorized workspaces (or narrowed to one session_id).",
+            Parse("""
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Optional session UUID filter."}},"additionalProperties":false}
                 """)),
 
         new(ListWorkspaces,
-            "List the project workspaces registered here: id, name, root path, and how many active sessions each "
-            + "holds. Use it before companion_create_workspace so you do not register a root that already exists, and "
-            + "to answer which projects the user is working in.",
+            "List authorized project workspaces (id, name, root path, active session count).",
             Parse("""
                 {"type":"object","properties":{},"additionalProperties":false}
                 """)),
 
         new(SessionDetail,
-            "Read one session in depth: title, project, permission mode, whether it currently has an active run, and "
-            + "a capped transcript of recent turns (oldest first, at most 20 by default). Use it to check whether that "
-            + "session is already working on the same thing before dispatching, or when the user asks what a session "
-            + "has been doing. Refused for a session outside this tenant/workspace.",
+            "Read one authorized work session in depth: title, project, mode, permission mode, active-run flag, plan progress, pending approvals, and recent transcript turns.",
             Parse("""
-                {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"limit":{"type":"integer","description":"How many recent messages to include, 1-50; defaults to 20."}},"required":["session_id"],"additionalProperties":false}
+                {"type":"object","properties":{"session_id":{"type":"string","description":"Session id from companion_list_sessions."},"limit":{"type":"integer","description":"Recent message count (1-50, default 20)."}},"required":["session_id"],"additionalProperties":false}
                 """)),
 
         new(Relay,
-            "Send a message to another companion — the buddy, or an autonomous partner by name. Use it when you need "
-            + "someone else to arrange work, or when you are answering a request one of them sent you. The message "
-            + "reaches their durable inbox; they decide what to do with it on their own turn, under their own tools and "
-            + "approvals. This is a message between agents, not an instruction that executes anything by itself. "
-            + "Refused when the target is not an active companion of this tenant, or when the body is blank.",
+            "Send a durable message to another active companion in this tenant (governed by max_bot_hop_depth).",
             Parse("""
-                {"type":"object","properties":{"companion_id":{"type":"string","description":"Target companion id from the roster: the buddy, or another autonomous partner."},"content":{"type":"string","description":"The message body, in your own voice."}},"required":["companion_id","content"],"additionalProperties":false}
+                {"type":"object","properties":{"companion_id":{"type":"string","description":"Target companion id."},"content":{"type":"string","description":"Message body in your own voice."}},"required":["companion_id","content"],"additionalProperties":false}
                 """)),
 
         new(CreateWorkspace,
-            "Create or reuse a project workspace directory and register it in this workspace. path must be absolute; "
-            + "an existing directory is reused and an existing project with the same root is returned rather than "
-            + "duplicated. Refused when name or path is blank, when path is relative, or when the directory cannot be "
-            + "created. This registers a workspace; it does not create a session in it.",
+            "Create or reuse a project workspace directory using an absolute filesystem path (requires wildcard '*' work_session grant).",
             Parse("""
-                {"type":"object","properties":{"name":{"type":"string","description":"Display name of the project workspace."},"path":{"type":"string","description":"Absolute filesystem path of the workspace directory."}},"required":["name","path"],"additionalProperties":false}
+                {"type":"object","properties":{"name":{"type":"string","description":"Display name of the project workspace."},"path":{"type":"string","description":"Absolute filesystem path."}},"required":["name","path"],"additionalProperties":false}
+                """)),
+
+        new(MemoryRemember,
+            "Add, supersede, or revoke an item in your private Companion memory ledger (scope='companion', synced to your private memory.md).",
+            Parse("""
+                {"type":"object","properties":{"action":{"type":"string","description":"add | supersede | revoke (default add)."},"content":{"type":"string","description":"Memory content (required for add and supersede)."},"kind":{"type":"string","description":"bond | episode | task_template | fact | preference | decision"},"section":{"type":"string","description":"Optional Markdown heading section."},"item_id":{"type":"string","description":"Existing private memory item UUID (required for supersede or revoke)."},"reason":{"type":"string","description":"Optional provenance or revocation reason."}},"additionalProperties":false}
+                """)),
+
+        new(MemorySearch,
+            "Search your private Companion memory plus read-only L3 user global profile (principal) and L2 project memory.",
+            Parse("""
+                {"type":"object","properties":{"query":{"type":"string","description":"Search query keywords."},"scope":{"type":"string","description":"all | companion | principal | project (default all)."},"project_id":{"type":"string","description":"Optional project UUID when searching project memory."},"limit":{"type":"integer","description":"Maximum items per scope (1-50, default 10)."}},"additionalProperties":false}
+                """)),
+
+        new(ProjectNote,
+            "Record a provenance-tagged note into L2 project memory when companion_can_write_project_memory=true in runtime.toml (otherwise refused cleanly in favor of companion_dispatch).",
+            Parse("""
+                {"type":"object","properties":{"project_id":{"type":"string","description":"Target project workspace UUID."},"workspace_root":{"type":"string","description":"Optional workspace root path if project_id is omitted."},"content":{"type":"string","description":"Concise factual project note to record."},"kind":{"type":"string","description":"fact | decision | failure_pattern (default fact)."},"section":{"type":"string","description":"Optional project memory section."},"reason":{"type":"string","description":"Why this note is being recorded."}},"required":["content"],"additionalProperties":false}
+                """)),
+
+        new(ListSchedules,
+            "List your own persistent schedules (recurring 5-field UTC cron jobs and one-shot reminders).",
+            Parse("""
+                {"type":"object","properties":{},"additionalProperties":false}
+                """)),
+
+        new(UpsertSchedule,
+            "Create or update one of your persistent schedules. Supply schedule_id to update an existing schedule, or omit it to create a new one.",
+            Parse("""
+                {"type":"object","properties":{"schedule_id":{"type":"string","description":"Optional existing schedule UUID to update."},"title":{"type":"string","description":"Short schedule title."},"prompt":{"type":"string","description":"Instruction delivered to you when the schedule fires."},"cron_expression":{"type":"string","description":"Optional 5-field UTC cron expression (e.g. '0 9 * * 1-5')."},"run_at":{"type":"string","description":"Optional ISO-8601 UTC timestamp for one-shot schedules."},"one_shot":{"type":"boolean","description":"True if the schedule should run once and complete."},"target_conversation_id":{"type":"string","description":"Optional conversation UUID to post the wake into."},"enabled":{"type":"boolean","description":"Whether the schedule is active."}},"additionalProperties":false}
+                """)),
+
+        new(DeleteSchedule,
+            "Delete one of your schedules by schedule_id.",
+            Parse("""
+                {"type":"object","properties":{"schedule_id":{"type":"string","description":"Schedule UUID to delete."}},"required":["schedule_id"],"additionalProperties":false}
+                """)),
+
+        new(ListPlans,
+            "List your own persistent multi-step plans.",
+            Parse("""
+                {"type":"object","properties":{},"additionalProperties":false}
+                """)),
+
+        new(UpsertPlan,
+            "Create or update one of your persistent plans and its checklist steps. Supply plan_id to update an existing plan, or omit it to create one.",
+            Parse("""
+                {"type":"object","properties":{"plan_id":{"type":"string","description":"Optional existing plan UUID to update."},"title":{"type":"string","description":"Plan title."},"summary":{"type":"string","description":"Optional summary."},"status":{"type":"string","description":"active | completed | paused | archived"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string","description":"pending | in_progress | completed | blocked"},"note":{"type":"string"}},"required":["title"],"additionalProperties":false}}},"additionalProperties":false}
+                """)),
+
+        new(ListTodos,
+            "List your own persistent todo items.",
+            Parse("""
+                {"type":"object","properties":{},"additionalProperties":false}
+                """)),
+
+        new(UpsertTodo,
+            "Create or update one of your persistent todo items. Supply todo_id to update an existing todo, or omit it to create one.",
+            Parse("""
+                {"type":"object","properties":{"todo_id":{"type":"string","description":"Optional existing todo UUID to update."},"title":{"type":"string","description":"Todo title."},"note":{"type":"string","description":"Optional detail note."},"priority":{"type":"string","description":"low | medium | high"},"status":{"type":"string","description":"pending | in_progress | done | cancelled"},"due_at":{"type":"string","description":"Optional ISO-8601 due timestamp."},"plan_id":{"type":"string","description":"Optional parent plan UUID."}},"additionalProperties":false}
                 """))
     ];
+
+    /// <summary>
+    /// Tools available during an autonomous background tick: workspace/session perception,
+    /// governed session creation/dispatch/steering, private/read-only memory tools, and
+    /// self-owned schedule/plan/todo management.
+    /// </summary>
+    public static IReadOnlyList<CompanionToolDeclaration> AutonomyTools { get; } =
+        Tools.Where(t => t.Id is ListModes or ListSessions or CreateSession or SessionDetail or ReadRun
+            or ListWorkspaces or ListApprovals or SideQuestion
+            or Dispatch or SteerRun
+            or MemoryRemember or MemorySearch
+            or ListSchedules or UpsertSchedule or DeleteSchedule
+            or ListPlans or UpsertPlan
+            or ListTodos or UpsertTodo).ToList();
 
     public static CompanionToolDeclaration? Find(string? toolId) =>
         string.IsNullOrWhiteSpace(toolId)
@@ -98,5 +202,4 @@ public static class CompanionToolCatalog
     private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement.Clone();
 }
 
-/// <summary>One declared verb: the id the model calls, its model-facing description, and its JSON schema.</summary>
 public sealed record CompanionToolDeclaration(string Id, string Description, JsonElement InputSchema);

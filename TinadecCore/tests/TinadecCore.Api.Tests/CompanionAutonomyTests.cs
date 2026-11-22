@@ -516,10 +516,10 @@ public sealed class CompanionAutonomyTests
         Assert.Equal("autonomy_group_created", first.GetProperty("activity").GetProperty("kind").GetString());
         Assert.Single(await ActivityAsync(client), row => row.GetProperty("kind").GetString() == "autonomy_group_created");
 
-        // The model call is a proposal only: it gets no tools and must not be the authority on ids.
+        // The model call gets only governed companion_* tools (never direct code/shell/git tools) and must not be the authority on ids.
         var call = Assert.Single(factory.Chat.Calls);
-        Assert.Equal(ChatToolMode.None, call.ToolMode);
-        Assert.Null(call.ToolNames);
+        Assert.Equal(ChatToolMode.Auto, call.ToolMode);
+        Assert.Equal(string.Join(",", TinadecCore.Companion.CompanionToolCatalog.AutonomyTools.Select(t => t.Id)), call.ToolNames);
 
         var second = await TickAsync(client, acting);
 

@@ -2,15 +2,16 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Companion;
 
 namespace TinadecCore.Api.Tests;
 
 /// <summary>
-/// The companion role (autonomous | buddy) and the sidebar buddy designation. A buddy is the
-/// work-buddy shown below "new chat"; it is designated independently of the satellite window's
-/// main companion. These go through the real HTTP host + SQLite so a missing projection or
-/// predicate fails the same way it would in the product.
+/// Companion role (<c>autonomous | session_partner</c>), complete removal of legacy <c>buddy</c>
+/// and <c>buddy_companion_id</c>, and configurable <c>max_bot_hop_depth</c> (<c>0..10</c>, default <c>3</c>).
 /// </summary>
 public sealed class CompanionRoleTests
 {
@@ -52,7 +53,7 @@ public sealed class CompanionRoleTests
     }
 
     [Fact]
-    public async Task RoleDefaultsToAutonomousAndValidatesOnCreateAndPatch()
+    public async Task RoleSupportsAutonomousAndSessionPartner_RejectsBuddy_AndNormalizesLegacyRows()
     {
         using var factory = new RoleFactory();
         using var client = factory.CreateClient();
@@ -61,96 +62,65 @@ public sealed class CompanionRoleTests
         var defaultId = defaultRole.GetProperty("id").GetGuid();
         Assert.Equal("autonomous", defaultRole.GetProperty("role").GetString());
 
-        var buddy = await CreateAsync(client, new { name = "搭子", role = "buddy" });
-        Assert.Equal("buddy", buddy.GetProperty("role").GetString());
+        var partner = await CreateAsync(client, new { name = "会话拍档", role = "session_partner" });
+        var partnerId = partner.GetProperty("id").GetGuid();
+        Assert.Equal("session_partner", partner.GetProperty("role").GetString());
 
-        // The list projection carries the same role vocabulary as the detail.
-        var rows = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/companions");
-        Assert.Contains(rows!, row => row.GetProperty("id").GetGuid() == defaultId && row.GetProperty("role").GetString() == "autonomous");
+        using var rejectedBuddy = await client.PostAsJsonAsync("/api/v1/companions", new { name = "旧搭子", role = "buddy" });
+        Assert.Equal(HttpStatusCode.BadRequest, rejectedBuddy.StatusCode);
+        Assert.Equal("invalid_request", await ErrorCodeAsync(rejectedBuddy));
 
-        using var invalidCreate = await client.PostAsJsonAsync("/api/v1/companions", new { name = "坏角色", role = "wizard" });
-        Assert.Equal(HttpStatusCode.BadRequest, invalidCreate.StatusCode);
-        Assert.Equal("invalid_request", await ErrorCodeAsync(invalidCreate));
-
-        using var patch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/companions/{defaultId}")
+        using var patchToPartner = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/companions/{defaultId}")
         {
-            Content = JsonContent.Create(new { role = "buddy" })
+            Content = JsonContent.Create(new { role = "session_partner" })
         };
-        patch.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
-        using var patched = await client.SendAsync(patch);
+        patchToPartner.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+        using var patched = await client.SendAsync(patchToPartner);
         Assert.Equal(HttpStatusCode.OK, patched.StatusCode);
-        Assert.Equal("buddy", (await patched.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("role").GetString());
+        Assert.Equal("session_partner", (await patched.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("role").GetString());
 
-        using var invalidPatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/companions/{defaultId}")
+        // Legacy database rows carrying "buddy" normalize cleanly to "autonomous" on read.
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<CompanionDbContext>>().CreateDbContextAsync())
         {
-            Content = JsonContent.Create(new { role = "wizard" })
-        };
-        invalidPatch.Headers.TryAddWithoutValidation("If-Match", "\"2\"");
-        using var rejected = await client.SendAsync(invalidPatch);
-        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
-        Assert.Equal("invalid_request", await ErrorCodeAsync(rejected));
+            var row = await db.Companions.SingleAsync(x => x.Id == partnerId);
+            row.Role = "buddy";
+            await db.SaveChangesAsync();
+        }
+
+        var normalized = await client.GetFromJsonAsync<JsonElement>($"/api/v1/companions/{partnerId}");
+        Assert.Equal("autonomous", normalized.GetProperty("role").GetString());
     }
 
     [Fact]
-    public async Task BuddyDesignationPersistsIndependentlyOfMainAndRejectsArchivedTarget()
+    public async Task Settings_ExposesMaxBotHopDepth_PurgesBuddyCompanionId_AndValidatesRange()
     {
         using var factory = new RoleFactory();
         using var client = factory.CreateClient();
-        var buddyId = (await CreateAsync(client, new { name = "搭子", role = "buddy" })).GetProperty("id").GetGuid();
         var mainId = (await CreateAsync(client, new { name = "主伙伴" })).GetProperty("id").GetGuid();
-        var archivedId = (await CreateAsync(client, new { name = "归档伙伴" })).GetProperty("id").GetGuid();
 
-        // No designation yet: both ids are present-but-null, revision 0.
         var initial = await client.GetFromJsonAsync<JsonElement>("/api/v1/companion-settings");
-        Assert.Equal(JsonValueKind.Null, initial.GetProperty("buddy_companion_id").ValueKind);
+        Assert.False(initial.TryGetProperty("buddy_companion_id", out _));
         Assert.Equal(JsonValueKind.Null, initial.GetProperty("main_companion_id").ValueKind);
+        Assert.Equal(3, initial.GetProperty("max_bot_hop_depth").GetInt32());
 
-        using var designate = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
+        using var rejectedBuddySetting = await client.PatchAsJsonAsync("/api/v1/companion-settings", new { buddy_companion_id = mainId });
+        Assert.Equal(HttpStatusCode.BadRequest, rejectedBuddySetting.StatusCode);
+        Assert.Equal("invalid_request", await ErrorCodeAsync(rejectedBuddySetting));
+
+        using var outOfRangeHop = await client.PatchAsJsonAsync("/api/v1/companion-settings", new { max_bot_hop_depth = 11 });
+        Assert.Equal(HttpStatusCode.BadRequest, outOfRangeHop.StatusCode);
+        Assert.Equal("invalid_request", await ErrorCodeAsync(outOfRangeHop));
+
+        using var saveZero = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
         {
-            Content = JsonContent.Create(new { buddy_companion_id = buddyId, main_companion_id = mainId })
+            Content = JsonContent.Create(new { main_companion_id = mainId, max_bot_hop_depth = 0 })
         };
-        designate.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
-        using var saved = await client.SendAsync(designate);
+        saveZero.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
+        using var saved = await client.SendAsync(saveZero);
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         var savedBody = await saved.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(buddyId, savedBody.GetProperty("buddy_companion_id").GetGuid());
         Assert.Equal(mainId, savedBody.GetProperty("main_companion_id").GetGuid());
-
-        // Changing only the main companion leaves the buddy untouched (absent != clear).
-        using var mainOnly = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
-        {
-            Content = JsonContent.Create(new { main_companion_id = (Guid?)null })
-        };
-        mainOnly.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
-        using var mainCleared = await client.SendAsync(mainOnly);
-        Assert.Equal(HttpStatusCode.OK, mainCleared.StatusCode);
-        var afterMain = await mainCleared.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(JsonValueKind.Null, afterMain.GetProperty("main_companion_id").ValueKind);
-        Assert.Equal(buddyId, afterMain.GetProperty("buddy_companion_id").GetGuid());
-
-        // An archived companion cannot be the buddy.
-        using var archive = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/companions/{archivedId}/archive");
-        archive.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
-        using var archived = await client.SendAsync(archive);
-        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
-
-        using var badBuddy = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
-        {
-            Content = JsonContent.Create(new { buddy_companion_id = archivedId })
-        };
-        badBuddy.Headers.TryAddWithoutValidation("If-Match", "\"2\"");
-        using var rejected = await client.SendAsync(badBuddy);
-        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
-        Assert.Equal("companion_not_found", await ErrorCodeAsync(rejected));
-
-        // Explicit null clears the designation.
-        using var clear = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/companion-settings")
-        {
-            Content = JsonContent.Create(new { buddy_companion_id = (Guid?)null })
-        };
-        clear.Headers.TryAddWithoutValidation("If-Match", "\"2\"");
-        using var cleared = await client.SendAsync(clear);
-        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
-        Assert.Equal(JsonValueKind.Null, (await cleared.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("buddy_companion_id").ValueKind);
+        Assert.Equal(0, savedBody.GetProperty("max_bot_hop_depth").GetInt32());
+        Assert.False(savedBody.TryGetProperty("buddy_companion_id", out _));
     }
 }

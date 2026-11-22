@@ -15,16 +15,19 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
     {
         builder.Services.AddDbContextFactory<CompanionDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<CompanionDbContext>>();
+        builder.Services.AddSingleton<CompanionStreamBroker>();
+        builder.Services.AddSingleton<ICompanionStreamBroker>(sp => sp.GetRequiredService<CompanionStreamBroker>());
+        builder.Services.AddSingleton<CompanionSessionBackflowService>();
+        builder.Services.AddSingleton<ICompanionSessionBackflow>(sp => sp.GetRequiredService<CompanionSessionBackflowService>());
         builder.Services.AddSingleton<CompanionService>();
         builder.Services.AddSingleton<CompanionAvatarStore>();
-        builder.Services.AddSingleton<CompanionConversationService>();
-        // The run loop is a host singleton: it reads the tenant from the run row, never from a
-        // request-scoped accessor, because it runs outside any request.
         builder.Services.AddSingleton<CompanionRuntime>();
         builder.Services.AddSingleton<ICompanionRuntime>(sp => sp.GetRequiredService<CompanionRuntime>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<CompanionRuntime>());
-        // Autonomy is ticked on demand by an endpoint and on a schedule by this worker; both share
-        // one service so the pause/budget/interval rules exist once.
+        builder.Services.AddSingleton<CompanionChannelService>();
+        builder.Services.AddSingleton<ICompanionChannel>(sp => sp.GetRequiredService<CompanionChannelService>());
+        builder.Services.AddSingleton<CompanionConversationService>();
+        builder.Services.AddSingleton<CompanionPlanningService>();
         builder.Services.TryAddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<CompanionAutonomyService>();
         builder.Services.AddSingleton<CompanionAutonomyWorker>();
@@ -32,7 +35,7 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
-            Version = "0.4.0",
+            Version = "0.5.0",
             Dependencies = ["abstractions", "persistence", "tenancy"],
             Capabilities =
             [
@@ -42,13 +45,22 @@ public sealed class CompanionModuleRegistrar : IModuleRegistrar
                 "companion_skill_binding",
                 "companion_connection_binding",
                 "companion_settings",
+                "companion_channel",
                 "companion_conversations",
                 "companion_group_invites",
                 "companion_messages",
                 "companion_runs",
+                "companion_streaming",
                 "companion_activity",
                 "companion_autonomy",
-                "companion_avatars"
+                "companion_schedules",
+                "companion_plans",
+                "companion_todos",
+                "companion_avatars",
+                "companion_live2d_sdk",
+                "companion_work_session_connector",
+                "companion_session_backflow",
+                "companion_browser_connector"
             ],
             Language = "C#",
             MafPrimitives = [],

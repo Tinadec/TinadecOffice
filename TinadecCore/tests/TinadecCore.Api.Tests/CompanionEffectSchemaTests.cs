@@ -7,16 +7,17 @@ using Xunit;
 namespace TinadecCore.Api.Tests;
 
 /// <summary>
-/// The companion effect queue is bootstrap-owned like the rest of this context (no migration
-/// assembly), so a database created before it existed only gains the table if startup reconciliation
-/// adds it. Both halves matter: the table has to appear, and EF has to be able to write through it.
+/// Verifies idempotent startup reconciliation (<see cref="DbContextSchemaBootstrapper.EnsureTablesAsync"/>)
+/// adds consolidated run lease columns onto <c>companion_runs</c>, <c>max_bot_hop_depth</c> onto
+/// <c>companion_settings</c>, and the new <c>companion_schedules</c> / <c>companion_plans</c> /
+/// <c>companion_todos</c> tables onto an existing Companion SQLite database.
 /// </summary>
 public sealed class CompanionEffectSchemaTests
 {
     [Fact]
-    public async Task EnsureTables_AddsTheEffectQueueToAnOlderCompanionDatabase()
+    public async Task EnsureTables_ReconcilesRunLeaseColumnsSettingsAndPlanningTablesIdempotently()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-companion-effects-{Guid.NewGuid():N}.db");
+        var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-companion-schema-{Guid.NewGuid():N}.db");
         try
         {
             var options = new DbContextOptionsBuilder<CompanionDbContext>()
@@ -25,7 +26,6 @@ public sealed class CompanionEffectSchemaTests
 
             await using (var db = new CompanionDbContext(options))
             {
-                // A database from before the queue: runs exist, effects do not.
                 await db.Database.ExecuteSqlRawAsync("""
                     create table companion_runs (
                         id text primary key, tenant_id text not null, companion_id text not null,
@@ -34,47 +34,53 @@ public sealed class CompanionEffectSchemaTests
                         loaded_memory_ids_json text not null, loaded_skill_binding_ids_json text not null,
                         rounds integer not null, error_code text null, error_message text null,
                         reply_message_id text null, created_at text not null, started_at text null, finished_at text null);
+                    create table companion_settings (
+                        tenant_id text primary key, main_companion_id text null, recruit_limit integer not null,
+                        autonomy_paused integer not null, revision integer not null, updated_at text not null);
                     """);
 
                 await DbContextSchemaBootstrapper.EnsureTablesAsync(db);
 
-                var columns = await ColumnsAsync(db, "companion_effects");
-                Assert.Contains("status", columns);
-                Assert.Contains("kind", columns);
-                Assert.Contains("available_at", columns);
-                Assert.Contains("available_at_unix_ms", columns);
-                Assert.Contains("attempts", columns);
-                Assert.Contains("claim_token", columns);
-                Assert.Contains("claimed_at", columns);
-                Assert.Contains("claimed_at_unix_ms", columns);
-                Assert.Contains("last_error", columns);
-                Assert.Contains("payload_json", columns);
+                var runColumns = await ColumnsAsync(db, "companion_runs");
+                Assert.Contains("channel_kind", runColumns);
+                Assert.Contains("thread_key", runColumns);
+                Assert.Contains("attempts", runColumns);
+                Assert.Contains("available_at", runColumns);
+                Assert.Contains("available_at_unix_ms", runColumns);
+                Assert.Contains("claim_token", runColumns);
+                Assert.Contains("claimed_at", runColumns);
+                Assert.Contains("claimed_at_unix_ms", runColumns);
+                Assert.Contains("last_error", runColumns);
+
+                var settingsColumns = await ColumnsAsync(db, "companion_settings");
+                Assert.Contains("max_bot_hop_depth", settingsColumns);
+
+                Assert.NotEmpty(await ColumnsAsync(db, "companion_schedules"));
+                Assert.NotEmpty(await ColumnsAsync(db, "companion_plans"));
+                Assert.NotEmpty(await ColumnsAsync(db, "companion_todos"));
             }
 
             await using (var db = new CompanionDbContext(options))
             {
                 var runId = Guid.NewGuid();
                 var now = DateTimeOffset.UtcNow;
-                db.Effects.Add(new CompanionEffectRecord
+                db.Runs.Add(new CompanionRunRecord
                 {
-                    Id = Guid.NewGuid(),
+                    Id = runId,
                     TenantId = Guid.NewGuid(),
                     CompanionId = Guid.NewGuid(),
                     ConversationId = Guid.NewGuid(),
-                    RunId = runId,
-                    Kind = "run_reply",
-                    PayloadJson = "{}",
-                    Status = "pending",
+                    TriggerMessageId = Guid.NewGuid(),
+                    Status = "queued",
+                    ChannelKind = "desktop_chat",
                     AvailableAt = now,
                     AvailableAtUnixMs = now.ToUnixTimeMilliseconds(),
-                    CreatedAt = now,
-                    UpdatedAt = now
+                    CreatedAt = now
                 });
                 await db.SaveChangesAsync();
-                Assert.Equal("pending", (await db.Effects.SingleAsync(x => x.RunId == runId)).Status);
+                Assert.Equal("queued", (await db.Runs.SingleAsync(x => x.Id == runId)).Status);
             }
 
-            // Idempotent on the reconciled database: a second pass adds and fails nothing.
             await using (var db = new CompanionDbContext(options))
                 await DbContextSchemaBootstrapper.EnsureTablesAsync(db);
         }
