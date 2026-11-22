@@ -14,21 +14,21 @@ export default defineConfig({
   plugins: [vue(), tailwindcss(), ...(vueMcpEnabled ? [VueMcp()] : [])],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
       // TinadecUI — the UI engineering suite (Engine = layout). Points at the package
       // barrel so consumers import '@tinadec/ui' regardless of the file's physical home.
-      '@tinadec/ui': path.resolve(__dirname, '../TinadecUI/src/index.ts'),
+      '@tinadec/ui': path.resolve(import.meta.dirname, '../TinadecUI/src/index.ts'),
       // Vapor SFCs compile to `import { defineVaporComponent } from 'vue'`, which the
       // CJS `vue` entry used under Node (vitest) does not export. Point `vue` at a
       // shim re-exporting both runtime-dom and runtime-vapor so the emitted import
       // resolves under both build and vitest.
-      vue: path.resolve(__dirname, './src/lib/vue-shim.ts'),
+      vue: path.resolve(import.meta.dirname, './src/lib/vue-shim.ts'),
       // ponytail: dedupe vue reactivity — desktop nested 3.5.41 vs root 3.6.0-rc.7 caused
       // dual @vue/reactivity Ref brands (TS2345). Force all @vue/* to the single
       // root install so vue-tsc sees one Ref identity.
-      '@vue/reactivity': path.resolve(__dirname, '../../node_modules/@vue/reactivity/dist/reactivity.esm-bundler.js'),
-      '@vue/runtime-dom': path.resolve(__dirname, '../../node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
-      '@vue/runtime-vapor': path.resolve(__dirname, '../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js'),
+      '@vue/reactivity': path.resolve(import.meta.dirname, '../../node_modules/@vue/reactivity/dist/reactivity.esm-bundler.js'),
+      '@vue/runtime-dom': path.resolve(import.meta.dirname, '../../node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
+      '@vue/runtime-vapor': path.resolve(import.meta.dirname, '../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js'),
     },
     dedupe: ['vue', '@vue/reactivity', '@vue/runtime-dom', '@vue/runtime-vapor'],
   },
@@ -56,13 +56,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       // The agent browser is a separate satellite window with its own tiny shell page.
       // Keeping it out of the main renderer bundle also keeps the full app bridge away
       // from the window that embeds arbitrary web content.
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        agentBrowser: path.resolve(__dirname, 'agent-browser.html'),
+        main: path.resolve(import.meta.dirname, 'index.html'),
+        agentBrowser: path.resolve(import.meta.dirname, 'agent-browser.html'),
       },
     },
   },

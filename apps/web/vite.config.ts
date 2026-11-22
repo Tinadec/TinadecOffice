@@ -8,9 +8,9 @@ export default defineConfig({
   plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, '../desktop/src'),
+      '@': path.resolve(import.meta.dirname, '../desktop/src'),
       // TinadecUI — same barrel as desktop so the shared renderer resolves '@tinadec/ui'.
-      '@tinadec/ui': path.resolve(__dirname, '../TinadecUI/src/index.ts'),
+      '@tinadec/ui': path.resolve(import.meta.dirname, '../TinadecUI/src/index.ts'),
     },
   },
   server: {
@@ -29,12 +29,12 @@ export default defineConfig({
     fs: {
       // Repo root covers this package, ../desktop, and the hoisted root
       // node_modules that desktop deps (fonts, monaco) are served from.
-      allow: [path.resolve(__dirname, '../..')],
+      allow: [path.resolve(import.meta.dirname, '../..')],
     },
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
   },
-  publicDir: path.resolve(__dirname, '../desktop/public'),
+  publicDir: path.resolve(import.meta.dirname, '../desktop/public'),
 });

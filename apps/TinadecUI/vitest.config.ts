@@ -7,7 +7,7 @@ import path from 'node:path'
 export default defineConfig({
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, '../desktop/src'),
+      '@': path.resolve(import.meta.dirname, '../desktop/src'),
     },
   },
   test: {
