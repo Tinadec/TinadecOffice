@@ -1,39 +1,377 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStatusLabels } from '../lib/statusLabels'
-import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, RefreshCw, Wrench } from '@lucide/vue'
-import { api, type ContextBudgetShareDto, type ContextPackDto, type ModelInvocationDto, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto, type ToolDescriptorDto } from '../api'
+import { useAgentDirectory } from '../composables/useAgentDirectory'
+import {
+  Activity,
+  AlertTriangle,
+  Archive,
+  BarChart3,
+  CheckCircle2,
+  Download,
+  GitBranch,
+  Layers3,
+  ListTree,
+  Network,
+  Package,
+  RefreshCw,
+  Sparkles,
+  Wrench,
+  X,
+} from '@lucide/vue'
+import {
+  api,
+  type ContextBudgetShareDto,
+  type ContextPackDto,
+  type ModelInvocationDto,
+  type OrchestrationSnapshotDto,
+  type StepResultDto,
+  type SupervisionFindingDto,
+  type ToolDescriptorDto,
+  type ToolExecutionTimelineItemDto,
+  type TopologyRunDto,
+} from '../api'
 import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
+import OrchestrationMiniGraph, {
+  buildRuntimeTopology,
+  type RuntimeTopologyNode,
+  type RuntimeTopologyRoleTier,
+} from './OrchestrationMiniGraph.vue'
+import AgentTimeline from './timeline/AgentTimeline.vue'
+import TrajectoryTreePanel from './trajectory/TrajectoryTreePanel.vue'
+import ContextWindowBucketChart from './trajectory/ContextWindowBucketChart.vue'
+import ContextTreemap from './trajectory/ContextTreemap.vue'
+import ContextOverlapPanel from './trajectory/ContextOverlapPanel.vue'
 import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
 import ToolStatsDashboard from './tools/ToolStatsDashboard.vue'
+import SessionPlanPanel from './plan/SessionPlanPanel.vue'
+import {
+  buildContextWindowBuckets,
+  buildTrajectoryTree,
+  type TrajectoryNode,
+} from '../lib/trajectoryBuilder'
+import {
+  buildContextTreemapModel,
+  type ContextTreemapModel,
+  type ContextTreemapNode,
+} from '../lib/contextTreemapLayout'
+import {
+  auditContextOverlap,
+  type ContextAuditSource,
+  type ContextOverlapAuditResult,
+  type ContextOverlapPairSummary,
+} from '../lib/contextOverlapWinnowing'
+import {
+  buildDiagnosticDraft,
+  exportOfflineDiagnosticHtml,
+  triggerDiagnoseInComposer,
+  type ExportOfflineHtmlResult,
+} from '../lib/offlineDiagnosticReport'
+
+export interface OrchestrationFocusTarget {
+  target?: string | null
+  taskId?: string | null
+  taskKey?: string | null
+  handle?: string | null
+  workerHandle?: string | null
+  instanceId?: string | null
+  agentSlug?: string | null
+  nonce?: number
+}
 
 const props = defineProps<{
   snapshot: OrchestrationSnapshotDto | null
   toolExecutions: ToolExecutionTimelineItemDto[]
   tools?: ToolDescriptorDto[]
   sessionId?: string | null
+  topologyRun?: TopologyRunDto | null
+  modelInvocations?: ModelInvocationDto[]
+  focusedTarget?: string | OrchestrationFocusTarget | null
 }>()
 
 const { t, locale } = useI18n()
 const { runStatusLabel: statusWords, severityLabel } = useStatusLabels()
+const { nameFor } = typeof api.listAgents === 'function'
+  ? useAgentDirectory()
+  : { nameFor: (slug: string | null | undefined, fallback?: string | null) => fallback ?? slug ?? '' }
 
 const emit = defineEmits<{
   'rerun-tool': [toolExecution: ToolExecutionTimelineItemDto]
   'view-tool-details': [toolExecution: ToolExecutionTimelineItemDto]
   'execute-tool': [tool: ToolDescriptorDto]
+  'select-node': [node: RuntimeTopologyNode | null]
+  'diagnose-draft': [draft: string]
+  'export-report': [result: ExportOfflineHtmlResult]
 }>()
 
 type TabKey = 'timeline' | 'catalog' | 'stats'
+type TopologyViewMode = 'topology' | 'timeline'
+type DiagnosticsTabKey = 'tree' | 'treemap' | 'overlap'
 
 const activeTab = ref<TabKey>('timeline')
+const topologyViewMode = ref<TopologyViewMode>('topology')
+const diagnosticsTab = ref<DiagnosticsTabKey>('tree')
+const selectedTrajectoryNode = ref<TrajectoryNode | null>(null)
+const selectedTreemapSegment = ref<ContextTreemapNode | null>(null)
 
 const toolCatalog = ref<ToolDescriptorDto[]>([])
 const toolCatalogLoading = ref(false)
+const selectedNodeId = ref<string | null>(null)
+const detailsBlockRef = ref<HTMLElement | null>(null)
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
+const effectiveSessionId = computed(() => props.sessionId || props.snapshot?.run?.session_id || null)
+
+// Live topology lineage enrichment (`dispatched_by_task_id` & `instances` depth/parent) when available.
+const fetchedTopologyRun = ref<TopologyRunDto | null>(null)
+let topologyAbort: AbortController | null = null
+let topologyEpoch = 0
+
+async function loadRunTopology(): Promise<void> {
+  if (props.topologyRun !== undefined) return
+  const runId = props.snapshot?.run?.id
+  const sessId = effectiveSessionId.value
+  topologyAbort?.abort()
+  topologyAbort = null
+  if (!runId || !sessId || typeof api.getSessionTopology !== 'function') {
+    fetchedTopologyRun.value = null
+    return
+  }
+  const epoch = ++topologyEpoch
+  const controller = new AbortController()
+  topologyAbort = controller
+  try {
+    const view = await api.getSessionTopology(
+      sessId,
+      { run_id: runId, include_finished: true, max_runs: 1, max_tasks: 200 },
+      controller.signal,
+    )
+    if (epoch !== topologyEpoch || controller.signal.aborted) return
+    fetchedTopologyRun.value = view.runs.find((r) => r.run_id === runId) ?? view.runs[0] ?? null
+  } catch {
+    if (epoch === topologyEpoch && !controller.signal.aborted) {
+      // Keep snapshot-only fallback when topology endpoint is unavailable.
+      if (fetchedTopologyRun.value?.run_id !== runId) {
+        fetchedTopologyRun.value = null
+      }
+    }
+  } finally {
+    if (topologyAbort === controller) topologyAbort = null
+  }
+}
+
+onBeforeUnmount(() => {
+  topologyAbort?.abort()
+})
+
+watch(
+  () => [
+    props.snapshot?.run?.id,
+    effectiveSessionId.value,
+    props.snapshot?.run?.status,
+    props.snapshot?.run?.updated_at,
+    props.snapshot?.nodes.length,
+    props.snapshot?.flows?.length,
+  ],
+  (next, prev) => {
+    const nextRunId = next[0]
+    const prevRunId = prev?.[0]
+    if (nextRunId !== prevRunId) {
+      selectedNodeId.value = null
+      fetchedTopologyRun.value = null
+    }
+    void loadRunTopology()
+  },
+  { immediate: true },
+)
+
+const activeTopologyRun = computed(() => props.topologyRun ?? fetchedTopologyRun.value)
+
+const runtimeTopology = computed(() =>
+  buildRuntimeTopology({
+    snapshot: props.snapshot,
+    topologyRun: activeTopologyRun.value,
+    toolExecutions: props.toolExecutions,
+    coordinatorFallbackLabel: t('orchestrationPanel.roleCoordinator'),
+    locale: locale.value,
+    resolveAgentName: nameFor,
+  }),
+)
+
+const selectedNode = computed<RuntimeTopologyNode | null>(
+  () => runtimeTopology.value.nodes.find((n) => n.id === selectedNodeId.value) ?? null,
+)
+
+const selectedParentNode = computed<RuntimeTopologyNode | null>(() => {
+  const parentId = selectedNode.value?.parentId
+  if (!parentId) return null
+  return runtimeTopology.value.nodes.find((n) => n.id === parentId) ?? null
+})
+
+function matchTopologyNode(target: string | OrchestrationFocusTarget | null | undefined): RuntimeTopologyNode | null {
+  if (!target) return null
+  const nodes = runtimeTopology.value.nodes
+  if (!nodes.length) return null
+  if (typeof target === 'string') {
+    const q = target.trim()
+    if (!q) return null
+    return (
+      nodes.find((n) => n.id === q)
+      ?? nodes.find((n) => n.taskId === q)
+      ?? nodes.find((n) => n.instanceIds.includes(q))
+      ?? nodes.find((n) => n.taskKey === q)
+      ?? nodes.find((n) => n.handle === q)
+      ?? nodes.find((n) => n.agentSlug === q)
+      ?? nodes.find((n) => n.label === q)
+      ?? null
+    )
+  }
+  if (target.taskId) {
+    const hit = nodes.find((n) => n.taskId === target.taskId || n.id === `task:${target.taskId}`)
+    if (hit) return hit
+  }
+  if (target.instanceId) {
+    const hit = nodes.find((n) => n.instanceIds.includes(target.instanceId!))
+    if (hit) return hit
+  }
+  if (target.taskKey) {
+    const hit = nodes.find((n) => n.taskKey === target.taskKey)
+    if (hit) return hit
+  }
+  const effectiveHandle = target.handle ?? target.workerHandle
+  if (effectiveHandle) {
+    const hit = nodes.find((n) => n.handle === effectiveHandle)
+    if (hit) return hit
+  }
+  if (target.agentSlug) {
+    const hit = nodes.find((n) => n.agentSlug === target.agentSlug)
+    if (hit) return hit
+  }
+  if (target.target) {
+    return matchTopologyNode(target.target)
+  }
+  return null
+}
+
+watch(
+  [() => props.focusedTarget, () => runtimeTopology.value.nodes],
+  ([target]) => {
+    if (!target) return
+    const matched = matchTopologyNode(target)
+    if (!matched) return
+    selectedNodeId.value = matched.id
+    activeTab.value = 'timeline'
+    emit('select-node', matched)
+    void nextTick(() => {
+      detailsBlockRef.value?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    })
+  },
+  { immediate: true },
+)
+
+function onSelectTopologyNode(node: RuntimeTopologyNode | null): void {
+  selectedNodeId.value = node ? node.id : null
+  if (node && activeTab.value === 'catalog') {
+    activeTab.value = 'timeline'
+  }
+  emit('select-node', node)
+}
+
+function onSelectTimelineNodeId(nodeId: string | null): void {
+  if (!nodeId) {
+    onSelectTopologyNode(null)
+    return
+  }
+  const matched = runtimeTopology.value.nodes.find((n) => n.id === nodeId) ?? null
+  onSelectTopologyNode(matched)
+}
+
+function onFocusPlanNode(target: { taskKey?: string | null; agentSlug?: string | null }): void {
+  const matched = matchTopologyNode({ taskKey: target.taskKey, agentSlug: target.agentSlug })
+  if (!matched) return
+  selectedNodeId.value = matched.id
+  activeTab.value = 'timeline'
+  emit('select-node', matched)
+  void nextTick(() => {
+    detailsBlockRef.value?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+
+function clearNodeFilter(): void {
+  selectedNodeId.value = null
+  emit('select-node', null)
+}
+
+function roleTierLabel(tier: RuntimeTopologyRoleTier): string {
+  if (tier === 'coordinator') return t('orchestrationPanel.roleCoordinator')
+  if (tier === 'subagent') return t('orchestrationPanel.roleSubagent')
+  return t('orchestrationPanel.roleWorker')
+}
+
+const filteredToolExecutions = computed<ToolExecutionTimelineItemDto[]>(() => {
+  const node = selectedNode.value
+  if (!node) return props.toolExecutions
+  const runId = props.snapshot?.run?.id
+  return props.toolExecutions.filter((exec) => {
+    if (runId && exec.run_id && exec.run_id !== runId) return false
+    if (node.roleTier === 'coordinator') {
+      if (exec.agent_instance_id && node.instanceIds.includes(exec.agent_instance_id)) return true
+      return !exec.task_id
+    }
+    if (node.taskId && exec.task_id === node.taskId) return true
+    if (node.taskKey && exec.task_id === node.taskKey) return true
+    if (exec.agent_instance_id && node.instanceIds.includes(exec.agent_instance_id)) return true
+    return false
+  })
+})
+
+const filteredContextPacks = computed<ContextPackDto[]>(() => {
+  const packs = props.snapshot?.context_packs ?? []
+  const node = selectedNode.value
+  if (!node) return packs
+  if (node.roleTier === 'coordinator') {
+    return packs.filter(
+      (pack) =>
+        !pack.lane_key
+        || pack.lane_key === 'planner'
+        || Boolean(node.agentSlug && pack.lane_key === node.agentSlug),
+    )
+  }
+  const keys = new Set(
+    [node.laneKey, node.taskKey, node.taskId, node.handle, node.agentSlug].filter(
+      (v): v is string => Boolean(v && v !== 'main'),
+    ),
+  )
+  return packs.filter((pack) => {
+    if (!pack.lane_key) return false
+    if (keys.has(pack.lane_key)) return true
+    return node.laneKey === 'main' && pack.lane_key === 'main'
+  })
+})
+
+const filteredStepResults = computed<StepResultDto[]>(() => {
+  const results = props.snapshot?.step_results ?? []
+  const node = selectedNode.value
+  if (!node) return results
+  if (node.roleTier === 'coordinator') {
+    return results.filter(
+      (res) =>
+        !res.task_node_id
+        || node.instanceIds.includes(res.agent_id)
+        || Boolean(node.agentSlug && res.agent_id === node.agentSlug),
+    )
+  }
+  return results.filter((res) => {
+    if (node.taskId && (res.task_node_id === node.taskId || res.id === node.taskId)) return true
+    if (node.taskKey && (res.task_node_id === node.taskKey || res.id === node.taskKey)) return true
+    if (res.agent_id && node.instanceIds.includes(res.agent_id)) return true
+    if (node.agentSlug && res.agent_id === node.agentSlug) return true
+    return false
+  })
+})
 
 /**
  * Core caps a page of the invocation audit at 200 and pages by cursor only, so a run total is a
@@ -47,9 +385,14 @@ const USAGE_PAGE_LIMIT = 5
 
 const usage = ref<ModelUsageSummary | null>(null)
 const usageState = ref<'idle' | 'loading' | 'ready' | 'unavailable'>('idle')
+const loadedModelInvocations = ref<ModelInvocationDto[]>([])
+const effectiveModelInvocations = computed<ModelInvocationDto[]>(
+  () => props.modelInvocations ?? loadedModelInvocations.value,
+)
 
 async function loadModelUsage(runId?: string | null): Promise<void> {
   usage.value = null
+  loadedModelInvocations.value = []
   if (!runId) {
     usageState.value = 'idle'
     return
@@ -64,9 +407,11 @@ async function loadModelUsage(runId?: string | null): Promise<void> {
       cursor = result.next_cursor ?? undefined
       if (!cursor) break
     }
+    loadedModelInvocations.value = rows
     usage.value = summarizeModelInvocations(rows, { truncated: Boolean(cursor) })
     usageState.value = 'ready'
   } catch {
+    loadedModelInvocations.value = []
     usageState.value = 'unavailable'
   }
 }
@@ -118,6 +463,34 @@ function runStatusLabel(status?: string | null): string {
   return status ? statusWords(status) : ''
 }
 
+interface RawSupervisionEventFinding {
+  decision?: string | null
+  revision_round?: number | null
+  reasons?: string[] | null
+}
+
+function supervisionHeader(finding: SupervisionFindingDto): string {
+  const raw = finding as SupervisionFindingDto & RawSupervisionEventFinding
+  if (finding.severity || finding.category) {
+    return [finding.severity ? severityLabel(finding.severity) : '', finding.category ?? '']
+      .filter(Boolean)
+      .join(' · ')
+  }
+  if (raw.decision) {
+    return t('orchestrationPanel.supervisionDecisionRound', {
+      decision: runStatusLabel(raw.decision),
+      round: raw.revision_round ?? 0,
+    })
+  }
+  return runStatusLabel(finding.status)
+}
+
+function supervisionBody(finding: SupervisionFindingDto): string {
+  if (finding.summary) return finding.summary
+  const raw = finding as SupervisionFindingDto & RawSupervisionEventFinding
+  return Array.isArray(raw.reasons) ? raw.reasons.join(' · ') : ''
+}
+
 /**
  * A context pack has no summary on the wire — the sentence the engine hands `AppendEventAsync` never
  * reaches the event envelope — so the row is labelled from the one field that distinguishes packs:
@@ -165,10 +538,22 @@ function droppedShares(pack: ContextPackDto): Array<{ source: string; tokens: nu
   return [...sumBySource(pack.dropped_sources)].map(([source, tokens]) => ({ source, tokens }))
 }
 
+function droppedTooltip(pack: ContextPackDto): string {
+  const items = droppedShares(pack)
+    .map((share) => t('orchestrationPanel.droppedSource', { source: share.source, tokens: share.tokens }))
+    .join(', ')
+  return `${t('orchestrationPanel.droppedLead')} ${items} ${t('orchestrationPanel.droppedTail')}`
+}
+
+function packBudgetPercent(pack: ContextPackDto): number {
+  if (!pack.token_budget || pack.token_budget <= 0) return 0
+  return Math.min(100, Math.max(0, Math.round((pack.estimated_tokens / pack.token_budget) * 100)))
+}
+
 const tabs: Array<{ key: TabKey; icon: typeof ListTree }> = [
   { key: 'timeline', icon: ListTree },
   { key: 'catalog', icon: Package },
-  { key: 'stats', icon: BarChart3 }
+  { key: 'stats', icon: BarChart3 },
 ]
 
 function onRerun(exec: ToolExecutionTimelineItemDto) {
@@ -182,15 +567,223 @@ function onViewDetails(exec: ToolExecutionTimelineItemDto) {
 function onExecuteTool(tool: ToolDescriptorDto) {
   emit('execute-tool', tool)
 }
+
+const trajectorySummary = computed(() =>
+  buildTrajectoryTree({
+    snapshot: props.snapshot,
+    toolExecutions: filteredToolExecutions.value,
+    modelInvocations: effectiveModelInvocations.value,
+    contextPacks: filteredContextPacks.value,
+    coordinatorLabel: t('orchestrationPanel.roleCoordinator'),
+  }),
+)
+
+const contextWindowBuckets = computed(() =>
+  buildContextWindowBuckets({
+    contextPacks: filteredContextPacks.value,
+    modelInvocations: effectiveModelInvocations.value,
+    toolExecutions: filteredToolExecutions.value,
+  }),
+)
+
+const contextTreemapModel = computed(() =>
+  buildContextTreemapModel(filteredContextPacks.value),
+)
+
+const diagnosticsOverlapSources = computed<ContextAuditSource[] | undefined>(() => {
+  const activeTools = props.tools ?? toolCatalog.value
+  const list: ContextAuditSource[] = []
+  const toolLines = activeTools
+    .filter((tool) => tool.description && tool.description.trim().length > 0)
+    .map((tool) => `${tool.id}: ${tool.description}`)
+  if (toolLines.length > 0) {
+    list.push({
+      id: 'run:tool_schemas',
+      label: t('trajectoryEval.overlap.toolDescriptionsSource', { count: toolLines.length }),
+      kind: 'tool_schema',
+      content: toolLines.join('\n'),
+    })
+  }
+  const findingText = (props.snapshot?.supervision_findings ?? [])
+    .map((f) => [f.summary, f.recommendation].filter(Boolean).join('\n'))
+    .filter(Boolean)
+    .join('\n')
+  if (findingText.trim().length > 0) {
+    list.push({
+      id: 'run:supervision',
+      label: t('orchestrationPanel.supervision'),
+      kind: 'other',
+      content: findingText,
+    })
+  }
+  return list.length >= 2 ? list : undefined
+})
+
+const diagnosticsOverlapAudit = computed<ContextOverlapAuditResult | null>(() => {
+  const srcs = diagnosticsOverlapSources.value
+  if (!srcs || srcs.length < 2) return null
+  return auditContextOverlap(srcs)
+})
+
+function handleDiagnoseRun(overrides?: {
+  node?: TrajectoryNode | null
+  segment?: ContextTreemapNode | null
+  treemap?: ContextTreemapModel | null
+  overlap?: ContextOverlapAuditResult | null
+  pair?: ContextOverlapPairSummary | null
+}) {
+  const input = {
+    runId: props.snapshot?.run?.id ?? null,
+    sessionId: effectiveSessionId.value,
+    trajectory: trajectorySummary.value,
+    selectedNode: overrides?.node !== undefined ? overrides.node : selectedTrajectoryNode.value,
+    treemap: overrides?.treemap ?? contextTreemapModel.value,
+    selectedTreemapSegment: overrides?.segment !== undefined ? overrides.segment : selectedTreemapSegment.value,
+    buckets: contextWindowBuckets.value,
+    overlap: overrides?.overlap ?? diagnosticsOverlapAudit.value,
+    selectedOverlapPair: overrides?.pair ?? null,
+  }
+  const draft = buildDiagnosticDraft(input)
+  emit('diagnose-draft', draft)
+  void triggerDiagnoseInComposer(input)
+}
+
+function handleExportDiagnosticHtml() {
+  const result = exportOfflineDiagnosticHtml({
+    runId: props.snapshot?.run?.id ?? null,
+    sessionId: effectiveSessionId.value,
+    trajectory: trajectorySummary.value,
+    buckets: contextWindowBuckets.value,
+    treemap: contextTreemapModel.value,
+    overlap: diagnosticsOverlapAudit.value,
+  })
+  emit('export-report', result)
+}
 </script>
 
 <template>
   <section class="orchestration-tab">
+    <SessionPlanPanel
+      v-if="effectiveSessionId"
+      :session-id="effectiveSessionId"
+      compact
+      @focus-node="onFocusPlanNode"
+    />
+
     <div v-if="!hasSnapshot" class="orchestration-empty">
       {{ t('orchestrationPanel.empty') }}
     </div>
 
     <template v-else-if="snapshot">
+      <article class="orchestration-block" data-testid="runtime-topology-block">
+        <div class="orchestration-block-head orchestration-block-head--between orchestration-block-head--wrap">
+          <div class="orchestration-block-title">
+            <Network :size="15" />
+            <strong>{{ t('orchestrationPanel.runtimeTopology') }}</strong>
+          </div>
+          <div class="topology-head-actions">
+            <div
+              class="topology-view-switcher"
+              role="tablist"
+              :aria-label="t('orchestrationPanel.viewSwitcherLabel')"
+              data-testid="topology-view-switcher"
+            >
+              <button
+                type="button"
+                role="tab"
+                class="topology-view-btn"
+                :class="{ active: topologyViewMode === 'topology' }"
+                :aria-selected="topologyViewMode === 'topology'"
+                data-testid="topology-view-btn-topology"
+                @click="topologyViewMode = 'topology'"
+              >
+                {{ t('orchestrationPanel.viewTopology') }}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="topology-view-btn"
+                :class="{ active: topologyViewMode === 'timeline' }"
+                :aria-selected="topologyViewMode === 'timeline'"
+                data-testid="topology-view-btn-timeline"
+                @click="topologyViewMode = 'timeline'"
+              >
+                {{ t('orchestrationPanel.viewTimeline') }}
+              </button>
+            </div>
+
+            <button
+              v-if="selectedNode"
+              type="button"
+              class="topology-clear-btn"
+              data-testid="topology-clear-filter"
+              @click="clearNodeFilter"
+            >
+              <X :size="11" />
+              <span>{{ t('orchestrationPanel.allNodes') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <OrchestrationMiniGraph
+          v-if="topologyViewMode === 'topology'"
+          :nodes="runtimeTopology.nodes"
+          :edges="runtimeTopology.edges"
+          :selected-node-id="selectedNodeId"
+          @select-node="onSelectTopologyNode"
+        />
+        <AgentTimeline
+          v-else
+          :snapshot="snapshot"
+          :topology-run="activeTopologyRun"
+          :tool-executions="toolExecutions"
+          :model-invocations="effectiveModelInvocations"
+          :selected-node-id="selectedNodeId"
+          @select-node="onSelectTimelineNodeId"
+        />
+
+        <div v-if="selectedNode" ref="detailsBlockRef" class="focused-node-card" data-testid="focused-node-details">
+          <div class="focused-node-card__head">
+            <span class="focused-node-card__lead" :title="t('orchestrationPanel.filteringNode', { name: selectedNode.label })">
+              {{ t('orchestrationPanel.filteringNode', { name: selectedNode.label }) }}
+            </span>
+            <span class="focused-node-card__tier">{{ roleTierLabel(selectedNode.roleTier) }}</span>
+            <span class="focused-node-card__status" :class="`is-${selectedNode.status}`">
+              {{ runStatusLabel(selectedNode.status === 'awaiting_approval' ? 'awaiting_approval' : (selectedNode.rawStatus || selectedNode.status)) }}
+            </span>
+          </div>
+          <div class="orchestration-tags">
+            <span
+              v-if="selectedParentNode"
+              :title="t('orchestrationPanel.dispatchedBy', { parent: selectedParentNode.label })"
+            >{{ t('orchestrationPanel.dispatchedBy', { parent: selectedParentNode.label }) }}</span>
+            <span v-if="selectedNode.handle" :title="selectedNode.handle">{{ selectedNode.handle }}</span>
+            <span
+              v-if="selectedNode.laneKey"
+              :title="t('orchestrationPanel.laneBadge', { lane: selectedNode.laneKey })"
+            >{{ t('orchestrationPanel.laneBadge', { lane: selectedNode.laneKey }) }}</span>
+          </div>
+          <p v-if="selectedNode.title && selectedNode.title !== selectedNode.label" class="focused-node-card__title">
+            {{ selectedNode.title }}
+          </p>
+          <p v-if="selectedNode.description" class="focused-node-card__desc">
+            {{ selectedNode.description }}
+          </p>
+          <p v-if="selectedNode.resultSummary" class="focused-node-card__result">
+            {{ selectedNode.resultSummary }}
+          </p>
+          <div v-if="selectedNode.writeScope.length > 0" class="focused-node-card__scope">
+            <small>{{ t('orchestrationPanel.writeScopeLabel') }}</small>
+            <div class="orchestration-tags">
+              <span v-for="scopePath in selectedNode.writeScope" :key="scopePath" :title="scopePath">{{ scopePath }}</span>
+            </div>
+          </div>
+        </div>
+        <p v-else class="topology-hint">
+          {{ t('orchestrationPanel.clickNodeHint') }}
+        </p>
+      </article>
+
       <article v-if="snapshot.graph" class="orchestration-block">
         <div class="orchestration-block-head">
           <GitBranch :size="15" />
@@ -221,22 +814,28 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           {{ t('orchestrationPanel.noFindings') }}
         </div>
         <div v-for="finding in snapshot.supervision_findings" :key="finding.id" class="orchestration-finding">
-          <span>{{ severityLabel(finding.severity) }} · {{ finding.category }}</span>
-          <p>{{ finding.summary }}</p>
-          <small>{{ finding.recommendation }}</small>
+          <span>{{ supervisionHeader(finding) }}</span>
+          <p v-if="supervisionBody(finding)">{{ supervisionBody(finding) }}</p>
+          <small v-if="finding.recommendation">{{ finding.recommendation }}</small>
         </div>
       </article>
 
-      <article class="orchestration-block">
-        <div class="orchestration-block-head">
-          <Wrench :size="15" />
-          <strong>{{ t('orchestrationPanel.toolExecutions') }}</strong>
+      <article class="orchestration-block" data-testid="tool-executions-block">
+        <div class="orchestration-block-head orchestration-block-head--between">
+          <div class="orchestration-block-title">
+            <Wrench :size="15" />
+            <strong>{{ t('orchestrationPanel.toolExecutions') }}</strong>
+          </div>
+          <span v-if="selectedNode" class="filter-scope-pill" :title="selectedNode.label">
+            {{ selectedNode.label }}
+          </span>
         </div>
 
         <div class="orchestration-tabs">
           <button
             v-for="tab in tabs"
             :key="tab.key"
+            type="button"
             class="orchestration-tab-btn"
             :class="{ active: activeTab === tab.key }"
             @click="activeTab = tab.key"
@@ -249,7 +848,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
         <div class="orchestration-tab-content">
           <ToolExecutionTimeline
             v-if="activeTab === 'timeline'"
-            :tool-executions="toolExecutions"
+            :tool-executions="filteredToolExecutions"
             @rerun="onRerun"
             @view-details="onViewDetails"
           />
@@ -260,11 +859,12 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           />
           <ToolStatsDashboard
             v-else-if="activeTab === 'stats'"
-            :tool-executions="toolExecutions"
+            :tool-executions="filteredToolExecutions"
           />
         </div>
         <button
           v-if="activeTab === 'catalog'"
+          type="button"
           class="orchestration-refresh"
           :disabled="toolCatalogLoading"
           :title="t('orchestrationPanel.refreshToolsHint')"
@@ -275,19 +875,44 @@ function onExecuteTool(tool: ToolDescriptorDto) {
         </button>
       </article>
 
-      <article class="orchestration-block">
-        <div class="orchestration-block-head">
-          <Archive :size="15" />
-          <strong>{{ t('orchestrationPanel.contextPacks') }}</strong>
+      <article class="orchestration-block" data-testid="context-packs-block">
+        <div class="orchestration-block-head orchestration-block-head--between">
+          <div class="orchestration-block-title">
+            <Archive :size="15" />
+            <strong>{{ t('orchestrationPanel.contextPacks') }}</strong>
+          </div>
+          <span v-if="selectedNode" class="filter-scope-pill" :title="selectedNode.label">
+            {{ selectedNode.label }}
+          </span>
         </div>
         <div v-if="snapshot.context_packs.length === 0" class="quiet">
           {{ t('orchestrationPanel.noContextPacks') }}
         </div>
-        <div v-for="pack in snapshot.context_packs" :key="pack.id" class="context-pack-row" data-testid="context-pack-row">
-          <p>{{ packLabel(pack) }}</p>
+        <div v-else-if="filteredContextPacks.length === 0 && selectedNode" class="quiet" data-testid="context-packs-filtered-empty">
+          {{ t('orchestrationPanel.noNodeContextPacks', { name: selectedNode.label }) }}
+        </div>
+        <div v-for="pack in filteredContextPacks" :key="pack.id" class="context-pack-row" data-testid="context-pack-row">
+          <div class="context-pack-row__head">
+            <p class="context-pack-row__title" :title="packLabel(pack)">{{ packLabel(pack) }}</p>
+            <span
+              v-if="droppedShares(pack).length"
+              class="context-pack-truncated-badge"
+            >{{ t('orchestrationPanel.budgetTruncatedBadge') }}</span>
+          </div>
           <div class="orchestration-tags">
-            <span>{{ t('orchestrationPanel.evidence', { count: pack.evidence_count }) }}</span>
-            <span>{{ t('orchestrationPanel.tokens', { used: pack.estimated_tokens, budget: pack.token_budget }) }}</span>
+            <span :title="t('orchestrationPanel.evidence', { count: pack.evidence_count })">
+              {{ t('orchestrationPanel.evidence', { count: pack.evidence_count }) }}
+            </span>
+            <span :title="t('orchestrationPanel.tokens', { used: pack.estimated_tokens, budget: pack.token_budget })">
+              {{ t('orchestrationPanel.tokens', { used: pack.estimated_tokens, budget: pack.token_budget }) }}
+            </span>
+          </div>
+          <div v-if="pack.token_budget > 0" class="context-pack-meter" aria-hidden="true">
+            <div
+              class="context-pack-meter__fill"
+              :class="{ 'is-truncated': droppedShares(pack).length > 0 }"
+              :style="{ width: `${packBudgetPercent(pack)}%` }"
+            />
           </div>
           <div
             v-if="pack.sources.length"
@@ -301,19 +926,136 @@ function onExecuteTool(tool: ToolDescriptorDto) {
               :key="source"
               role="listitem"
               data-testid="context-pack-source"
+              :title="sourceLabel(pack, source)"
             >{{ sourceLabel(pack, source) }}</span>
           </div>
-          <p v-else class="quiet">
+          <p v-else class="quiet context-pack-note" :title="t('orchestrationPanel.noSourceList')">
             {{ t('orchestrationPanel.noSourceList') }}
           </p>
           <!-- Available but cut: the pack answered "which sources" without saying which
                ones the budget removed, and those are two different answers to "why did the
                agent ignore the project rules". -->
-          <p v-if="droppedShares(pack).length" class="quiet" data-testid="context-pack-dropped">
-            {{ t('orchestrationPanel.droppedLead') }}
-            <span v-for="share in droppedShares(pack)" :key="share.source" data-testid="context-pack-dropped-source">{{ t('orchestrationPanel.droppedSource', { source: share.source, tokens: share.tokens }) }}</span>
-            {{ t('orchestrationPanel.droppedTail') }}
-          </p>
+          <div
+            v-if="droppedShares(pack).length"
+            class="context-pack-dropped"
+            data-testid="context-pack-dropped"
+            :title="droppedTooltip(pack)"
+          >
+            <span class="context-pack-dropped__lead">{{ t('orchestrationPanel.droppedLead') }}</span>
+            <div class="context-pack-dropped__chips">
+              <span
+                v-for="share in droppedShares(pack)"
+                :key="share.source"
+                class="context-pack-dropped__chip"
+                data-testid="context-pack-dropped-source"
+                :title="t('orchestrationPanel.droppedSource', { source: share.source, tokens: share.tokens })"
+              >{{ t('orchestrationPanel.droppedSource', { source: share.source, tokens: share.tokens }) }}</span>
+            </div>
+            <span class="context-pack-dropped__tail">{{ t('orchestrationPanel.droppedTail') }}</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="orchestration-block" data-testid="trajectory-diagnostics-block">
+        <div class="orchestration-block-head orchestration-block-head--between orchestration-block-head--wrap">
+          <div class="orchestration-block-title">
+            <Activity :size="15" />
+            <strong>{{ t('trajectoryEval.panel.title') }}</strong>
+          </div>
+          <div class="diagnostics-head-actions">
+            <button
+              type="button"
+              class="diagnostics-action-btn"
+              data-testid="diagnostics-diagnose-btn"
+              @click="handleDiagnoseRun()"
+            >
+              <Sparkles :size="12" aria-hidden="true" />
+              <span>{{ t('trajectoryEval.actions.diagnoseInComposer') }}</span>
+            </button>
+            <button
+              type="button"
+              class="diagnostics-action-btn"
+              data-testid="diagnostics-export-html-btn"
+              @click="handleExportDiagnosticHtml"
+            >
+              <Download :size="12" aria-hidden="true" />
+              <span>{{ t('trajectoryEval.panel.exportHtml') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          class="orchestration-tabs"
+          role="tablist"
+          :aria-label="t('trajectoryEval.panel.tabsLabel')"
+          data-testid="diagnostics-subtabs"
+        >
+          <button
+            type="button"
+            role="tab"
+            class="orchestration-tab-btn"
+            :class="{ active: diagnosticsTab === 'tree' }"
+            :aria-selected="diagnosticsTab === 'tree'"
+            data-testid="diagnostics-tab-tree"
+            @click="diagnosticsTab = 'tree'"
+          >
+            <span>{{ t('trajectoryEval.panel.tabTree') }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="orchestration-tab-btn"
+            :class="{ active: diagnosticsTab === 'treemap' }"
+            :aria-selected="diagnosticsTab === 'treemap'"
+            data-testid="diagnostics-tab-treemap"
+            @click="diagnosticsTab = 'treemap'"
+          >
+            <span>{{ t('trajectoryEval.panel.tabTreemap') }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="orchestration-tab-btn"
+            :class="{ active: diagnosticsTab === 'overlap' }"
+            :aria-selected="diagnosticsTab === 'overlap'"
+            data-testid="diagnostics-tab-overlap"
+            @click="diagnosticsTab = 'overlap'"
+          >
+            <span>{{ t('trajectoryEval.panel.tabOverlap') }}</span>
+          </button>
+        </div>
+
+        <div v-if="diagnosticsTab === 'tree'" class="diagnostics-pane">
+          <TrajectoryTreePanel
+            :trajectory="trajectorySummary"
+            :selected-node-id="selectedTrajectoryNode?.id ?? null"
+            compact
+            @select-node="selectedTrajectoryNode = $event"
+            @diagnose-node="handleDiagnoseRun({ node: $event })"
+          />
+          <ContextWindowBucketChart
+            :report="contextWindowBuckets"
+            compact
+          />
+        </div>
+
+        <div v-else-if="diagnosticsTab === 'treemap'" class="diagnostics-pane">
+          <ContextTreemap
+            :context-packs="filteredContextPacks"
+            compact
+            @select-segment="selectedTreemapSegment = $event"
+            @diagnose-segment="(segment, model) => handleDiagnoseRun({ segment, treemap: model })"
+          />
+        </div>
+
+        <div v-else class="diagnostics-pane">
+          <ContextOverlapPanel
+            :sources="diagnosticsOverlapSources"
+            :auto-load-mode="diagnosticsOverlapSources ? 'none' : 'all'"
+            :tools="tools ?? toolCatalog"
+            compact
+            @diagnose-overlap="(audit, pair) => handleDiagnoseRun({ overlap: audit, pair })"
+          />
         </div>
       </article>
 
@@ -332,11 +1074,16 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           {{ t('orchestrationPanel.usageEmpty') }}
         </div>
         <template v-else>
-          <p v-if="usage.truncated" class="quiet" data-testid="model-usage-truncated">
+          <p
+            v-if="usage.truncated"
+            class="quiet usage-note"
+            data-testid="model-usage-truncated"
+            :title="t('orchestrationPanel.usageTruncated', { limit: USAGE_PAGE_LIMIT * USAGE_PAGE_SIZE })"
+          >
             {{ t('orchestrationPanel.usageTruncated', { limit: USAGE_PAGE_LIMIT * USAGE_PAGE_SIZE }) }}
           </p>
           <div
-            class="orchestration-tags"
+            class="orchestration-tags model-usage-chips"
             role="list"
             :aria-label="t('orchestrationPanel.usageGroupsLabel')"
           >
@@ -344,27 +1091,42 @@ function onExecuteTool(tool: ToolDescriptorDto) {
               v-for="group in usage.groups"
               :key="group.key"
               role="listitem"
+              class="model-usage-chip"
               data-testid="model-usage-group"
+              :title="usageGroupLabel(group)"
             >{{ usageGroupLabel(group) }}</span>
           </div>
-          <p v-if="usage.unpricedCalls" class="quiet" data-testid="model-usage-unpriced">
+          <p
+            v-if="usage.unpricedCalls"
+            class="quiet usage-note"
+            data-testid="model-usage-unpriced"
+            :title="t('orchestrationPanel.usageUnpriced', { unpriced: usage.unpricedCalls, calls: usage.calls })"
+          >
             {{ t('orchestrationPanel.usageUnpriced', { unpriced: usage.unpricedCalls, calls: usage.calls }) }}
           </p>
-          <p class="quiet">
+          <p class="quiet usage-note">
             {{ t('orchestrationPanel.tokensOnly') }}
           </p>
         </template>
       </article>
 
-      <article class="orchestration-block">
-        <div class="orchestration-block-head">
-          <CheckCircle2 :size="15" />
-          <strong>{{ t('orchestrationPanel.stepResults') }}</strong>
+      <article class="orchestration-block" data-testid="step-results-block">
+        <div class="orchestration-block-head orchestration-block-head--between">
+          <div class="orchestration-block-title">
+            <CheckCircle2 :size="15" />
+            <strong>{{ t('orchestrationPanel.stepResults') }}</strong>
+          </div>
+          <span v-if="selectedNode" class="filter-scope-pill" :title="selectedNode.label">
+            {{ selectedNode.label }}
+          </span>
         </div>
         <div v-if="snapshot.step_results.length === 0" class="quiet">
           {{ t('orchestrationPanel.noStepResults') }}
         </div>
-        <div v-for="result in snapshot.step_results" :key="result.id" class="step-result-row">
+        <div v-else-if="filteredStepResults.length === 0 && selectedNode" class="quiet" data-testid="step-results-filtered-empty">
+          {{ t('orchestrationPanel.noNodeStepResults', { name: selectedNode.label }) }}
+        </div>
+        <div v-for="result in filteredStepResults" :key="result.id" class="step-result-row" data-testid="step-result-row">
           <span>{{ runStatusLabel(result.status) }}</span>
           <p>{{ result.summary }}</p>
         </div>
@@ -378,6 +1140,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   display: grid;
   gap: 10px;
   padding: 12px;
+  min-width: 0;
 }
 
 .orchestration-block {
@@ -385,6 +1148,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   display: grid;
   gap: 8px;
   padding-bottom: 12px;
+  min-width: 0;
 }
 
 .orchestration-block-head {
@@ -392,6 +1156,71 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   color: var(--text-primary);
   display: flex;
   gap: 7px;
+  min-width: 0;
+}
+
+.orchestration-block-head--between {
+  justify-content: space-between;
+}
+
+.orchestration-block-head--wrap {
+  flex-wrap: wrap;
+}
+
+.topology-head-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.topology-view-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+}
+
+.topology-view-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.topology-view-btn:hover {
+  color: var(--text-primary);
+}
+
+.topology-view-btn.active {
+  color: var(--accent-primary);
+  background: var(--surface-active, var(--bg-primary));
+  border-color: var(--border-muted);
+}
+
+.orchestration-block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.orchestration-block-title strong,
+.orchestration-block-head > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orchestration-block p {
@@ -399,21 +1228,189 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   font-size: 12px;
   line-height: 1.4;
   margin: 3px 0 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
+.topology-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #58a6ff) 45%, var(--border-muted));
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.topology-clear-btn:hover {
+  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 20%, transparent);
+}
+
+.topology-hint {
+  margin: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+  color: var(--text-muted) !important;
+}
+
+.filter-scope-pill {
+  max-width: 120px;
+  flex-shrink: 1;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #58a6ff) 35%, var(--border-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focused-node-card {
+  background: var(--surface-section);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #58a6ff) 40%, var(--border-muted));
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.focused-node-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.focused-node-card__lead {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focused-node-card__tier {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-muted);
+}
+
+.focused-node-card__status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+}
+
+.focused-node-card__status.is-running {
+  color: var(--accent-primary, #58a6ff);
+  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 15%, transparent);
+}
+
+.focused-node-card__status.is-awaiting_approval {
+  color: var(--accent-warning, #d29922);
+  background: color-mix(in srgb, var(--accent-warning, #d29922) 16%, transparent);
+}
+
+.focused-node-card__status.is-completed {
+  color: var(--accent-success, #3fb950);
+  background: color-mix(in srgb, var(--accent-success, #3fb950) 15%, transparent);
+}
+
+.focused-node-card__status.is-failed {
+  color: var(--accent-danger, #f85149);
+  background: color-mix(in srgb, var(--accent-danger, #f85149) 15%, transparent);
+}
+
+.focused-node-card__title {
+  margin: 0 !important;
+  font-weight: 600;
+  color: var(--text-primary) !important;
+}
+
+.focused-node-card__desc,
+.focused-node-card__result {
+  margin: 0 !important;
+}
+
+.focused-node-card__scope {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.focused-node-card__scope small {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Narrow-dock safe chip layout: single-line pills with clean ellipsis and stable line-height */
 .orchestration-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 5px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .orchestration-tags span {
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--surface-raised);
   border: 1px solid var(--border-muted);
   border-radius: 999px;
-  padding: 3px 7px;
+  padding: 2px 8px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-usage-chips {
+  gap: 6px;
+}
+
+.model-usage-chip {
+  color: var(--text-secondary);
+}
+
+.usage-note {
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+  margin: 2px 0 0 !important;
 }
 
 .orchestration-finding {
@@ -423,23 +1420,27 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   display: grid;
   gap: 5px;
   padding: 9px;
+  min-width: 0;
 }
 
 .orchestration-finding span {
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.35;
 }
 
 .orchestration-finding small {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .quiet {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .orchestration-tabs {
@@ -448,21 +1449,32 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   padding: 2px;
   background: var(--surface-raised);
   border-radius: 6px;
+  min-width: 0;
 }
 
 .orchestration-tab-btn {
+  flex: 1 1 0;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 5px 10px;
+  padding: 5px 8px;
   font-size: 11px;
   font-weight: 600;
+  line-height: 1.3;
   color: var(--text-secondary);
   background: transparent;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+}
+
+.orchestration-tab-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orchestration-tab-btn:hover {
@@ -477,6 +1489,33 @@ function onExecuteTool(tool: ToolDescriptorDto) {
 
 .orchestration-tab-content {
   min-height: 200px;
+  min-width: 0;
+}
+
+.orchestration-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  align-self: start;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.orchestration-refresh:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.orchestration-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .context-pack-row,
@@ -485,27 +1524,175 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   padding: 9px;
+  min-width: 0;
 }
 
-.context-pack-row p,
+.context-pack-row__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-pack-row__title {
+  margin: 0 !important;
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-pack-truncated-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--accent-warning, #d29922);
+  background: color-mix(in srgb, var(--accent-warning, #d29922) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #d29922) 40%, var(--border-muted));
+}
+
+.context-pack-meter {
+  height: 3px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.context-pack-meter__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-primary, #58a6ff);
+  transition: width 0.2s ease;
+}
+
+.context-pack-meter__fill.is-truncated {
+  background: var(--accent-warning, #d29922);
+}
+
+.context-pack-note {
+  margin: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+}
+
+.context-pack-dropped {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-warning, #d29922) 8%, var(--surface-raised));
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #d29922) 32%, var(--border-muted));
+  min-width: 0;
+}
+
+.context-pack-dropped__lead {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.context-pack-dropped__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.context-pack-dropped__chip {
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  border-radius: 999px;
+  color: var(--accent-warning, #d29922);
+  background: var(--surface-section);
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #d29922) 35%, var(--border-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-pack-dropped__tail {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .step-result-row p {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.4;
-  margin: 3px 0 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .step-result-row span {
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.35;
 }
 
 .orchestration-empty {
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.4;
   padding: 16px;
+}
+
+.diagnostics-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.diagnostics-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.diagnostics-action-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.diagnostics-pane {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 </style>
