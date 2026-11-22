@@ -544,7 +544,7 @@ function clearProfile() {
 }
 .model-profile-tier-btn.active {
   background: var(--bg-primary-button, var(--accent-primary));
-  color: #ffffff;
+  color: var(--text-on-primary, #ffffff);
   font-weight: 600;
 }
 .model-profile-actions {

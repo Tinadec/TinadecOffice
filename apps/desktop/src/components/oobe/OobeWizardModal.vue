@@ -271,9 +271,9 @@ async function finish(): Promise<void> {
 }
 
 .oobe-stepper__item.active .oobe-stepper__dot {
-  border-color: var(--accent-primary);
-  background: var(--accent-primary);
-  color: #fff;
+  border-color: var(--bg-primary-button, var(--accent-primary));
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
 }
 
 .oobe-stepper__item.completed .oobe-stepper__dot {

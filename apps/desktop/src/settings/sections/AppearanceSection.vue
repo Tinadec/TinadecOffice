@@ -6,7 +6,7 @@ import { UiButton, UiSelectField } from '@/components/ui'
 import ColorField from '@/components/ui/color-field.vue'
 import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
-import { CUSTOM_ACCENT_KEY, DYNAMIC_ACCENT_KEY, useTheme } from '@/composables/useTheme'
+import { CUSTOM_ACCENT_KEY, DYNAMIC_ACCENT_KEY, useTheme, type AccentColor } from '@/composables/useTheme'
 import { getDynamicPaletteRef } from '@/composables/useDynamicPalette'
 import {
   contrastRatio,
@@ -112,6 +112,17 @@ function changeAccentColor(key: string): void {
   window.tinadec?.broadcastTheme?.(theme.value, key)
 }
 
+function swatchStyle(color: AccentColor): Record<string, string> {
+  if (color.swatchSplit) {
+    return {
+      '--swatch-color': resolvedTheme.value === 'dark' ? color.dark.accentBrand : color.light.accentBrand,
+      '--swatch-dark': color.swatchSplit[0],
+      '--swatch-light': color.swatchSplit[1],
+    }
+  }
+  return { '--swatch-color': color.dark.accentPrimary }
+}
+
 // ── Custom accent picker ────────────────────────────────────────────────
 // Draft state so dragging a slider previews live but only "应用" commits.
 // `draftHex` is the source of truth for the color: the sliders are a rounded
@@ -122,7 +133,7 @@ const pickerAnchor = ref<HTMLElement | null>(null)
 const draftHue = ref(0)
 const draftSat = ref(0)
 const draftLig = ref(0)
-const draftHex = ref('#d2bdf5')
+const draftHex = ref('#18181b')
 const canUseEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window
 
 /** Sliders moved → recompute the hex from their (rounded) positions. */
@@ -139,7 +150,7 @@ const draftSwatches = computed(() =>
 )
 /** Contrast of the drafted accent against the page surface it will sit on. */
 const draftContrast = computed(() => {
-  const surface = resolvedTheme.value === 'dark' ? '#15121a' : '#ffffff'
+  const surface = resolvedTheme.value === 'dark' ? '#09090b' : '#ffffff'
   return contrastRatio(draftHex.value, surface)
 })
 const contrastWarning = computed(() => draftContrast.value < 4.5)
@@ -283,13 +294,14 @@ function resetBackgroundToDefault(): void {
         <button
           v-for="color in accentColors"
           :key="color.key"
-          :class="['accent-color-swatch', { active: accentColor === color.key }]"
-          :style="{ '--swatch-color': color.dark.accentPrimary }"
+          :class="['accent-color-swatch', { 'accent-color-swatch--split': Boolean(color.swatchSplit), active: accentColor === color.key }]"
+          :style="swatchStyle(color)"
+          :data-accent-key="color.key"
           :title="t(color.labelKey)"
           :aria-label="t(color.labelKey)"
           @click="changeAccentColor(color.key)"
         >
-          <span class="accent-color-dot"></span>
+          <span class="accent-color-dot" :class="{ 'accent-color-dot--split': Boolean(color.swatchSplit) }"></span>
           <Check v-if="accentColor === color.key" :size="14" class="accent-color-check" />
         </button>
 

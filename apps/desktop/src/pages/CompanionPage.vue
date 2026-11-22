@@ -1599,8 +1599,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -2031,8 +2031,8 @@ onBeforeUnmount(() => {
 
 .companion-ws-btn--approve {
   border-color: transparent;
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
 }
 
 .companion-ws-btn--cancel {
@@ -2271,9 +2271,9 @@ onBeforeUnmount(() => {
 }
 
 .companion-primary {
-  background: var(--accent-primary);
+  background: var(--bg-primary-button, var(--accent-primary));
   border-color: transparent;
-  color: #fff;
+  color: var(--text-on-primary, #ffffff);
 }
 
 /* ── Bottom Floating Input Pill (Zero Hard Dividers) ────────────────── */
@@ -2322,8 +2322,8 @@ onBeforeUnmount(() => {
   place-items: center;
   border: 0;
   border-radius: 999px;
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
   cursor: pointer;
   transition: transform 120ms ease, opacity 120ms ease;
 }

@@ -1,15 +1,11 @@
 /**
- * The desktop palette has to have exactly one "brand" answer, and it lives in
- * two places: the `:root[data-theme]` floor in `styles.css`, and the default
- * accent in `useTheme.ts`. Only the ~60 properties listed in
- * `monetExtract.buildDynamicVars` get overwritten at runtime, so whatever the
- * CSS floor says is what the app actually renders for `--text-link`, the
- * terminal selection tint, canvas themes and every `var(--x, …)` fallback.
+ * The desktop palette has to have exactly one default floor answer, and it lives
+ * in two places: the `:root[data-theme]` floor in `styles.css`, and the default
+ * accent in `useTheme.ts` (`monochrome` -> `buildMonochromeVars`).
  *
- * That is how the old teal brand survived next to a blue accent: two sources,
- * two answers. The brand is the poster lilac now, so both sources carry the
- * same two hex values and these assertions keep a stray copy-paste from
- * reintroducing a third answer.
+ * These assertions pin the neutral zero-hue zinc monochrome floor, verify the
+ * `--text-on-primary` / `--primary-button-fg` contrast tokens, and ensure none
+ * of the retired teal/navy/lilac floor values sneak back into `styles.css`.
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -36,18 +32,24 @@ function themeBlock(theme: 'dark' | 'light'): Record<string, string> {
 const dark = themeBlock('dark')
 const light = themeBlock('light')
 
-const BRAND_DARK = '#d2bdf5'
-const BRAND_LIGHT = '#675687'
+const BRAND_DARK = '#fafafa'
+const BRAND_LIGHT = '#18181b'
 
 describe('styles.css accent floor', () => {
-  it('defaults to the same lilac the theme pipeline picks', () => {
+  it('defaults to the same pure monochrome zinc palette the theme pipeline picks', () => {
     expect(dark['--accent-primary']).toBe(BRAND_DARK)
     expect(dark['--accent-brand']).toBe(BRAND_DARK)
     expect(dark['--text-brand']).toBe(BRAND_DARK)
+    expect(dark['--bg-primary-button']).toBe('#fafafa')
+    expect(dark['--text-on-primary']).toBe('#09090b')
+    expect(dark['--primary-button-fg']).toBe('#09090b')
 
     expect(light['--accent-primary']).toBe(BRAND_LIGHT)
     expect(light['--accent-brand']).toBe(BRAND_LIGHT)
     expect(light['--text-brand']).toBe(BRAND_LIGHT)
+    expect(light['--bg-primary-button']).toBe('#18181b')
+    expect(light['--text-on-primary']).toBe('#ffffff')
+    expect(light['--primary-button-fg']).toBe('#ffffff')
   })
 
   it('agrees with the accent preset useTheme ships as default', () => {
@@ -59,16 +61,17 @@ describe('styles.css accent floor', () => {
     expect(preset!.light.accentPrimary).toBe(BRAND_LIGHT)
   })
 
-  it('keeps links on the brand lilac', () => {
-    // `--text-link` is deliberately outside the Monet injection, so this CSS
-    // value is what every unstyled link renders.
-    expect(dark['--text-link']).toBe(dark['--accent-primary'])
-    expect(light['--text-link']).toBe(light['--accent-primary'])
+  it('keeps links crisp neutral monochrome on dark and light surfaces', () => {
+    expect(dark['--text-link']).toBe('#e4e4e7')
+    expect(light['--text-link']).toBe('#18181b')
   })
 
-  it('carries none of the retired palettes', () => {
+  it('carries none of the retired teal, navy, or purple/lilac palettes', () => {
     const lower = css.toLowerCase()
-    const retired = ['#2ec4b6', '#1f8f80', '#1f6f68', '#58a6ff', '#0969da', '#0a0e14', '#11151c', '#1a1f29']
+    const retired = [
+      '#2ec4b6', '#1f8f80', '#1f6f68', '#58a6ff', '#0969da', '#0a0e14', '#11151c', '#1a1f29',
+      '#15121a', '#d2bdf5', '#746294', '#675687', '#faf7fd',
+    ]
     for (const value of retired) {
       expect(lower, `styles.css still ships the retired value ${value}`).not.toContain(value)
     }
@@ -81,10 +84,10 @@ describe('styles.css accent floor', () => {
     expect(dark['--text-error']).toBe('#f85149')
   })
 
-  it('tints the surfaces purple rather than blue-black', () => {
-    // A blue-black floor under a lilac accent is the same two-source bug in a
-    // quieter form: the app reads as "lavender UI on a navy page".
-    expect(dark['--bg-primary']).toBe('#15121a')
-    expect(light['--bg-secondary']).toBe('#faf7fd')
+  it('uses pure zero-hue zinc surfaces on dark and light floors', () => {
+    expect(dark['--bg-primary']).toBe('#09090b')
+    expect(dark['--bg-secondary']).toBe('#111113')
+    expect(light['--bg-primary']).toBe('#ffffff')
+    expect(light['--bg-secondary']).toBe('#fafafa')
   })
 })

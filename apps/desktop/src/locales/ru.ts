@@ -3629,6 +3629,8 @@ agentAvatarSaveFailed: "Не удалось сохранить образ",
     customSummary: "Пользовательская конечная точка, совместимая с OpenAI",
   },
   accentColors: {
+    monochrome: "Монохром",
+    warm: "Тёплая бумага",
     blue: "Синий",
     green: "Зелёный",
     purple: "Фиолетовый",

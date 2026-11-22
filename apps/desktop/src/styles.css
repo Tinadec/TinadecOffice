@@ -38,24 +38,24 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 260 19% 15%;
-    --card: 270 50% 99%;
-    --card-foreground: 260 19% 15%;
+    --foreground: 240 10% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
     --popover: 0 0% 100%;
-    --popover-foreground: 260 19% 15%;
-    --primary: 261 22% 43%;
+    --popover-foreground: 240 10% 4%;
+    --primary: 240 6% 10%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 270 36% 95%;
-    --secondary-foreground: 260 19% 15%;
-    --muted: 270 36% 95%;
-    --muted-foreground: 261 9% 44%;
-    --accent: 270 42% 94%;
-    --accent-foreground: 260 19% 15%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 6% 10%;
     --destructive: 356 72% 47%;
     --destructive-foreground: 0 0% 100%;
-    --border: 263 29% 86%;
-    --input: 261 29% 88%;
-    --ring: 261 22% 43%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 240 6% 10%;
     --radius: 8px;
 
     /* Unified geometry, elevation, and focus tokens (DESIGN.md + uie-visual-layer-spec.md) */
@@ -75,25 +75,25 @@
 
   .dark,
   [data-theme="dark"] {
-    --background: 262 18% 9%;
-    --foreground: 268 62% 92%;
-    --card: 262 13% 12%;
-    --card-foreground: 268 62% 92%;
-    --popover: 264 14% 14%;
-    --popover-foreground: 268 62% 92%;
-    --primary: 262 74% 85%;
-    --primary-foreground: 262 28% 16%;
-    --secondary: 270 10% 16%;
-    --secondary-foreground: 268 62% 92%;
-    --muted: 270 10% 16%;
-    --muted-foreground: 266 13% 65%;
-    --accent: 270 11% 18%;
-    --accent-foreground: 268 62% 92%;
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 6% 10%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 6% 9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 3 93% 63%;
     --destructive-foreground: 0 0% 100%;
-    --border: 265 15% 25%;
-    --input: 265 15% 25%;
-    --ring: 260 51% 77%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 240 5% 65%;
   }
 }
 
@@ -133,31 +133,32 @@
   background: transparent;
 }
 
-/* Legacy CSS variables for backward compatibility */
-/* Codex-style simplified palette: single blue accent + grayscale, minimal multi-color */
+/* Minimalist neutral zinc monochrome palette floor (matches buildMonochromeVars) */
 :root[data-theme="dark"] {
-  --bg-primary: #15121a;
-  --bg-secondary: #1d1a22;
-  --bg-tertiary: #28242c;
-  --bg-overlay: #231f29;
-  --bg-hover: #2e2933;
-  --bg-selected: #4f3e6e;
-  --bg-selected-outline: #d2bdf5;
-  --bg-user-msg: color-mix(in srgb, var(--text-brand) 9%, var(--bg-secondary));
-  --bg-assistant-msg: #1d1a22;
-  --bg-assistant-msg-border: #28242c;
-  --bg-avatar: #28242c;
-  --bg-empty-action: #1d1a22;
-  --bg-diff: #15121a;
-  --bg-input: #15121a;
-  --bg-button: #28242c;
-  --bg-button-hover: #332e38;
-  --bg-primary-button: #746294;
-  --bg-primary-button-hover: #8e7baf;
-  --bg-secondary-button: #28242c;
-  --bg-secondary-button-hover: #332e38;
+  --bg-primary: #09090b;
+  --bg-secondary: #111113;
+  --bg-tertiary: #18181b;
+  --bg-overlay: #141417;
+  --bg-hover: #27272a;
+  --bg-selected: #27272a;
+  --bg-selected-outline: #a1a1aa;
+  --bg-user-msg: color-mix(in srgb, var(--text-brand) 8%, var(--bg-secondary));
+  --bg-assistant-msg: #111113;
+  --bg-assistant-msg-border: #27272a;
+  --bg-avatar: #18181b;
+  --bg-empty-action: #111113;
+  --bg-diff: #09090b;
+  --bg-input: #09090b;
+  --bg-button: #18181b;
+  --bg-button-hover: #27272a;
+  --bg-primary-button: #fafafa;
+  --bg-primary-button-hover: #e4e4e7;
+  --text-on-primary: #09090b;
+  --primary-button-fg: #09090b;
+  --bg-secondary-button: #18181b;
+  --bg-secondary-button-hover: #27272a;
   --bg-error: #2d1518;
-  --bg-status-neutral: #2a2533;
+  --bg-status-neutral: #1f1f23;
   --bg-status-ok: #0d2a1a;
   --bg-status-warn: #2a2410;
   --bg-status-danger: #2d1518;
@@ -165,42 +166,42 @@
   --bg-status-info-soft: #16283f;
   --bg-status-recovery: #241a38;
   --bg-status-running: #14263c;
-  --bg-status-queued: #282530;
+  --bg-status-queued: #1f1f23;
 
-  --border-default: #3d3548;
-  --border-muted: #332d3b;
-  --border-input: #3d3548;
-  --border-input-focus: #bca9e2;
+  --border-default: #27272a;
+  --border-muted: rgba(255, 255, 255, 0.08);
+  --border-input: #27272a;
+  --border-input-focus: #a1a1aa;
   --border-error: #f85149;
-  --border-dashed: #3d3548;
-  --border-empty-action: #584b6b;
+  --border-dashed: #27272a;
+  --border-empty-action: #3f3f46;
 
-  --text-primary: #eadef7;
-  --text-secondary: #a49ab1;
-  --text-muted: #9a8fa8;
-  --text-brand: #d2bdf5;
-  --text-link: #d2bdf5;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text-brand: #fafafa;
+  --text-link: #e4e4e7;
   --text-error: #f85149;
   --text-approve: #3fb950;
   --text-reject: #f85149;
   /* Chat muted layer derived like Codex's description color: text at reduced alpha */
   --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
-  --accent-primary: #d2bdf5;
+  --accent-primary: #fafafa;
   /* Success/approval stay semantic green: a status color must read the same
      no matter which accent the user picked (see monetExtract.ts contract). */
   --accent-success: #3fb950;
   --accent-warning: #d29922;
   --accent-danger: #f85149;
-  --accent-brand: #d2bdf5;
+  --accent-brand: #fafafa;
   --accent-info: #1c6fd0;
   --accent-recovery: #7a4fd0;
-  --accent-soft: rgba(210, 189, 245, 0.12);
+  --accent-soft: rgba(250, 250, 250, 0.09);
 
   --shadow-subtle: 0 1px 4px rgba(0, 0, 0, 0.18);
   --shadow-panel: 0 4px 16px rgba(0, 0, 0, 0.32);
   --shadow-elevated: 0 8px 28px rgba(0, 0, 0, 0.42);
-  --shadow-focus: 0 0 0 2px rgba(188, 169, 226, 0.3);
+  --shadow-focus: 0 0 0 2px rgba(250, 250, 250, 0.24);
   --shadow-user-msg: 0 1px 2px rgba(0, 0, 0, 0.35),
                      0 2px 8px rgba(0, 0, 0, 0.22);
 
@@ -211,35 +212,37 @@
                         0 4px 12px rgba(0, 0, 0, 0.05);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
                        0 8px 24px rgba(0, 0, 0, 0.07);
-  --bg-immersive: rgba(17, 21, 28, 0.38);
+  --bg-immersive: rgba(17, 17, 19, 0.38);
 
-  --scrollbar-thumb: rgba(125, 133, 144, 0.22);
-  --scrollbar-thumb-hover: rgba(125, 133, 144, 0.4);
+  --scrollbar-thumb: rgba(161, 161, 170, 0.22);
+  --scrollbar-thumb-hover: rgba(161, 161, 170, 0.4);
 }
 
 :root[data-theme="light"] {
   --bg-primary: #ffffff;
-  --bg-secondary: #faf7fd;
-  --bg-tertiary: #f3eef8;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f4f4f5;
   --bg-overlay: #ffffff;
-  --bg-hover: #f5f0fa;
-  --bg-selected: #ebdffa;
-  --bg-selected-outline: #675687;
-  --bg-user-msg: color-mix(in srgb, var(--text-brand) 10%, #f6f8fa);
+  --bg-hover: #f4f4f5;
+  --bg-selected: #f4f4f5;
+  --bg-selected-outline: #18181b;
+  --bg-user-msg: color-mix(in srgb, var(--text-brand) 6%, #fafafa);
   --bg-assistant-msg: #ffffff;
-  --bg-assistant-msg-border: #d6cce5;
-  --bg-avatar: #f4eff9;
-  --bg-empty-action: #faf7fd;
-  --bg-diff: #faf7fd;
-  --bg-input: #fdfcfe;
-  --bg-button: #f3eef8;
-  --bg-button-hover: #e8e0f2;
-  --bg-primary-button: #675687;
-  --bg-primary-button-hover: #7d6aa0;
-  --bg-secondary-button: #f4eff9;
-  --bg-secondary-button-hover: #e8e0f2;
+  --bg-assistant-msg-border: #e4e4e7;
+  --bg-avatar: #f4f4f5;
+  --bg-empty-action: #fafafa;
+  --bg-diff: #fafafa;
+  --bg-input: #ffffff;
+  --bg-button: #f4f4f5;
+  --bg-button-hover: #e4e4e7;
+  --bg-primary-button: #18181b;
+  --bg-primary-button-hover: #27272a;
+  --text-on-primary: #ffffff;
+  --primary-button-fg: #ffffff;
+  --bg-secondary-button: #f4f4f5;
+  --bg-secondary-button-hover: #e4e4e7;
   --bg-error: #ffe4df;
-  --bg-status-neutral: #f0edf5;
+  --bg-status-neutral: #f4f4f5;
   --bg-status-ok: #dafbe1;
   --bg-status-warn: #f9e7bc;
   --bg-status-danger: #ffdcd7;
@@ -247,42 +250,42 @@
   --bg-status-info-soft: #e2edfb;
   --bg-status-recovery: #e9defc;
   --bg-status-running: #dbe9fc;
-  --bg-status-queued: #f2eff7;
+  --bg-status-queued: #f4f4f5;
 
-  --border-default: #d9d1e6;
-  --border-muted: #ece7f3;
-  --border-input: #dcd5e9;
-  --border-input-focus: #675687;
+  --border-default: #d4d4d8;
+  --border-muted: #e4e4e7;
+  --border-input: #d4d4d8;
+  --border-input-focus: #18181b;
   --border-error: #f2b8ad;
-  --border-dashed: #dcd5e9;
-  --border-empty-action: #b9aad3;
+  --border-dashed: #d4d4d8;
+  --border-empty-action: #a1a1aa;
 
-  --text-primary: #241f2e;
-  --text-secondary: #6c6579;
-  --text-muted: #7b7389;
-  --text-brand: #675687;
-  --text-link: #675687;
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-muted: #71717a;
+  --text-brand: #18181b;
+  --text-link: #18181b;
   --text-error: #8f2525;
   --text-approve: #1a7f37;
   --text-reject: #8f2525;
   --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
-  --accent-primary: #675687;
+  --accent-primary: #18181b;
   /* Semantic success green — deliberately NOT derived from the accent. */
   --accent-success: #1a7f37;
   --accent-warning: #9a6700;
   --accent-danger: #cf222e;
-  --accent-brand: #675687;
+  --accent-brand: #18181b;
   --accent-info: #4a9eff;
   --accent-recovery: #b18aff;
-  --accent-soft: rgba(103, 86, 135, 0.1);
+  --accent-soft: rgba(24, 24, 27, 0.08);
 
-  --shadow-subtle: 0 1px 4px rgba(26, 37, 38, 0.04);
-  --shadow-panel: 0 4px 16px rgba(26, 37, 38, 0.07);
-  --shadow-elevated: 0 8px 28px rgba(26, 37, 38, 0.12);
-  --shadow-focus: 0 0 0 2px rgba(103, 86, 135, 0.18);
-  --shadow-user-msg: 0 1px 2px rgba(26, 37, 38, 0.06),
-                     0 2px 6px rgba(26, 37, 38, 0.05);
+  --shadow-subtle: 0 1px 4px rgba(24, 24, 27, 0.04);
+  --shadow-panel: 0 4px 16px rgba(24, 24, 27, 0.07);
+  --shadow-elevated: 0 8px 28px rgba(24, 24, 27, 0.12);
+  --shadow-focus: 0 0 0 2px rgba(24, 24, 27, 0.16);
+  --shadow-user-msg: 0 1px 2px rgba(24, 24, 27, 0.06),
+                     0 2px 6px rgba(24, 24, 27, 0.05);
 
   /* Card boundary & subtle elevation */
   --border-card: rgba(0, 0, 0, 0.08);
@@ -291,33 +294,33 @@
                         0 4px 12px rgba(0, 0, 0, 0.04);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
                        0 8px 24px rgba(0, 0, 0, 0.07);
-  --bg-immersive: rgba(246, 248, 250, 0.70);
+  --bg-immersive: rgba(250, 250, 250, 0.72);
 
-  --scrollbar-thumb: rgba(31, 35, 40, 0.18);
-  --scrollbar-thumb-hover: rgba(31, 35, 40, 0.32);
+  --scrollbar-thumb: rgba(24, 24, 27, 0.16);
+  --scrollbar-thumb-hover: rgba(24, 24, 27, 0.30);
 }
 
 /* Background customization CSS variables */
 :root {
-  --bg-primary-rgb: 10, 14, 20;
-  --bg-secondary-rgb: 17, 21, 28;
-  --bg-tertiary-rgb: 26, 31, 41;
-  --bg-hover-rgb: 26, 31, 41;
-  --bg-selected-rgb: 13, 46, 42;
-  --bg-input-rgb: 10, 14, 20;
-  --bg-button-rgb: 26, 31, 41;
-  --bg-button-hover-rgb: 36, 42, 54;
+  --bg-primary-rgb: 9, 9, 11;
+  --bg-secondary-rgb: 17, 17, 19;
+  --bg-tertiary-rgb: 24, 24, 27;
+  --bg-hover-rgb: 39, 39, 42;
+  --bg-selected-rgb: 39, 39, 42;
+  --bg-input-rgb: 9, 9, 11;
+  --bg-button-rgb: 24, 24, 27;
+  --bg-button-hover-rgb: 39, 39, 42;
 }
 
 :root[data-theme="light"] {
   --bg-primary-rgb: 255, 255, 255;
-  --bg-secondary-rgb: 246, 248, 250;
-  --bg-tertiary-rgb: 238, 240, 243;
-  --bg-hover-rgb: 238, 244, 242;
-  --bg-selected-rgb: 223, 241, 236;
-  --bg-input-rgb: 251, 252, 250;
-  --bg-button-rgb: 238, 242, 239;
-  --bg-button-hover-rgb: 223, 232, 228;
+  --bg-secondary-rgb: 250, 250, 250;
+  --bg-tertiary-rgb: 244, 244, 245;
+  --bg-hover-rgb: 244, 244, 245;
+  --bg-selected-rgb: 244, 244, 245;
+  --bg-input-rgb: 255, 255, 255;
+  --bg-button-rgb: 244, 244, 245;
+  --bg-button-hover-rgb: 228, 228, 231;
 }
 
 /* ===== Material-aware surface tokens =====
@@ -842,8 +845,8 @@ button {
 }
 
 .agent-view-btn.active {
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary, #ffffff);
 }
 
 .agent-topology-section {
@@ -4160,7 +4163,7 @@ input:focus {
 .primary-button,
 .btn-primary {
   background: var(--bg-primary-button);
-  color: #ffffff;
+  color: var(--text-on-primary, #ffffff);
   font-weight: 600;
 }
 

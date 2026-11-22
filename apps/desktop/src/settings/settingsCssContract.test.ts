@@ -111,7 +111,7 @@ describe('settings integrated material contract', () => {
   it('retains functional focus, semantic risk accents, and modal elevation', () => {
     expectSelectorDeclarations(css, '.settings-select:focus', /border-color\s*:\s*var\(--border-input-focus\)\s*;/)
     expectSelectorDeclarations(css, '.settings-textarea:focus', /border-color\s*:\s*var\(--border-input-focus\)\s*;/)
-    expect(inputSource).toContain('focus-visible:ring-1')
+    expect(inputSource).toMatch(/focus-visible:(?:ring-1|shadow-\[var\(--focus-ring)/)
 
     expectSelectorDeclarations(css, '.tool-discovery-card.risky', /box-shadow\s*:\s*inset\s+0\s+0\s+0\s+1px[^;]*var\(--accent-danger\)/)
     expectSelectorDeclarations(css, '.model-provider-row.issue', /box-shadow\s*:\s*inset\s+0\s+0\s+0\s+1px[^;]*var\(--accent-danger\)/)

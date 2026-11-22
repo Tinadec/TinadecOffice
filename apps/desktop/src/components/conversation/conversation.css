@@ -57,10 +57,10 @@
   .conversation-text-button:focus-visible { outline: 1px solid hsl(var(--ring)); }
   .conversation-text-button.is-primary {
     border-color: transparent;
-    color: hsl(var(--primary-foreground));
-    background: var(--accent-primary);
+    color: var(--text-on-primary, #ffffff);
+    background: var(--bg-primary-button);
   }
-  .conversation-text-button.is-primary:hover { background: color-mix(in srgb, var(--accent-primary) 88%, black); }
+  .conversation-text-button.is-primary:hover { background: var(--bg-primary-button-hover); }
   .conversation-text-button:disabled { opacity: 0.5; cursor: default; }
 
   .conversation-edit-input {

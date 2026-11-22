@@ -105,11 +105,11 @@ function buildXtermTheme(): XtermTheme {
 
   if (isDark) {
     return {
-      background: getVar('--bg-primary', '#15121a'),
-      foreground: getVar('--text-primary', '#eadef7'),
-      cursor: getVar('--accent-primary', '#d2bdf5'),
-      cursorAccent: getVar('--bg-primary', '#15121a'),
-      selectionBackground: withAlpha(getVar('--accent-primary', '#d2bdf5'), 0.25),
+      background: getVar('--bg-primary', '#09090b'),
+      foreground: getVar('--text-primary', '#fafafa'),
+      cursor: getVar('--accent-primary', '#fafafa'),
+      cursorAccent: getVar('--bg-primary', '#09090b'),
+      selectionBackground: withAlpha(getVar('--accent-primary', '#fafafa'), 0.25),
       black: '#484f58',
       red: getVar('--text-error', '#f85149'),
       green: '#3fb950',
@@ -131,9 +131,9 @@ function buildXtermTheme(): XtermTheme {
     return {
       background: getVar('--bg-primary', '#ffffff'),
       foreground: getVar('--text-primary', '#1f2328'),
-      cursor: getVar('--accent-primary', '#675687'),
+      cursor: getVar('--accent-primary', '#18181b'),
       cursorAccent: getVar('--bg-primary', '#ffffff'),
-      selectionBackground: withAlpha(getVar('--accent-primary', '#675687'), 0.2),
+      selectionBackground: withAlpha(getVar('--accent-primary', '#18181b'), 0.2),
       black: '#1f2328',
       red: '#cf222e',
       green: '#1a7f37',

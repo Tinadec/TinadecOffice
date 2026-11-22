@@ -878,6 +878,13 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   transition: transform 0.16s ease-out;
 }
 
+/* Monochrome & Warm Ink presets: diagonal dark/light split swatch with a 1px hairline
+   so neither half dissolves into a dark or light page surface. */
+.accent-color-dot--split {
+  background: linear-gradient(135deg, var(--swatch-dark) 50%, var(--swatch-light) 50%);
+  box-shadow: inset 0 0 0 1px var(--border-default), 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
 /* Unpicked custom entry: a hue wheel instead of a stored color, so the swatch
    reads as "pick anything here" rather than as another preset. Once a custom
    color is committed the dot falls back to `--swatch-color`. */
@@ -901,6 +908,7 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   left: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.72));
   mix-blend-mode: normal;
   pointer-events: none;
 }

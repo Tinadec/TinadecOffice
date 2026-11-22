@@ -3629,6 +3629,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
     customSummary: "カスタムの OpenAI 互換エンドポイント",
   },
   accentColors: {
+    monochrome: "モノクローム",
+    warm: "ウォームペーパー",
     blue: "ブルー",
     green: "グリーン",
     purple: "パープル",

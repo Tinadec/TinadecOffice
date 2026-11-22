@@ -220,6 +220,22 @@ describe('AppearanceSection custom swatch states', () => {
     await wrapper.findAll('.accent-color-swatch')[0]!.trigger('click')
     expect(customDot(wrapper).classes()).toContain('accent-color-dot--spectrum')
   })
+
+  it('renders monochrome and warm first with diagonal split dark/light swatches', async () => {
+    const wrapper = mountSection()
+    const presetSwatches = wrapper.findAll('[data-accent-key]')
+    expect(presetSwatches.slice(0, 2).map((el) => el.attributes('data-accent-key'))).toEqual([
+      'monochrome',
+      'warm',
+    ])
+    expect(presetSwatches[0]!.find('.accent-color-dot').classes()).toContain('accent-color-dot--split')
+    expect(presetSwatches[1]!.find('.accent-color-dot').classes()).toContain('accent-color-dot--split')
+    expect(presetSwatches[0]!.classes()).toContain('active')
+
+    await presetSwatches[1]!.trigger('click')
+    expect(localStorage.getItem('tinadec-accent-color')).toBe('warm')
+    expect(presetSwatches[1]!.classes()).toContain('active')
+  })
 })
 
 describe('AppearanceSection follow-background option', () => {

@@ -361,8 +361,8 @@ function submitReply() {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--accent-primary, #7c3aed);
-  color: #161022;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;

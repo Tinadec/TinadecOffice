@@ -2213,7 +2213,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
 
 .git-execute-btn {
   background: var(--bg-primary-button);
-  color: hsl(var(--primary-foreground));
+  color: var(--text-on-primary, #ffffff);
   border-color: var(--bg-primary-button);
 }
 
@@ -2921,8 +2921,8 @@ function handleCommitKeydown(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary, #ffffff);
   border: none;
   padding: 7px 12px;
   font-size: 12px;
@@ -2932,7 +2932,7 @@ function handleCommitKeydown(e: KeyboardEvent) {
 }
 
 .git-split-main-btn:hover:not(:disabled) {
-  opacity: 0.92;
+  background: var(--bg-primary-button-hover);
 }
 
 .git-split-main-btn:disabled {
@@ -2945,15 +2945,15 @@ function handleCommitKeydown(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   padding: 0 8px;
-  background: color-mix(in srgb, var(--accent-primary) 85%, #000);
-  color: #fff;
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary, #ffffff);
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-left: 1px solid color-mix(in srgb, var(--text-on-primary, #ffffff) 22%, transparent);
   cursor: pointer;
 }
 
 .git-split-menu-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-primary) 75%, #000);
+  background: var(--bg-primary-button-hover);
 }
 
 .git-split-dropdown-menu {

@@ -521,9 +521,9 @@ defineExpose({ fitView: scheduleFit, autoLayout, connect: handleConnect })
   cursor: not-allowed;
 }
 .pp-tool-btn.primary {
-  border-color: var(--accent-primary);
-  background: var(--accent-primary);
-  color: var(--text-on-accent, #fff);
+  border-color: var(--bg-primary-button, var(--accent-primary));
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
 }
 .pp-tool-btn.danger:hover:not(:disabled) {
   border-color: var(--accent-danger);

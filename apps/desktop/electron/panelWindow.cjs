@@ -150,7 +150,7 @@ function buildMainWindowOptions(platform = process.platform, { electronDir = __d
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    backgroundColor: '#1e1e2e',
+    backgroundColor: '#09090b',
     title: 'TinadecOffice',
     ...(icon ? { icon } : {}),
     titleBarStyle: 'hidden',
@@ -189,7 +189,7 @@ function buildPanelWindowOptions({
     minHeight: 400,
     x,
     y,
-    backgroundColor: '#0d1117',
+    backgroundColor: '#09090b',
     title: title || 'Panel',
     ...(icon ? { icon } : {}),
     ...(isDarwin

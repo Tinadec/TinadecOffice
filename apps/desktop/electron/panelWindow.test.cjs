@@ -122,6 +122,7 @@ test('buildMainWindowOptions configures darwin native hidden chrome and traffic 
 
   assert.equal(darwinOpts.titleBarStyle, 'hidden');
   assert.deepEqual(darwinOpts.trafficLightPosition, { x: 20, y: 20 });
+  assert.equal(darwinOpts.backgroundColor, '#09090b');
   assert.equal('icon' in darwinOpts, false, 'darwin main window must not pass .ico');
   assert.equal('frame' in darwinOpts, false);
   assert.equal('autoHideMenuBar' in darwinOpts, false);
@@ -138,6 +139,7 @@ test('buildMainWindowOptions keeps win32 and linux options intact', () => {
   assert.equal(winOpts.titleBarStyle, 'hidden');
   assert.equal('trafficLightPosition' in winOpts, false);
   assert.equal(winOpts.autoHideMenuBar, true);
+  assert.equal(winOpts.backgroundColor, '#09090b');
   assert.ok(winOpts.icon.endsWith('tinadec.ico'));
 });
 
@@ -159,6 +161,7 @@ test('buildPanelWindowOptions replaces frame:false with hidden titlebar and traf
   assert.equal('icon' in darwinPanel, false, 'darwin panel must not pass .ico');
   assert.equal(darwinPanel.width, 480);
   assert.equal(darwinPanel.height, 680);
+  assert.equal(darwinPanel.backgroundColor, '#09090b');
   assert.equal(darwinPanel.title, 'Git');
 });
 
@@ -176,6 +179,7 @@ test('buildPanelWindowOptions preserves frameless win32/linux options unchanged'
 
   assert.equal(winPanel.frame, false);
   assert.equal(winPanel.autoHideMenuBar, true);
+  assert.equal(winPanel.backgroundColor, '#09090b');
   assert.equal('titleBarStyle' in winPanel, false);
   assert.equal('trafficLightPosition' in winPanel, false);
   assert.ok(winPanel.icon.endsWith('tinadec.ico'));

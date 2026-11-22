@@ -50,33 +50,33 @@ function buildFallback(message: string): void {
   const overlay = document.createElement('div')
   overlay.id = 'renderer-error-fallback'
   overlay.style.cssText =
-    'position:fixed;inset:0;z-index:2147483647;background:var(--bg-primary,#15121a);' +
+    'position:fixed;inset:0;z-index:2147483647;background:var(--bg-primary,#09090b);' +
     'display:flex;align-items:center;justify-content:center;'
 
   const card = document.createElement('div')
   card.style.cssText =
     'max-width:560px;width:calc(100% - 48px);padding:24px 28px;' +
-    'border:1px solid var(--border-muted,#2a2a3a);border-radius:12px;' +
-    'background:var(--surface-section,#131722);box-shadow:var(--shadow-panel,none);' +
+    'border:1px solid var(--border-muted,rgba(255,255,255,0.08));border-radius:12px;' +
+    'background:var(--surface-section,#111113);box-shadow:var(--shadow-panel,none);' +
     'display:flex;flex-direction:column;gap:16px;'
 
   const title = document.createElement('h1')
-  title.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--text-primary,#e6e6e6);'
+  title.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--text-primary,#fafafa);'
   title.textContent = '应用界面出现错误 / UI crashed'
 
   const pre = document.createElement('pre')
   pre.style.cssText =
     'margin:0;padding:12px;overflow:auto;max-height:180px;font-size:12px;line-height:1.5;' +
-    'font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text-secondary,#9aa0aa);' +
-    'background:var(--bg-primary,#15121a);border-radius:8px;white-space:pre-wrap;word-break:break-all;'
+    'font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text-secondary,#a1a1aa);' +
+    'background:var(--bg-primary,#09090b);border-radius:8px;white-space:pre-wrap;word-break:break-all;'
   pre.textContent = message.slice(0, 2000)
 
   const reloadBtn = document.createElement('button')
   reloadBtn.type = 'button'
   reloadBtn.textContent = '重新加载 / Reload'
   reloadBtn.style.cssText =
-    'align-self:flex-start;padding:8px 16px;font-size:13px;font-weight:500;color:#fff;' +
-    'background:var(--accent-brand,#d2bdf5);border:none;border-radius:8px;cursor:pointer;'
+    'align-self:flex-start;padding:8px 16px;font-size:13px;font-weight:500;color:var(--text-on-primary,#09090b);' +
+    'background:var(--bg-primary-button,#fafafa);border:none;border-radius:8px;cursor:pointer;'
   reloadBtn.addEventListener('click', () => {
     const w = window as unknown as { tinadec?: { restartApp?: () => Promise<unknown> } }
     if (w.tinadec?.restartApp) {

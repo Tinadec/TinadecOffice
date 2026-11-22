@@ -10,15 +10,15 @@
       // 逻辑与 useTheme.ts 的 applyTheme/applyAccentColor 一致；main.ts 执行后会幂等覆盖。
       (function () {
         var theme = localStorage.getItem('tinadec-theme') || 'dark';
-        var accent = localStorage.getItem('tinadec-accent-color') || 'purple';
-        // One-shot migration off the retired blue default (mirrors useTheme.ts),
-        // so the first frame is already lilac instead of flashing blue.
+        var accent = localStorage.getItem('tinadec-accent-color') || 'monochrome';
+        // One-shot migration off retired defaults (mirrors useTheme.ts),
+        // so the first frame is already monochrome instead of flashing lilac/blue.
         try {
-          if (!localStorage.getItem('tinadec-accent-migrated-lilac')) {
-            localStorage.setItem('tinadec-accent-migrated-lilac', '1');
-            if (accent === 'blue') {
-              accent = 'purple';
-              localStorage.setItem('tinadec-accent-color', 'purple');
+          if (!localStorage.getItem('tinadec-accent-migrated-monochrome')) {
+            localStorage.setItem('tinadec-accent-migrated-monochrome', '1');
+            if (accent === 'purple' || accent === 'blue') {
+              accent = 'monochrome';
+              localStorage.setItem('tinadec-accent-color', 'monochrome');
             }
           }
         } catch (e) { /* storage disabled: fall through with whatever we read */ }
@@ -28,6 +28,8 @@
         document.documentElement.setAttribute('data-theme', theme);
         // accentBrand 颜色映射（与 useTheme.ts ACCENT_COLORS 一致）
         var brandColors = {
+          monochrome: { dark: '#fafafa', light: '#18181b' },
+          warm:   { dark: '#CA7554', light: '#CA7554' },
           blue:   { dark: '#58a6ff', light: '#1f6feb' },
           green:  { dark: '#3fb950', light: '#1a7f37' },
           purple: { dark: '#d2bdf5', light: '#675687' },
@@ -37,7 +39,7 @@
           cyan:   { dark: '#56d4dd', light: '#087990' },
           yellow: { dark: '#d29922', light: '#9a6700' },
         };
-        var c = (brandColors[accent] || brandColors.purple)[theme === 'dark' ? 'dark' : 'light'];
+        var c = (brandColors[accent] || brandColors.monochrome)[theme === 'dark' ? 'dark' : 'light'];
         // 自定义主题色：读回用户上次选的色值，避免启动瞬间闪回默认色。
         var custom = localStorage.getItem('tinadec-custom-accent');
         if (accent === 'custom' && custom && /^#[0-9a-fA-F]{6}$/.test(custom)) {
@@ -63,7 +65,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #15121a; /* 暗色默认（与 --bg-primary 同值）；亮色由下方属性选择器覆盖 */
+        background: #09090b; /* 暗色默认（与 --bg-primary 同值）；亮色由下方属性选择器覆盖 */
       }
       :root[data-theme="light"] .splash-placeholder {
         background: #ffffff;
@@ -75,7 +77,7 @@
       .splash-placeholder svg {
         height: var(--splash-logo-height);
         width: auto;
-        color: var(--accent-brand, #d2bdf5); /* 跟随主题强调色，fallback 为默认淡紫 */
+        color: var(--accent-brand, #fafafa); /* 跟随主题强调色，fallback 为默认极简白 */
       }
     </style>
   </head>

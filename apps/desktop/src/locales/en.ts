@@ -3220,6 +3220,8 @@ agentAvatarSaveFailed: 'Could not save the avatar',
     customSummary: 'Custom OpenAI-compatible endpoint',
   },
   accentColors: {
+    monochrome: 'Monochrome',
+    warm: 'Warm Paper',
     blue: 'Blue',
     green: 'Green',
     purple: 'Purple',

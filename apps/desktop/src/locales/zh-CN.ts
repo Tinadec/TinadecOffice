@@ -3218,6 +3218,8 @@ agentAvatarSaveFailed: '形象保存失败',
     customSummary: '自定义 OpenAI 兼容端点',
   },
   accentColors: {
+    monochrome: '极简黑白',
+    warm: '暖墨纸韵',
     blue: '蓝色',
     green: '绿色',
     purple: '紫色',

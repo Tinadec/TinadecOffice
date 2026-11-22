@@ -3629,6 +3629,8 @@ agentAvatarSaveFailed: "形象儲存失敗",
     customSummary: "自定義 OpenAI 相容端點",
   },
   accentColors: {
+    monochrome: "極簡黑白",
+    warm: "暖墨紙韻",
     blue: "藍色",
     green: "綠色",
     purple: "紫色",

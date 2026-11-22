@@ -3,6 +3,7 @@ import { ref, watch, type Ref } from 'vue'
 import {
   argbFromHex,
   buildDynamicVars,
+  buildMonochromeVars,
   DYNAMIC_VAR_NAMES,
   isValidHexColor,
   type DynamicVars,
@@ -11,6 +12,12 @@ import { getDynamicPaletteRef } from './useDynamicPalette'
 
 export type Theme = 'dark' | 'light' | 'system'
 
+/** Built-in pure neutral zinc monochrome preset (shipped default). */
+export const MONOCHROME_ACCENT_KEY = 'monochrome'
+
+/** Built-in Anthropic Warm Ink & Paper minimalist preset. */
+export const WARM_ACCENT_KEY = 'warm'
+
 /** Pseudo accent key: colors derived from the image background (Monet). */
 export const DYNAMIC_ACCENT_KEY = 'dynamic'
 
@@ -18,27 +25,30 @@ export const DYNAMIC_ACCENT_KEY = 'dynamic'
 export const CUSTOM_ACCENT_KEY = 'custom'
 
 /** Seed used when `custom` is selected before a color was ever picked. */
-const CUSTOM_ACCENT_FALLBACK = '#d2bdf5'
+const CUSTOM_ACCENT_FALLBACK = '#18181b'
 
 /**
- * The shipped default. This is the "poster lilac" the brand moved to; the CSS
- * floor in styles.css carries the same two hex values so the app looks the
- * same whether or not the Monet injection has run.
+ * The shipped default. Pure zero-hue zinc monochrome; the CSS floor in
+ * styles.css carries the identical dark/light neutral tokens so the first
+ * paint matches before runtime token injection runs.
  */
-export const DEFAULT_ACCENT = 'purple'
+export const DEFAULT_ACCENT = MONOCHROME_ACCENT_KEY
 
 /**
- * Builds before the lilac switch persisted the old default (`blue`) into
- * localStorage the first time they booted, so changing the constant alone
- * would leave every existing install on blue. The marker makes this a
- * one-shot migration: anyone who deliberately picks blue afterwards keeps it.
+ * Earlier builds persisted the old shipped defaults (`blue`, then `purple`) into
+ * localStorage on first boot, so changing `DEFAULT_ACCENT` alone would leave
+ * existing installs on those retired defaults. This one-shot marker migrates
+ * `purple` / `blue` once to `monochrome`, leaving `dynamic`, `custom`, `green`,
+ * `orange`, `warm`, or any post-migration manual pick untouched.
  */
-const ACCENT_MIGRATION_KEY = 'tinadec-accent-migrated-lilac'
-const LEGACY_DEFAULT_ACCENT = 'blue'
+const ACCENT_MIGRATION_KEY = 'tinadec-accent-migrated-monochrome'
+const LEGACY_DEFAULT_ACCENTS = new Set(['purple', 'blue'])
 
 export interface AccentColor {
   key: string
   labelKey: string
+  /** Optional diagonal dark/light split swatch `[darkHalf, lightHalf]` for neutral presets. */
+  swatchSplit?: [string, string]
   dark: {
     accentPrimary: string
     accentBrand: string
@@ -56,6 +66,44 @@ export interface AccentColor {
 }
 
 export const ACCENT_COLORS: AccentColor[] = [
+  {
+    key: MONOCHROME_ACCENT_KEY,
+    labelKey: 'accentColors.monochrome',
+    swatchSplit: ['#18181b', '#fafafa'],
+    dark: {
+      accentPrimary: '#fafafa',
+      accentBrand: '#fafafa',
+      textBrand: '#fafafa',
+      borderInputFocus: '#a1a1aa',
+      shadowFocus: '0 0 0 2px rgba(250, 250, 250, 0.24)',
+    },
+    light: {
+      accentPrimary: '#18181b',
+      accentBrand: '#18181b',
+      textBrand: '#18181b',
+      borderInputFocus: '#18181b',
+      shadowFocus: '0 0 0 2px rgba(24, 24, 27, 0.16)',
+    },
+  },
+  {
+    key: WARM_ACCENT_KEY,
+    labelKey: 'accentColors.warm',
+    swatchSplit: ['#1c1917', '#f1e7da'],
+    dark: {
+      accentPrimary: '#e7e2d8',
+      accentBrand: '#CA7554',
+      textBrand: '#ca7554',
+      borderInputFocus: '#b8afa2',
+      shadowFocus: '0 0 0 2px rgba(231, 226, 216, 0.24)',
+    },
+    light: {
+      accentPrimary: '#1c1917',
+      accentBrand: '#CA7554',
+      textBrand: '#ca7554',
+      borderInputFocus: '#1c1917',
+      shadowFocus: '0 0 0 2px rgba(28, 25, 23, 0.16)',
+    },
+  },
   {
     key: 'blue',
     labelKey: 'accentColors.blue',
@@ -93,24 +141,6 @@ export const ACCENT_COLORS: AccentColor[] = [
     },
   },
   {
-    key: 'purple',
-    labelKey: 'accentColors.purple',
-    dark: {
-      accentPrimary: '#d2bdf5',
-      accentBrand: '#d2bdf5',
-      textBrand: '#d2bdf5',
-      borderInputFocus: '#d2bdf5',
-      shadowFocus: '0 0 0 3px rgba(210, 189, 245, 0.3)',
-    },
-    light: {
-      accentPrimary: '#675687',
-      accentBrand: '#675687',
-      textBrand: '#675687',
-      borderInputFocus: '#675687',
-      shadowFocus: '0 0 0 3px rgba(103, 86, 135, 0.14)',
-    },
-  },
-  {
     key: 'orange',
     labelKey: 'accentColors.orange',
     dark: {
@@ -126,6 +156,24 @@ export const ACCENT_COLORS: AccentColor[] = [
       textBrand: '#953800',
       borderInputFocus: '#bc4c00',
       shadowFocus: '0 0 0 3px rgba(188, 76, 0, 0.14)',
+    },
+  },
+  {
+    key: 'purple',
+    labelKey: 'accentColors.purple',
+    dark: {
+      accentPrimary: '#d2bdf5',
+      accentBrand: '#d2bdf5',
+      textBrand: '#d2bdf5',
+      borderInputFocus: '#d2bdf5',
+      shadowFocus: '0 0 0 3px rgba(210, 189, 245, 0.3)',
+    },
+    light: {
+      accentPrimary: '#675687',
+      accentBrand: '#675687',
+      textBrand: '#675687',
+      borderInputFocus: '#675687',
+      shadowFocus: '0 0 0 3px rgba(103, 86, 135, 0.14)',
     },
   },
   {
@@ -220,9 +268,9 @@ function getStoredAccentColor(): Ref<string> {
     try {
       if (!localStorage.getItem(ACCENT_MIGRATION_KEY)) {
         localStorage.setItem(ACCENT_MIGRATION_KEY, '1')
-        // Only the value the old build wrote for us is migrated — a user who
-        // picked a colour of their own (custom / dynamic / green…) is left alone.
-        if (ref0.value === LEGACY_DEFAULT_ACCENT) ref0.value = DEFAULT_ACCENT
+        // Only the values previous builds wrote as shipped defaults are migrated
+        // once — users who picked dynamic/custom/green/orange/warm stay untouched.
+        if (LEGACY_DEFAULT_ACCENTS.has(ref0.value)) ref0.value = DEFAULT_ACCENT
       }
     } catch {
       // Private mode / storage disabled: the stored value still wins.
@@ -254,28 +302,46 @@ export function __resetThemeForTests(): void {
 }
 
 /**
- * Unified color pipeline: every accent — 8 presets and the extracted
- * wallpaper color alike — seeds the same Monet tonal builder and injects
- * the same full-surface token set. One parameter, one code path.
+ * Chromatic preset seeds feeding the Monet tonal builder. Monochrome & Warm
+ * bypass Monet completely via `buildMonochromeVars`.
  */
 const PRESET_SEEDS: Record<string, number> = Object.fromEntries(
-  ACCENT_COLORS.map((c) => [c.key, argbFromHex(c.dark.accentPrimary)]),
+  ACCENT_COLORS
+    .filter((c) => c.key !== MONOCHROME_ACCENT_KEY && c.key !== WARM_ACCENT_KEY)
+    .map((c) => [c.key, argbFromHex(c.dark.accentPrimary)]),
 )
-const FALLBACK_SEED = PRESET_SEEDS.blue!
 
-/** Presets are pure functions of (seed, theme) — build each combo once. */
+/** Presets are pure functions of (key, theme) — build each combo once. */
 const presetVarsCache = new Map<string, DynamicVars>()
 
 function resolveAccentVars(key: string, theme: 'dark' | 'light'): DynamicVars | null {
+  if (key === MONOCHROME_ACCENT_KEY) {
+    const cacheKey = `${key}:${theme}`
+    let vars = presetVarsCache.get(cacheKey)
+    if (!vars) {
+      vars = buildMonochromeVars(theme, 'neutral')
+      presetVarsCache.set(cacheKey, vars)
+    }
+    return vars
+  }
+  if (key === WARM_ACCENT_KEY) {
+    const cacheKey = `${key}:${theme}`
+    let vars = presetVarsCache.get(cacheKey)
+    if (!vars) {
+      vars = buildMonochromeVars(theme, 'warm')
+      presetVarsCache.set(cacheKey, vars)
+    }
+    return vars
+  }
   if (key === DYNAMIC_ACCENT_KEY) {
     // Not memoized: a fresh extraction must take effect immediately.
-    // Before the first extraction lands (no wallpaper, or still booting) the
-    // pipeline falls back to the default brand seed. Returning null here used
-    // to leave every surface at the raw CSS values, which is how a user could
-    // end up staring at a palette nobody picked.
+    // Before the first extraction lands (no wallpaper, or still booting), fall
+    // back to neutral monochrome rather than a hardcoded chromatic hue.
     const sourceColor = getDynamicPaletteRef().value?.sourceColor
-    const seed = typeof sourceColor === 'number' ? sourceColor >>> 0 : FALLBACK_SEED
-    return buildDynamicVars(seed, theme)
+    if (typeof sourceColor === 'number') {
+      return buildDynamicVars(sourceColor >>> 0, theme)
+    }
+    return buildMonochromeVars(theme, 'neutral')
   }
   if (key === CUSTOM_ACCENT_KEY) {
     // Not memoized: the seed changes every time the user moves a slider.
@@ -284,7 +350,8 @@ function resolveAccentVars(key: string, theme: 'dark' | 'light'): DynamicVars | 
   const cacheKey = `${key}:${theme}`
   let vars = presetVarsCache.get(cacheKey)
   if (!vars) {
-    vars = buildDynamicVars(PRESET_SEEDS[key] ?? FALLBACK_SEED, theme)
+    const seed = PRESET_SEEDS[key]
+    vars = seed !== undefined ? buildDynamicVars(seed, theme) : buildMonochromeVars(theme, 'neutral')
     presetVarsCache.set(cacheKey, vars)
   }
   return vars

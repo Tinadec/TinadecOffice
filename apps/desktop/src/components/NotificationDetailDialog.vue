@@ -635,9 +635,9 @@ onBeforeUnmount(() => {
 }
 
 .detail-dialog__primary {
-  border-color: var(--accent-primary, #d2bdf5) !important;
-  background: var(--accent-primary, #d2bdf5);
-  color: #15121a;
+  border-color: var(--bg-primary-button, var(--accent-primary)) !important;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
   font-weight: 600;
 }
 

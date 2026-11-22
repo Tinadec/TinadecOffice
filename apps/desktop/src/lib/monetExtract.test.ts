@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   argbFromHex,
   buildDynamicVars,
+  buildMonochromeVars,
+  contrastForeground,
   contrastRatio,
   DYNAMIC_VAR_NAMES,
   extractSourceColor,
@@ -10,6 +12,7 @@ import {
   hslFromHex,
   isValidHexColor,
   previewSwatches,
+  relativeLuminance,
 } from './monetExtract'
 
 /** Pack an opaque ARGB int (unsigned). */
@@ -235,5 +238,141 @@ describe('custom accent color helpers', () => {
     expect(contrastRatio('#101820', '#0a0e14')).toBeLessThan(4.5)
     // Mid blue on white passes it.
     expect(contrastRatio('#0969da', '#ffffff')).toBeGreaterThan(4.5)
+  })
+})
+
+describe('buildMonochromeVars & contrast foreground tokens', () => {
+  it('builds pure zero-hue zinc neutral dark and light palettes', () => {
+    const dark = buildMonochromeVars('dark', 'neutral')
+    expect(dark['--bg-primary']).toBe('#09090b')
+    expect(dark['--bg-secondary']).toBe('#111113')
+    expect(dark['--surface-raised']).toBe('#18181b')
+    expect(dark['--surface-hover']).toBe('#27272a')
+    expect(dark['--text-primary']).toBe('#fafafa')
+    expect(dark['--text-secondary']).toBe('#a1a1aa')
+    expect(dark['--text-muted']).toBe('#71717a')
+    expect(dark['--border-muted']).toBe('rgba(255, 255, 255, 0.08)')
+    expect(dark['--border-default']).toBe('#27272a')
+    expect(dark['--border-input-focus']).toBe('#a1a1aa')
+    expect(dark['--accent-primary']).toBe('#fafafa')
+    expect(dark['--accent-brand']).toBe('#fafafa')
+    expect(dark['--text-brand']).toBe('#fafafa')
+    expect(dark['--text-link']).toBe('#e4e4e7')
+    expect(dark['--bg-primary-button']).toBe('#fafafa')
+    expect(dark['--bg-primary-button-hover']).toBe('#e4e4e7')
+    expect(dark['--text-on-primary']).toBe('#09090b')
+    expect(dark['--primary-button-fg']).toBe('#09090b')
+    expect(dark['--shadow-focus']).toBe('0 0 0 2px rgba(250, 250, 250, 0.24)')
+    expect(dark['--background']).toBe('240 10% 4%')
+    expect(dark['--card']).toBe('240 6% 10%')
+    expect(dark['--primary']).toBe('0 0% 98%')
+    expect(dark['--primary-foreground']).toBe('240 10% 4%')
+
+    const light = buildMonochromeVars('light', 'neutral')
+    expect(light['--bg-primary']).toBe('#ffffff')
+    expect(light['--bg-secondary']).toBe('#fafafa')
+    expect(light['--surface-raised']).toBe('#ffffff')
+    expect(light['--surface-hover']).toBe('#f4f4f5')
+    expect(light['--text-primary']).toBe('#09090b')
+    expect(light['--text-secondary']).toBe('#52525b')
+    expect(light['--text-muted']).toBe('#71717a')
+    expect(light['--border-muted']).toBe('#e4e4e7')
+    expect(light['--border-default']).toBe('#d4d4d8')
+    expect(light['--border-input-focus']).toBe('#18181b')
+    expect(light['--accent-primary']).toBe('#18181b')
+    expect(light['--accent-brand']).toBe('#18181b')
+    expect(light['--text-brand']).toBe('#18181b')
+    expect(light['--text-link']).toBe('#18181b')
+    expect(light['--bg-primary-button']).toBe('#18181b')
+    expect(light['--bg-primary-button-hover']).toBe('#27272a')
+    expect(light['--text-on-primary']).toBe('#ffffff')
+    expect(light['--primary-button-fg']).toBe('#ffffff')
+    expect(light['--shadow-focus']).toBe('0 0 0 2px rgba(24, 24, 27, 0.16)')
+    expect(light['--background']).toBe('0 0% 100%')
+    expect(light['--primary']).toBe('240 6% 10%')
+    expect(light['--primary-foreground']).toBe('0 0% 100%')
+  })
+
+  it('builds Anthropic Warm Ink & Paper dark and light palettes', () => {
+    const dark = buildMonochromeVars('dark', 'warm')
+    expect(dark['--bg-primary']).toBe('#141210')
+    expect(dark['--bg-secondary']).toBe('#1c1917')
+    expect(dark['--surface-raised']).toBe('#26221e')
+    expect(dark['--text-primary']).toBe('#f5f2eb')
+    expect(dark['--accent-primary']).toBe('#e7e2d8')
+    expect(dark['--accent-brand']).toBe('#CA7554')
+    expect(dark['--bg-primary-button']).toBe('#f5f2eb')
+    expect(dark['--bg-primary-button-hover']).toBe('#e7e2d8')
+    expect(dark['--text-on-primary']).toBe('#141210')
+    expect(dark['--primary-button-fg']).toBe('#141210')
+
+    const light = buildMonochromeVars('light', 'warm')
+    expect(light['--bg-primary']).toBe('#f8f6f1')
+    expect(light['--bg-secondary']).toBe('#f1eee7')
+    expect(light['--surface-raised']).toBe('#ffffff')
+    expect(light['--text-primary']).toBe('#1c1917')
+    expect(light['--accent-primary']).toBe('#1c1917')
+    expect(light['--accent-brand']).toBe('#CA7554')
+    expect(light['--bg-primary-button']).toBe('#1c1917')
+    expect(light['--bg-primary-button-hover']).toBe('#292524')
+    expect(light['--text-on-primary']).toBe('#ffffff')
+    expect(light['--primary-button-fg']).toBe('#ffffff')
+  })
+
+  it('covers identical keys across all monochrome variants and keeps semantic solids out', () => {
+    const baseKeys = Object.keys(buildMonochromeVars('dark', 'neutral')).sort()
+    expect(Object.keys(buildMonochromeVars('light', 'neutral')).sort()).toEqual(baseKeys)
+    expect(Object.keys(buildMonochromeVars('dark', 'warm')).sort()).toEqual(baseKeys)
+    expect(Object.keys(buildMonochromeVars('light', 'warm')).sort()).toEqual(baseKeys)
+    expect(DYNAMIC_VAR_NAMES).toContain('--text-on-primary')
+    expect(DYNAMIC_VAR_NAMES).toContain('--primary-button-fg')
+    for (const forbidden of ['--accent-success', '--text-approve', '--text-error', '--accent-danger']) {
+      expect(baseKeys).not.toContain(forbidden)
+    }
+  })
+
+  it('decouples achromatic sources from Monet chroma locking', () => {
+    for (const hex of ['#18181b', '#808080', '#fafafa', '#000000']) {
+      const dark = buildDynamicVars(argbFromHex(hex), 'dark')
+      const light = buildDynamicVars(argbFromHex(hex), 'light')
+      expect(dark['--bg-primary']).toBe('#09090b')
+      expect(dark['--text-on-primary']).toBe('#09090b')
+      expect(light['--bg-primary']).toBe('#ffffff')
+      expect(light['--text-on-primary']).toBe('#ffffff')
+      expect(previewSwatches(argbFromHex(hex))).toEqual(['#fafafa', '#18181b', '#27272a', '#09090b', '#fafafa'])
+    }
+  })
+
+  it('guarantees WCAG >= 4.5:1 primary button foreground contrast across monochrome and chromatic presets', () => {
+    expect(relativeLuminance('#ffffff')).toBeCloseTo(1, 4)
+    expect(relativeLuminance('#000000')).toBeCloseTo(0, 4)
+    expect(contrastForeground('#fafafa')).toBe('#09090b')
+    expect(contrastForeground('#18181b')).toBe('#ffffff')
+
+    for (const variant of ['neutral', 'warm'] as const) {
+      for (const theme of ['dark', 'light'] as const) {
+        const vars = buildMonochromeVars(theme, variant)
+        expect(vars['--text-on-primary']).toBe(vars['--primary-button-fg'])
+        expect(
+          contrastRatio(vars['--bg-primary-button']!, vars['--text-on-primary']!),
+          `${variant}/${theme} primary button contrast`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+
+    const chromaticSeeds = [
+      '#58a6ff', '#3fb950', '#f0883e', '#d2bdf5',
+      '#f778ba', '#f85149', '#56d4dd', '#d29922',
+    ]
+    for (const hex of chromaticSeeds) {
+      for (const theme of ['dark', 'light'] as const) {
+        const vars = buildDynamicVars(argbFromHex(hex), theme)
+        expect(vars['--text-on-primary']).toBe(vars['--primary-button-fg'])
+        expect(
+          contrastRatio(vars['--bg-primary-button']!, vars['--text-on-primary']!),
+          `${hex}/${theme} primary button contrast`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    }
   })
 })
