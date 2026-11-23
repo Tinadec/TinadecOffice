@@ -17,6 +17,7 @@
  *   node scripts/release-body.mjs v0.3.0 --update                   # 生成并推送到线上 release
  *   node scripts/release-body.mjs v0.3.0 --auto-notes auto-notes.md # 跳过 gh 调用
  *   node scripts/release-body.mjs v0.3.0 --repo Tinadec/TinadecOffice
+ *   node scripts/release-body.mjs nightly-723c7d5 --nightly --commit <sha> --display-version nightly-723c7d5 --out release-body.md
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -26,9 +27,9 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 把模板里的 `__GH_REPO__` / `__VERSION__` 换成本次发布的值（`v0.3.0` → `0.3.0`）。 */
-function fillTemplate(text, { repo, tag }) {
-  const version = tag.replace(/^v/, '')
+/** 把模板里的 `__GH_REPO__` / `__VERSION__` 换成本次发布的值（`v0.3.0` → `0.3.0`，或显式 `displayVersion`）。 */
+export function fillTemplate(text, { repo, tag, displayVersion = null }) {
+  const version = displayVersion || tag.replace(/^v/, '')
   // replaceAll 而非正则：仓库名里的 `.` `+` 之类不该被当成模式。
   return text.replaceAll('__GH_REPO__', repo).replaceAll('__VERSION__', version)
 }
@@ -50,19 +51,45 @@ function foldCommitLog(autoNotes) {
 
 /**
  * 纯函数式组装，不碰网络也不写文件，方便测试。
- * `autoNotes` 为空时只输出头图 + 手写正文 + 折叠的发布信息。
+ * `autoNotes` 为空时只输出头图 + 正文（或 Nightly 说明）+ 折叠的发布信息。
  */
-export function composeReleaseBody({ root, tag, repo, autoNotes }) {
+export function composeReleaseBody({
+  root,
+  tag,
+  repo,
+  autoNotes,
+  nightly = false,
+  commit = null,
+  displayVersion = null,
+}) {
   const read = (relative) => readFileSync(path.join(root, relative), 'utf8')
-  const substitute = (text) => fillTemplate(text, { repo, tag }).trimEnd()
+  const substitute = (text) => fillTemplate(text, { repo, tag, displayVersion }).trimEnd()
 
   const header = substitute(read('.github/release-header.md'))
   const footer = substitute(read('.github/release-footer.md'))
 
+  const parts = [header]
+
+  if (nightly) {
+    const shortSha = commit ? commit.slice(0, 7) : tag.replace(/^nightly-/, '')
+    const commitRef = commit ? `[\`${shortSha}\`](https://github.com/${repo}/commit/${commit})` : `\`${shortSha}\``
+    parts.push(
+      [
+        '## Nightly Preview Build',
+        '',
+        `This is an automated Nightly preview prerelease built from the \`main\` branch at commit ${commitRef}.`,
+        'It is intended for early testing and feedback; for stable usage, prefer the latest official release.',
+      ].join('\n'),
+    )
+    if (autoNotes?.trim()) parts.push(foldCommitLog(autoNotes))
+    parts.push(footer)
+
+    return { body: `${parts.join('\n\n')}\n`, hasNotes: true, isNightly: true }
+  }
+
   const notesPath = path.join(root, 'docs', 'releases', `${tag}.md`)
   const notes = existsSync(notesPath) ? readFileSync(notesPath, 'utf8').trim() : ''
 
-  const parts = [header]
   if (notes) {
     parts.push(notes)
   } else {
@@ -84,28 +111,65 @@ function resolveRepo(explicit) {
   }).trim()
 }
 
-function fetchAutoNotes(repo, tag) {
+function fetchAutoNotes(repo, tag, { commit, previousTag } = {}) {
   // gh release create 的 --notes-file 与 --generate-notes 互斥，所以先单独取回自动 changelog。
-  return execFileSync(
-    'gh',
-    ['api', `repos/${repo}/releases/generate-notes`, '-f', `tag_name=${tag}`, '--jq', '.body'],
-    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
-  )
+  const apiArgs = ['api', `repos/${repo}/releases/generate-notes`, '-f', `tag_name=${tag}`]
+  if (commit) apiArgs.push('-f', `target_commitish=${commit}`)
+  if (previousTag) apiArgs.push('-f', `previous_tag_name=${previousTag}`)
+  apiArgs.push('--jq', '.body')
+  return execFileSync('gh', apiArgs, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
 }
 
-function parseArgs(argv) {
-  const args = { tag: null, out: null, autoNotes: null, repo: null, update: false }
+export function parseArgs(argv) {
+  const args = {
+    tag: null,
+    out: null,
+    autoNotes: null,
+    repo: null,
+    update: false,
+    nightly: false,
+    commit: null,
+    displayVersion: null,
+    previousTag: null,
+  }
+  const readValue = (flag, index) => {
+    if (index + 1 >= argv.length) throw new Error(`missing value for ${flag}`)
+    return argv[index + 1]
+  }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
-    if (arg === '--out') args.out = argv[(i += 1)]
-    else if (arg === '--auto-notes') args.autoNotes = argv[(i += 1)]
-    else if (arg === '--repo') args.repo = argv[(i += 1)]
-    else if (arg === '--update') args.update = true
-    else if (!args.tag) args.tag = arg
-    else throw new Error(`unexpected argument: ${arg}`)
+    if (arg === '--out') {
+      args.out = readValue(arg, i)
+      i += 1
+    } else if (arg === '--auto-notes') {
+      args.autoNotes = readValue(arg, i)
+      i += 1
+    } else if (arg === '--repo') {
+      args.repo = readValue(arg, i)
+      i += 1
+    } else if (arg === '--commit') {
+      args.commit = readValue(arg, i)
+      i += 1
+    } else if (arg === '--display-version') {
+      args.displayVersion = readValue(arg, i)
+      i += 1
+    } else if (arg === '--previous-tag') {
+      args.previousTag = readValue(arg, i)
+      i += 1
+    } else if (arg === '--update') {
+      args.update = true
+    } else if (arg === '--nightly') {
+      args.nightly = true
+    } else if (!args.tag && !arg.startsWith('--')) {
+      args.tag = arg
+    } else {
+      throw new Error(`unexpected argument: ${arg}`)
+    }
   }
   if (!args.tag) {
-    throw new Error('usage: release-body.mjs <tag> [--out <file>] [--update] [--auto-notes <file>] [--repo <owner/repo>]')
+    throw new Error(
+      'usage: release-body.mjs <tag> [--out <file>] [--update] [--auto-notes <file>] [--repo <owner/repo>] [--nightly] [--commit <sha>] [--display-version <label>] [--previous-tag <tag>]',
+    )
   }
   return args
 }
@@ -115,9 +179,17 @@ function main() {
   const repo = resolveRepo(args.repo)
   const autoNotes = args.autoNotes
     ? readFileSync(path.resolve(args.autoNotes), 'utf8')
-    : fetchAutoNotes(repo, args.tag)
+    : fetchAutoNotes(repo, args.tag, { commit: args.commit, previousTag: args.previousTag })
 
-  const { body, hasNotes } = composeReleaseBody({ root: repoRoot, tag: args.tag, repo, autoNotes })
+  const { body, hasNotes } = composeReleaseBody({
+    root: repoRoot,
+    tag: args.tag,
+    repo,
+    autoNotes,
+    nightly: args.nightly,
+    commit: args.commit,
+    displayVersion: args.displayVersion,
+  })
 
   if (!hasNotes) {
     const message = `docs/releases/${args.tag}.md is missing — this release has no hand-written notes.`

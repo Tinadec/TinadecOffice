@@ -35,6 +35,8 @@ const VERSION = (
 	(process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined) ||
 	JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8")).version
 ).replace(/^v/u, "");
+const EXPECTED_TAG = process.env.OFFICE_RELEASE_TAG?.trim() || "";
+const EXPECTED_CHANNEL = process.env.OFFICE_RELEASE_CHANNEL?.trim() || "stable";
 
 const TARGET = hostRuntimeTarget();
 const FACTS = channelFacts(TARGET);
@@ -332,6 +334,14 @@ if (fragment.officeReleaseVersion !== VERSION) {
 	fail(`${fragmentFile} was packaged for ${fragment.officeReleaseVersion}, verifying ${VERSION}.`);
 }
 if (!Array.isArray(fragment.products)) fail(`${fragmentFile} has no products array.`);
+if (EXPECTED_TAG) {
+	const expectedSuffix = `/releases/download/${encodeURIComponent(EXPECTED_TAG)}`;
+	if (typeof fragment.releaseBaseUrl !== "string" || !fragment.releaseBaseUrl.endsWith(expectedSuffix)) {
+		fail(
+			`${fragmentFile} releaseBaseUrl ${JSON.stringify(fragment.releaseBaseUrl)} does not match expected tag ${EXPECTED_TAG}.`,
+		);
+	}
+}
 
 const moduleNames = {
 	tools: FACTS.moduleFile("tools", VERSION),
@@ -420,10 +430,20 @@ if (!picks.agentPack.release.dependencies.some((dependency) => dependency.produc
 }
 for (const product of fragment.products) {
 	for (const release of product.releases) {
+		if (release.channel !== EXPECTED_CHANNEL) {
+			fail(
+				`${product.id} release ${release.id} declares channel ${JSON.stringify(release.channel)}, expected ${JSON.stringify(EXPECTED_CHANNEL)}.`,
+			);
+		}
 		for (const artifact of release.artifacts) {
 			if (artifact.platform !== FACTS.platform || artifact.architecture !== FACTS.architecture) {
 				fail(
 					`${product.id} artifact ${artifact.id} claims ${artifact.platform}/${artifact.architecture} on the ${FACTS.key} leg.`,
+				);
+			}
+			if (EXPECTED_TAG && (typeof artifact.url !== "string" || !artifact.url.startsWith(`${fragment.releaseBaseUrl}/`))) {
+				fail(
+					`${product.id} artifact ${artifact.id} URL ${JSON.stringify(artifact.url)} does not start with ${fragment.releaseBaseUrl}/.`,
 				);
 			}
 		}

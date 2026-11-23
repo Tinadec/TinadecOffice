@@ -65,7 +65,26 @@ function findSingleFile(directory, predicate, label) {
 	return requireFile(matches[0], label);
 }
 
-function verifyInstallableArtifacts(releaseDir) {
+function readDesktopVersion() {
+	return JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8")).version;
+}
+
+export function resolveVerifyOptions(options = {}, env = process.env) {
+	const artifactLabel =
+		(options.artifactLabel !== undefined ? options.artifactLabel : env.OFFICE_ARTIFACT_LABEL)?.trim() || "";
+	const explicitVersion =
+		(options.expectedPackageVersion !== undefined
+			? options.expectedPackageVersion
+			: env.OFFICE_RELEASE_VERSION)?.trim() || "";
+	const expectedPackageVersion = explicitVersion
+		? explicitVersion.replace(/^v/u, "")
+		: artifactLabel
+			? readDesktopVersion().replace(/^v/u, "")
+			: "";
+	return { artifactLabel, expectedPackageVersion };
+}
+
+export function verifyInstallableArtifacts(releaseDir, { artifactLabel } = {}) {
 	const installer = findSingleFile(
 		releaseDir,
 		(name) =>
@@ -98,17 +117,34 @@ function verifyInstallableArtifacts(releaseDir) {
 		}
 	}
 	const installerName = installer.split(/[\\/]/u).at(-1);
-	const versionMatch = installerName?.match(/^TinadecOffice-(.+)-win-x64-setup\.exe$/u);
-	if (!versionMatch) throw new Error(`Cannot derive version from ${String(installerName)}.`);
+	const portableName = portable.split(/[\\/]/u).at(-1);
+	const setupMatch = installerName?.match(/^TinadecOffice-(.+)-win-x64-setup\.exe$/u);
+	if (!setupMatch) throw new Error(`Cannot derive artifact label from ${String(installerName)}.`);
+	const portableMatch = portableName?.match(/^TinadecOffice-(.+)-win-x64-portable\.exe$/u);
+	if (!portableMatch) throw new Error(`Cannot derive artifact label from ${String(portableName)}.`);
+	const setupLabel = setupMatch[1];
+	const portableLabel = portableMatch[1];
+	if (setupLabel !== portableLabel) {
+		throw new Error(
+			`Windows installer label '${setupLabel}' does not match portable package label '${portableLabel}'.`,
+		);
+	}
+	const requestedLabel = artifactLabel?.trim() || "";
+	if (requestedLabel && setupLabel !== requestedLabel) {
+		throw new Error(
+			`Windows artifact label '${setupLabel}' does not match expected artifact label '${requestedLabel}'.`,
+		);
+	}
 	return {
 		installer,
 		portable,
 		updateMetadata: latestExists,
-		expectedVersion: versionMatch[1],
+		expectedLabel: setupLabel,
+		expectedVersion: setupLabel,
 	};
 }
 
-function verifyAsar(resources, expectedVersion) {
+export function verifyAsar(resources, expectedVersion) {
 	const appAsar = requireFile(join(resources, "app.asar"), "app.asar");
 	const entries = new Set(
 		listPackage(appAsar).map((entry) =>
@@ -214,7 +250,7 @@ function verifyRuntime(resources) {
 	return required;
 }
 
-export function verifyPackageOutput(releaseDir = join(desktopDir, "release")) {
+export function verifyPackageOutput(releaseDir = join(desktopDir, "release"), options = {}) {
 	requireWindowsX64();
 	const resolvedReleaseDir = resolve(releaseDir);
 	requireDirectory(resolvedReleaseDir, "Electron Builder release directory");
@@ -237,8 +273,10 @@ export function verifyPackageOutput(releaseDir = join(desktopDir, "release")) {
 		"Electron locales directory",
 	);
 	requireFile(join(locales, "en-US.pak"), "Electron en-US locale");
-	const artifacts = verifyInstallableArtifacts(resolvedReleaseDir);
-	const asar = verifyAsar(resources, artifacts.expectedVersion);
+	const { artifactLabel, expectedPackageVersion } = resolveVerifyOptions(options);
+	const artifacts = verifyInstallableArtifacts(resolvedReleaseDir, { artifactLabel });
+	const expectedAsarVersion = expectedPackageVersion || artifacts.expectedLabel;
+	const asar = verifyAsar(resources, expectedAsarVersion);
 	const nodePty = verifyUnpackedNodePty(resources);
 	const runtimeFiles = verifyRuntime(resources);
 	console.log(
@@ -257,6 +295,8 @@ export function verifyPackageOutput(releaseDir = join(desktopDir, "release")) {
 		executable: join(unpackedRoot, `${productName}.exe`),
 		installer: artifacts.installer,
 		portable: artifacts.portable,
+		expectedLabel: artifacts.expectedLabel,
+		expectedPackageVersion: expectedAsarVersion,
 		updateMetadata: artifacts.updateMetadata,
 		appAsar: asar.appAsar,
 		nodePty,

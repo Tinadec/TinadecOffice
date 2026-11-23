@@ -23,6 +23,8 @@ const VERSION = (
 	(process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined) ||
 	JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8")).version
 ).replace(/^v/u, "");
+const EXPECTED_TAG = process.env.OFFICE_RELEASE_TAG?.trim() || "";
+const EXPECTED_CHANNEL = process.env.OFFICE_RELEASE_CHANNEL?.trim() || "";
 
 function sha256(path) {
 	return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -74,6 +76,24 @@ function resolveArtifact(name) {
 }
 
 const problems = [];
+if (EXPECTED_TAG) {
+	const expectedSuffix = `/releases/download/${encodeURIComponent(EXPECTED_TAG)}`;
+	if (typeof merged.catalog.releaseBaseUrl !== "string" || !merged.catalog.releaseBaseUrl.endsWith(expectedSuffix)) {
+		problems.push(
+			`Merged catalog releaseBaseUrl ${JSON.stringify(merged.catalog.releaseBaseUrl)} does not match expected tag ${EXPECTED_TAG}.`,
+		);
+	}
+}
+if (EXPECTED_CHANNEL) {
+	for (const product of merged.catalog.products) {
+		const actualChannel = product.releases?.[0]?.channel;
+		if (actualChannel !== EXPECTED_CHANNEL) {
+			problems.push(
+				`${product.id} release declares channel ${JSON.stringify(actualChannel)}, expected ${JSON.stringify(EXPECTED_CHANNEL)}.`,
+			);
+		}
+	}
+}
 let checked = 0;
 for (const product of merged.catalog.products) {
 	for (const release of product.releases) {

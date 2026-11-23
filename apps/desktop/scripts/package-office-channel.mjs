@@ -229,11 +229,31 @@ function findReleaseArtifact(suffix, label) {
 	return matches[0];
 }
 
+const RELEASE_TOKEN_RE = /^[0-9A-Za-z._-]+$/u;
+
+function releaseTag(version) {
+	const raw = process.env.OFFICE_RELEASE_TAG?.trim() || `v${version}`;
+	if (!RELEASE_TOKEN_RE.test(raw)) {
+		fail(`Invalid Office release tag: ${raw}`);
+	}
+	return raw;
+}
+
+function releaseChannel() {
+	const raw = process.env.OFFICE_RELEASE_CHANNEL?.trim() || "stable";
+	if (!RELEASE_TOKEN_RE.test(raw)) {
+		fail(`Invalid Office release channel: ${raw}`);
+	}
+	return raw;
+}
+
 const VERSION = releaseVersion();
+const RELEASE_TAG = releaseTag(VERSION);
+const RELEASE_CHANNEL = releaseChannel();
 const TARGET = hostRuntimeTarget();
 const FACTS = channelFacts(TARGET);
 const repository = process.env.GITHUB_REPOSITORY ?? defaultRepository;
-const releaseBaseUrl = `https://github.com/${repository}/releases/download/v${VERSION}`;
+const releaseBaseUrl = `https://github.com/${repository}/releases/download/${encodeURIComponent(RELEASE_TAG)}`;
 requireDirectory(runtimeDir, `Staged ${TARGET.key} desktop runtime`);
 requireDirectory(releaseDir, "Desktop release directory");
 removeTree(channelDir);
@@ -289,7 +309,7 @@ const products = [
 		releases: [{
 			id: `tinadec-office-desktop-${VERSION}`,
 			version: VERSION,
-			channel: "stable",
+			channel: RELEASE_CHANNEL,
 			publishedAt: new Date().toISOString(),
 			artifacts: installerAssets.map(({ asset, file }) =>
 				artifactMetadata({ id: `tinadec-office-desktop-${VERSION}-${asset.idSuffix}`, file, format: "executable", sourceDir: releaseDir }),
@@ -326,7 +346,7 @@ const products = [
 		releases: [{
 			id: `tinadec-office-tools-${VERSION}`,
 			version: VERSION,
-			channel: "stable",
+			channel: RELEASE_CHANNEL,
 			publishedAt: new Date().toISOString(),
 			artifacts: [artifactMetadata({ id: `tinadec-office-tools-${VERSION}-${TARGET.key}`, file: toolsPackage.file })],
 			dependencies: [],
@@ -351,7 +371,7 @@ const products = [
 		releases: [{
 			id: `tinadec-office-core-${VERSION}`,
 			version: VERSION,
-			channel: "stable",
+			channel: RELEASE_CHANNEL,
 			publishedAt: new Date().toISOString(),
 			artifacts: [artifactMetadata({ id: `tinadec-office-core-${VERSION}-${TARGET.key}`, file: corePackage.file })],
 			dependencies: [{ productId: "tinadec-office-tools", versionRange: `>=${VERSION}`, optional: false }],
@@ -376,7 +396,7 @@ const products = [
 		releases: [{
 			id: `tinadec-office-gateway-${VERSION}`,
 			version: VERSION,
-			channel: "stable",
+			channel: RELEASE_CHANNEL,
 			publishedAt: new Date().toISOString(),
 			artifacts: [artifactMetadata({ id: `tinadec-office-gateway-${VERSION}-${TARGET.key}`, file: gatewayPackage.file })],
 			dependencies: [{ productId: "tinadec-office-core", versionRange: `>=${VERSION}`, optional: false }],
@@ -400,7 +420,7 @@ const products = [
 		releases: [{
 			id: `tinadec-office-agentpack-${VERSION}`,
 			version: VERSION,
-			channel: "stable",
+			channel: RELEASE_CHANNEL,
 			publishedAt: new Date().toISOString(),
 			artifacts: [artifactMetadata({ id: `tinadec-office-agentpack-${VERSION}-${TARGET.key}`, file: agentPack.file })],
 			dependencies: [{ productId: "tinadec-office-core", versionRange: `>=${agentPack.minimumCoreVersion}`, optional: false }],
@@ -416,6 +436,8 @@ writeJson(join(channelDir, `catalog-${TARGET.key}.json`), {
 	kind: "office-channel-fragment",
 	target: TARGET.key,
 	officeReleaseVersion: VERSION,
+	officeReleaseTag: RELEASE_TAG,
+	officeReleaseChannel: RELEASE_CHANNEL,
 	generatedAt: new Date().toISOString(),
 	managerMinimumVersion: "0.1.0",
 	releaseBaseUrl,
