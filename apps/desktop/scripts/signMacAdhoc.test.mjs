@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import {
+import afterPack, {
   assertBundledRuntimeMatches,
   codesignArguments,
+  ensurePtySpawnHelpersExecutable,
+  PTY_SPAWN_HELPER,
   RUNTIME_EXECUTABLES,
   signMacAdhoc,
   signingPlan,
@@ -120,6 +122,60 @@ test("a staged runtime file without its bundled copy fails instead of being skip
     rmSync(join(staged, RUNTIME_EXECUTABLES[0]));
     rmSync(join(app, "Contents", "Resources", "runtime", RUNTIME_EXECUTABLES[1]));
     assert.throws(() => assertBundledRuntimeMatches(app, staged), /Bundled runtime is missing/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("node-pty spawn helpers get their exec bit back, and only that bit is touched", () => {
+  const { root, app } = fixtureApp();
+  const prebuilds = join(app, "Contents", "Resources", "app.asar.unpacked", "node_modules", "node-pty", "prebuilds");
+  const helper = join(prebuilds, "darwin-arm64", PTY_SPAWN_HELPER);
+  const decoy = join(prebuilds, "darwin-arm64", "pty.node");
+  try {
+    writeFileSyncWithParents(helper, "");
+    writeFileSyncWithParents(decoy, "");
+    // 0644 is what the published node-pty 1.1.0 tarball ships, so this is the shipped state, not a
+    // contrived one. Without the fix posix_spawnp fails and the workbench opens with no terminal.
+    chmodSync(helper, 0o644);
+    chmodSync(decoy, 0o644);
+    assert.deepEqual(ensurePtySpawnHelpersExecutable(app, { platform: "darwin" }), [helper]);
+    assert.equal(statSync(helper).mode & 0o777, 0o755);
+    assert.equal(statSync(decoy).mode & 0o777, 0o644, "only spawn-helper is a process");
+    // Idempotent: the log line in afterPack counts what it actually changed, so a second pass is silent.
+    assert.deepEqual(ensurePtySpawnHelpersExecutable(app, { platform: "darwin" }), []);
+    assert.deepEqual(
+      ensurePtySpawnHelpersExecutable(app, { platform: "win32", chmod: () => { throw new Error("must not chmod"); } }),
+      [],
+      "a non-darwin package has no .app to fix",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("afterPack restores the pty helper mode before it signs", async () => {
+  const { root, app, staged } = fixtureApp();
+  const order = [];
+  const context = {
+    electronPlatformName: "darwin",
+    appOutDir: root,
+    packager: { appInfo: { productFilename: "TinadecOffice" }, projectDir: staged },
+  };
+  try {
+    await afterPack(context, {
+      restorePtyHelpers: (target) => { order.push(["restore", target]); return []; },
+      sign: (target) => { order.push(["sign", target]); return []; },
+    });
+    // Mode first, seal second: a chmod after the bundle is sealed would leave the shipped artifact
+    // depending on the signer's luck, and the ordering is invisible from the artifact alone.
+    assert.deepEqual(order, [["restore", app], ["sign", app]]);
+    const calls = [];
+    await afterPack({ ...context, electronPlatformName: "win32" }, {
+      restorePtyHelpers: () => calls.push("restore"),
+      sign: () => calls.push("sign"),
+    });
+    assert.deepEqual(calls, [], "windows and linux packages are untouched");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

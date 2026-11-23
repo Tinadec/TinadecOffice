@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -22,6 +22,10 @@ import { join } from 'node:path';
  *
  * A Developer ID build needs the same two lists with `--options runtime` and a timestamp before
  * notarization will accept the bundle.
+ *
+ * A correct seal is not the whole "the download works" story: node-pty's spawn-helper ships without
+ * its exec bit, so a properly signed app would still open with every terminal broken. `afterPack`
+ * restores that mode before it signs (see `ensurePtySpawnHelpersExecutable`).
  */
 export const RUNTIME_EXECUTABLES = [
   'core/TinadecCore.Api',
@@ -33,6 +37,19 @@ export const RUNTIME_EXECUTABLES = [
 
 function list(dir) {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+}
+
+function findNamedFiles(dir, name, depth = 0) {
+  // The depth guard only exists so a pathological tree cannot make packaging hang; node-pty sits five
+  // levels below app.asar.unpacked.
+  if (depth > 10) return [];
+  const found = [];
+  for (const entry of list(dir)) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...findNamedFiles(path, name, depth + 1));
+    else if (entry.name === name) found.push(path);
+  }
+  return found;
 }
 
 /**
@@ -60,6 +77,31 @@ export function signingPlan(appPath) {
   }
   plan.push(appPath);
   return plan;
+}
+
+/** node-pty starts a terminal by exec'ing this file; it has no other path to a shell. */
+export const PTY_SPAWN_HELPER = 'spawn-helper';
+
+/**
+ * node-pty execs `prebuilds/<platform>/spawn-helper` directly (lib/unixTerminal.js) and never fixes
+ * its mode. The published node-pty 1.1.0 tarball ships that file as 0644, electron-builder copies the
+ * mode through unchanged, and every terminal then dies with "Failed to spawn PTY: posix_spawnp
+ * failed" — the window shows "无法创建终端" with no hint that a permission bit is missing.
+ *
+ * The mode is not part of the code seal (codesign hashes contents, not permissions), so restoring the
+ * bit before signing keeps `--verify --deep --strict` green while shipping an artifact whose terminal
+ * actually starts.
+ */
+export function ensurePtySpawnHelpersExecutable(appPath, { chmod = chmodSync, stat = statSync, platform = process.platform } = {}) {
+  if (platform !== 'darwin') return [];
+  const unpacked = join(appPath, 'Contents', 'Resources', 'app.asar.unpacked');
+  const fixed = [];
+  for (const helper of findNamedFiles(unpacked, PTY_SPAWN_HELPER)) {
+    if ((stat(helper).mode & 0o100) !== 0) continue;
+    chmod(helper, 0o755);
+    fixed.push(helper);
+  }
+  return fixed;
 }
 
 export function codesignArguments(target) {
@@ -122,11 +164,15 @@ export function assertBundledRuntimeMatches(appPath, runtimeDir, { readFile = re
 }
 
 /** electron-builder afterPack hook: sign the bundle, then prove its runtime copies match staging. */
-export default async function afterPack(context) {
+export default async function afterPack(context, { sign = signMacAdhoc, restorePtyHelpers = ensurePtySpawnHelpersExecutable } = {}) {
   if (context.electronPlatformName !== 'darwin') return;
   const productName = context.packager.appInfo.productFilename;
   const appPath = join(context.appOutDir, productName + '.app');
-  signMacAdhoc(appPath);
+  // Before the seal, so the artifact leaves the build with the bit already set: a terminal that dies
+  // on posix_spawnp is the other half of "the dmg does not work" and it outlives a correct signature.
+  const helpers = restorePtyHelpers(appPath);
+  if (helpers.length > 0) console.log('restored the exec bit on ' + helpers.length + ' node-pty spawn-helper file(s)');
+  sign(appPath);
   assertBundledRuntimeMatches(appPath, join(context.packager.projectDir, 'runtime'));
 }
 
@@ -137,6 +183,7 @@ if (process.argv[1] && process.argv[1].endsWith('sign-mac-adhoc.mjs')) {
     process.exit(2);
   }
   if (stagedRuntimeDir) signStagedRuntime(stagedRuntimeDir);
+  ensurePtySpawnHelpersExecutable(appPath);
   const signed = signMacAdhoc(appPath);
   if (stagedRuntimeDir) assertBundledRuntimeMatches(appPath, stagedRuntimeDir);
   console.log('ad-hoc signed ' + signed.length + ' nested target(s) and ' + appPath);
