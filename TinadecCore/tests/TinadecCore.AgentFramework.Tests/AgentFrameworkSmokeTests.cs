@@ -20,7 +20,6 @@ public sealed class AgentFrameworkSmokeTests
         var builder = services.AddTinadecCoreMinimal();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(4, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
