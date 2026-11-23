@@ -961,7 +961,8 @@ public sealed class AgentTopologyService : IAgentTopologyService
             }
         }
 
-        var hasDefaultOptions = payload.TryGetProperty("default_options", out var defaultOptionsElement);
+        var hasDefaultOptions = payload.TryGetProperty("default_options", out var defaultOptionsElement)
+            || payload.TryGetProperty("defaultOptions", out defaultOptionsElement);
         string? defaultOptionsJson = null;
         if (hasDefaultOptions && defaultOptionsElement.ValueKind != JsonValueKind.Null)
         {

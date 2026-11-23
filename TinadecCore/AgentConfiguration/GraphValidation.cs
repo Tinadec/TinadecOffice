@@ -67,6 +67,8 @@ internal static class GraphValidation
         }
         bool planFirst = false, specEnabled = false, multiAgent = false, bulletinBoard = false, worktree = false;
         Guid? workflowModeVersionId = null;
+        string? contextStrategy = null;
+        SortedDictionary<string, object?>? contextAdvanced = null;
         foreach (var prop in element.EnumerateObject())
         {
             switch (prop.Name)
@@ -105,6 +107,25 @@ internal static class GraphValidation
                             workflowModeVersionId = parsed;
                     }
                     break;
+                case "context_strategy" or "contextStrategy":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.String)
+                            Invalid($"{context} default_options.{prop.Name} must be a string or null.");
+                        var normalizedStrategy = prop.Value.GetString()?.Trim().ToLowerInvariant();
+                        if (normalizedStrategy is not ("direct" or "managed" or "deep_curator"))
+                            Invalid($"{context} default_options.{prop.Name} must be direct, managed, or deep_curator.");
+                        contextStrategy = normalizedStrategy;
+                    }
+                    break;
+                case "context_advanced" or "contextAdvanced":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.Object)
+                            Invalid($"{context} default_options.{prop.Name} must be a JSON object or null.");
+                        contextAdvanced = NormalizeContextAdvanced(prop.Value, context);
+                    }
+                    break;
                 default:
                     Invalid($"{context} default_options contains unknown field '{prop.Name}'.");
                     break;
@@ -120,7 +141,103 @@ internal static class GraphValidation
         };
         if (workflowModeVersionId is not null)
             canonical["workflow_mode_version_id"] = workflowModeVersionId;
+        if (contextStrategy is not null)
+            canonical["context_strategy"] = contextStrategy;
+        if (contextAdvanced is { Count: > 0 })
+            canonical["context_advanced"] = contextAdvanced;
         return JsonSerializer.Serialize(canonical);
+    }
+
+    private static SortedDictionary<string, object?>? NormalizeContextAdvanced(JsonElement element, string context)
+    {
+        var canonical = new SortedDictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var prop in element.EnumerateObject())
+        {
+            switch (prop.Name)
+            {
+                case "recall_fidelity" or "recallFidelity":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.String)
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be a string or null.");
+                        var fidelity = prop.Value.GetString()?.Trim().ToLowerInvariant();
+                        if (fidelity is not ("summary_only" or "balanced" or "verbatim_first"))
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be summary_only, balanced, or verbatim_first.");
+                        canonical["recall_fidelity"] = fidelity;
+                    }
+                    break;
+                case "compaction_trigger_ratio" or "compactionTriggerRatio":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.Number
+                            || !prop.Value.TryGetDouble(out var ratio)
+                            || double.IsNaN(ratio) || double.IsInfinity(ratio)
+                            || ratio is < 0.40 or > 0.95)
+                        {
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be a number between 0.40 and 0.95.");
+                        }
+                        else
+                        {
+                            canonical["compaction_trigger_ratio"] = ratio;
+                        }
+                    }
+                    break;
+                case "recent_message_limit" or "recentMessageLimit":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.Number
+                            || !prop.Value.TryGetInt32(out var limit)
+                            || limit is < 4 or > 200)
+                        {
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be an integer between 4 and 200.");
+                        }
+                        else
+                        {
+                            canonical["recent_message_limit"] = limit;
+                        }
+                    }
+                    break;
+                case "allow_cross_session_recall" or "allowCrossSessionRecall":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be a boolean or null.");
+                        else
+                            canonical["allow_cross_session_recall"] = prop.Value.GetBoolean();
+                    }
+                    break;
+                case "evolution_mode" or "evolutionMode":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.String)
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be a string or null.");
+                        var evolution = prop.Value.GetString()?.Trim().ToLowerInvariant();
+                        if (evolution is not ("auto_evolve" or "candidate_only"))
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be auto_evolve or candidate_only.");
+                        canonical["evolution_mode"] = evolution;
+                    }
+                    break;
+                case "core_markdown_max_tokens" or "coreMarkdownMaxTokens":
+                    if (prop.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        if (prop.Value.ValueKind != JsonValueKind.Number
+                            || !prop.Value.TryGetInt32(out var maxTokens)
+                            || maxTokens is < 256 or > 8000)
+                        {
+                            Invalid($"{context} default_options.context_advanced.{prop.Name} must be an integer between 256 and 8000.");
+                        }
+                        else
+                        {
+                            canonical["core_markdown_max_tokens"] = maxTokens;
+                        }
+                    }
+                    break;
+                default:
+                    Invalid($"{context} default_options.context_advanced contains unknown field '{prop.Name}'.");
+                    break;
+            }
+        }
+        return canonical.Count == 0 ? null : canonical;
     }
 
     internal sealed record AgentRef(string Key, string Slug, string Layer, IReadOnlyList<string> Capabilities);

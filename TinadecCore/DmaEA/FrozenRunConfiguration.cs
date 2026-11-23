@@ -407,17 +407,26 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         if (fileSnapshot is not null)
             bindings.Add(new("scope_configuration_files", DeterministicGuid(fileSnapshot.StorageId), DeterministicGuid(fileSnapshot.ContentHash), fileSnapshot.ContentHash));
         var normalizedLocale = RunLocaleResolver.Normalize(interfaceLocale);
-        var explicitOptions = spaceOptions ?? session.SpaceOptions;
+        var explicitOptions = SpaceRunOptions.Normalize(spaceOptions ?? session.SpaceOptions);
         FormalModeRoster relational;
+        SpaceRunOptions? selectedModeDefaultOptions;
+        ModeRuntimePolicyDto? selectedModeRuntimePolicy;
+        var selectedModeLegacyCanvasOnly = false;
         if (explicitOptions is { MultiAgent: false, WorkflowModeVersionId: null } && session.ViewMode == "space" && modeVersionIdOverride is null)
         {
             relational = await _formal.ResolveSpaceBaseAsync(sessionId, normalizedLocale, cancellationToken).ConfigureAwait(false)
                 ?? throw new RunAdmissionException("space_base_unavailable", "Publish a directly executable mode with a writable conversation identity before using spatial composition.");
+            selectedModeDefaultOptions = relational.DefaultOptions;
+            selectedModeRuntimePolicy = relational.RuntimePolicy;
+            selectedModeLegacyCanvasOnly = relational.IsLegacyCanvasContextOnly;
         }
         else
         {
             relational = await _formal.ResolveRosterForModeAsync(sessionId, modeVersionId.Value, normalizedLocale, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
+            selectedModeDefaultOptions = relational.DefaultOptions;
+            selectedModeRuntimePolicy = relational.RuntimePolicy;
+            selectedModeLegacyCanvasOnly = relational.IsLegacyCanvasContextOnly;
             if (explicitOptions is { MultiAgent: false, WorkflowModeVersionId: null })
             {
                 var rootCandidate = relational.Operation.FirstOrDefault(item => string.Equals(item.Id, relational.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase));
@@ -431,11 +440,14 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
                 }
             }
         }
-        var effectiveOptions = explicitOptions ?? (relational.IsPackManaged ? null : relational.DefaultOptions);
+        var effectiveOptions = explicitOptions
+            ?? ((relational.IsPackManaged || selectedModeLegacyCanvasOnly) ? null : selectedModeDefaultOptions);
         if (effectiveOptions?.WorkflowModeVersionId is { } resolvedWfId && resolvedWfId != relational.ModeVersionId)
         {
             relational = await _formal.ResolveRosterForModeAsync(sessionId, resolvedWfId, normalizedLocale, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidDataException($"Agent mode version '{resolvedWfId}' could not be resolved.");
+            selectedModeDefaultOptions = relational.DefaultOptions;
+            selectedModeRuntimePolicy = relational.RuntimePolicy;
         }
         modeVersionId = relational.ModeVersionId;
         SpaceCompositionPolicy.Validate(effectiveOptions, relational, workspace);
@@ -601,13 +613,13 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             Triggers = snapshot.Triggers,
             Orchestration = snapshot.Orchestration,
             Graph = graph,
-            RuntimePolicy = relational.RuntimePolicy,
+            RuntimePolicy = relational.RuntimePolicy ?? selectedModeRuntimePolicy,
             ModeSlug = relational.ModeSlug,
             ModeDisplayName = relational.ModeDisplayName,
             InterfaceLocale = normalizedLocale,
             Workspace = workspace,
-            DefaultOptions = relational.DefaultOptions,
-            SpaceOptions = effectiveOptions,
+            DefaultOptions = SpaceRunOptions.Normalize(selectedModeDefaultOptions),
+            SpaceOptions = SpaceRunOptions.Normalize(effectiveOptions),
             FrozenPromptFragments = frozenFragments,
             SpacePreparationToolIds = preparationTools.Length == 0 ? null : preparationTools
         };

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+    <InternalsVisibleTo Include="TinadecCore.AgentFramework.Tests" />
   </ItemGroup>
 
 </Project>

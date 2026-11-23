@@ -213,9 +213,10 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     internal static SpaceRunOptions? ReadSpaceOptions(string content)
     {
         using var document = JsonDocument.Parse(content);
-        if (!document.RootElement.TryGetProperty("spaceOptions", out var options)) return null;
-        return options.ValueKind == JsonValueKind.Null ? null
-            : options.Deserialize<SpaceRunOptions>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (!TryGetProperty(document.RootElement, out var options, "spaceOptions", "space_options")
+            || options.ValueKind == JsonValueKind.Null)
+            return null;
+        return SpaceRunOptionsJson.Parse(options, rejectUnknownFields: false);
     }
 
     /// <summary>Reads the frozen dispatch roster (ids + responsibility text); null when absent.</summary>

@@ -257,10 +257,14 @@ public static class StorageEndpoints
                 var modelOverride = request.MeetingModelOverride is null
                     ? null
                     : new SessionModelOverride(request.MeetingModelOverride.ProviderInstanceId, request.MeetingModelOverride.Model);
+                var modeSwitched = requestedMode.HasValue && requestedMode.Value != session.ModeVersionId;
+                var clearSpaceOptions = (request.HasExplicitSpaceOptions && spaceOptions is null)
+                    || (modeSwitched && !request.HasExplicitSpaceOptions);
                 session = await store.UpdateSessionModeAsync(id, requestedMode, modelOverride, ct,
                     permissionMode: request.PermissionMode, spaceOptions: spaceOptions,
                     clearMeetingModelOverride: request.ClearMeetingModelOverride, title: request.Title,
-                    expectedSettingsRevision: request.ExpectedSettingsRevision).ConfigureAwait(false);
+                    expectedSettingsRevision: request.ExpectedSettingsRevision,
+                    clearSpaceOptions: clearSpaceOptions).ConfigureAwait(false);
                 if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, globalConfig, ct).ConfigureAwait(false));
             }
@@ -607,10 +611,42 @@ public static class StorageEndpoints
     }
 
     internal static SpaceRunOptions? ToSpaceOptions(SpaceRunOptionsDto? options) => options is null ? null
-        : new(options.PlanFirst, options.SpecEnabled, options.MultiAgent, options.WorkflowModeVersionId, options.BulletinBoard, options.Worktree);
+        : SpaceRunOptions.Normalize(new SpaceRunOptions(
+            options.PlanFirst,
+            options.SpecEnabled,
+            options.MultiAgent,
+            options.WorkflowModeVersionId,
+            options.BulletinBoard,
+            options.Worktree,
+            options.ContextStrategy,
+            options.ContextAdvanced is { } adv
+                ? new ContextPolicyParamsOverride(
+                    adv.RecallFidelity,
+                    adv.CompactionTriggerRatio,
+                    adv.RecentMessageLimit,
+                    adv.AllowCrossSessionRecall,
+                    adv.EvolutionMode,
+                    adv.CoreMarkdownMaxTokens)
+                : null));
 
     internal static SpaceRunOptionsDto? ToSpaceOptionsDto(SpaceRunOptions? options) => options is null ? null
-        : new(options.PlanFirst, options.SpecEnabled, options.MultiAgent, options.WorkflowModeVersionId, options.BulletinBoard, options.Worktree);
+        : new(
+            options.PlanFirst,
+            options.SpecEnabled,
+            options.MultiAgent,
+            options.WorkflowModeVersionId,
+            options.BulletinBoard,
+            options.Worktree,
+            options.ContextStrategy,
+            ContextPolicyParamsOverride.Normalize(options.ContextAdvanced) is { } adv
+                ? new ContextPolicyParamsOverrideDto(
+                    adv.RecallFidelity,
+                    adv.CompactionTriggerRatio,
+                    adv.RecentMessageLimit,
+                    adv.AllowCrossSessionRecall,
+                    adv.EvolutionMode,
+                    adv.CoreMarkdownMaxTokens)
+                : null);
 
     internal static Task ValidateWorkflowAsync(SpaceRunOptions? options, Guid tenantId, Guid workspaceId,
         IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>

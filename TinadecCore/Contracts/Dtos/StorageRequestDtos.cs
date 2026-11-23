@@ -31,15 +31,38 @@ public sealed class CreateSessionRequest
 
 public sealed class UpdateSessionRequest
 {
+    private SpaceRunOptionsDto? _spaceOptions;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasExplicitSpaceOptions { get; private set; }
+
     public string? Title { get; set; }
     public Guid? ModeVersionId { get; set; }
     public bool ClearModeVersion { get; set; }
     public MeetingModelOverrideDto? MeetingModelOverride { get; set; }
     public bool ClearMeetingModelOverride { get; set; }
     public string? PermissionMode { get; set; }
-    public SpaceRunOptionsDto? SpaceOptions { get; set; }
+    public SpaceRunOptionsDto? SpaceOptions
+    {
+        get => _spaceOptions;
+        set
+        {
+            _spaceOptions = value;
+            HasExplicitSpaceOptions = true;
+        }
+    }
     public long? ExpectedSettingsRevision { get; set; }
 }
+
+/// <summary>Optional per-session or per-mode overrides for context governance parameters.</summary>
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public sealed record ContextPolicyParamsOverrideDto(
+    string? RecallFidelity = null,
+    double? CompactionTriggerRatio = null,
+    int? RecentMessageLimit = null,
+    bool? AllowCrossSessionRecall = null,
+    string? EvolutionMode = null,
+    int? CoreMarkdownMaxTokens = null);
 
 /// <summary>Whole replacement of the current spatial session's choices for future tasks.</summary>
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
@@ -49,7 +72,9 @@ public sealed record SpaceRunOptionsDto(
     bool MultiAgent = false,
     Guid? WorkflowModeVersionId = null,
     bool BulletinBoard = false,
-    bool Worktree = false);
+    bool Worktree = false,
+    string? ContextStrategy = null,
+    ContextPolicyParamsOverrideDto? ContextAdvanced = null);
 
 public sealed class MigrateSessionRequest
 {

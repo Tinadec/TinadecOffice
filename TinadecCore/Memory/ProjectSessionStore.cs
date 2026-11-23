@@ -128,7 +128,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             ViewMode = viewMode,
             PermissionMode = permissionMode ?? "default",
             SpaceOptionsJson = spaceOptions is not null
-                ? JsonSerializer.Serialize(spaceOptions, JsonOptions)
+                ? JsonSerializer.Serialize(SpaceRunOptions.Normalize(spaceOptions), JsonOptions)
                 : viewMode == "space"
                     ? JsonSerializer.Serialize(new SpaceRunOptions(), JsonOptions)
                     : null,
@@ -203,7 +203,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         SpaceRunOptions? spaceOptions = null,
         bool clearMeetingModelOverride = false,
         string? title = null,
-        long? expectedSettingsRevision = null)
+        long? expectedSettingsRevision = null,
+        bool clearSpaceOptions = false)
     {
         var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -232,7 +233,16 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
                 session.MeetingModelOverrideModel = null;
             }
             if (permissionMode is not null) session.PermissionMode = permissionMode;
-            if (spaceOptions is not null) session.SpaceOptionsJson = JsonSerializer.Serialize(spaceOptions, JsonOptions);
+            if (spaceOptions is not null)
+            {
+                session.SpaceOptionsJson = JsonSerializer.Serialize(SpaceRunOptions.Normalize(spaceOptions), JsonOptions);
+            }
+            else if (clearSpaceOptions)
+            {
+                session.SpaceOptionsJson = session.ViewMode == "space"
+                    ? JsonSerializer.Serialize(new SpaceRunOptions(), JsonOptions)
+                    : null;
+            }
             if (!string.IsNullOrWhiteSpace(title)) session.Title = title.Trim();
             if (previous == (session.ModeVersionId, session.MeetingModelOverrideProviderInstanceId, session.MeetingModelOverrideModel,
                 session.PermissionMode, session.SpaceOptionsJson, session.Title)) return session;
@@ -245,10 +255,15 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         finally { gate.Release(); }
     }
 
-    public static SpaceRunOptions? ReadSpaceOptions(SessionRecord session) =>
-        session.SpaceOptionsJson is not null
-            ? JsonSerializer.Deserialize<SpaceRunOptions>(session.SpaceOptionsJson, JsonOptions) ?? new SpaceRunOptions()
-            : session.ViewMode == "space" ? new SpaceRunOptions() : null;
+    public static SpaceRunOptions? ReadSpaceOptions(SessionRecord session)
+    {
+        if (session.SpaceOptionsJson is null)
+            return session.ViewMode == "space" ? new SpaceRunOptions() : null;
+        using var document = JsonDocument.Parse(session.SpaceOptionsJson);
+        return document.RootElement.ValueKind == JsonValueKind.Object
+            ? SpaceRunOptionsJson.Parse(document.RootElement, rejectUnknownFields: false)
+            : new SpaceRunOptions();
+    }
 
     public static void ValidateSessionSettings(string viewMode, string? permissionMode, SpaceRunOptions? spaceOptions)
     {
@@ -260,6 +275,36 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             throw new ArgumentException("workflow_mode_version_id must reference a published workflow mode.");
         if (spaceOptions?.WorkflowModeVersionId is not null && !spaceOptions.MultiAgent)
             throw new ArgumentException("A workflow requires multi_agent to be enabled.");
+        if (spaceOptions?.ContextStrategy is { } rawStrategy)
+        {
+            var normalizedStrategy = rawStrategy.Trim().ToLowerInvariant();
+            if (normalizedStrategy is not ("direct" or "managed" or "deep_curator"))
+                throw new ArgumentException("context_strategy must be direct, managed, or deep_curator.");
+        }
+        if (spaceOptions?.ContextAdvanced is { } advanced)
+        {
+            if (advanced.RecallFidelity is { } rawRecall)
+            {
+                var normalizedRecall = rawRecall.Trim().ToLowerInvariant();
+                if (normalizedRecall is not ("summary_only" or "balanced" or "verbatim_first"))
+                    throw new ArgumentException("context_advanced.recall_fidelity must be summary_only, balanced, or verbatim_first.");
+            }
+            if (advanced.CompactionTriggerRatio is { } ratio
+                && (double.IsNaN(ratio) || double.IsInfinity(ratio) || ratio is < 0.40 or > 0.95))
+            {
+                throw new ArgumentException("context_advanced.compaction_trigger_ratio must be between 0.40 and 0.95.");
+            }
+            if (advanced.RecentMessageLimit is { } messageLimit && messageLimit is < 4 or > 200)
+                throw new ArgumentException("context_advanced.recent_message_limit must be between 4 and 200.");
+            if (advanced.CoreMarkdownMaxTokens is { } maxTokens && maxTokens is < 256 or > 8000)
+                throw new ArgumentException("context_advanced.core_markdown_max_tokens must be between 256 and 8000.");
+            if (advanced.EvolutionMode is { } rawEvolution)
+            {
+                var normalizedEvolution = rawEvolution.Trim().ToLowerInvariant();
+                if (normalizedEvolution is not ("auto_evolve" or "candidate_only"))
+                    throw new ArgumentException("context_advanced.evolution_mode must be auto_evolve or candidate_only.");
+            }
+        }
     }
 
     /// <summary>

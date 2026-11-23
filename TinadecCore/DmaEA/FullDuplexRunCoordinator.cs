@@ -866,7 +866,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 ?? throw new RunAdmissionException("frozen_configuration_missing", "The admitted run has no frozen configuration.");
             var frozen = JsonSerializer.Deserialize<FrozenRunConfigurationV1>(stored.Content, FrozenRunConfigurationV1.JsonOptions)
                 ?? throw new RunAdmissionException("frozen_configuration_missing", "The admitted run configuration could not be read.");
-            if (frozen.SpaceOptions != spaceOptions
+            if (SpaceRunOptions.Normalize(frozen.SpaceOptions) != SpaceRunOptions.Normalize(spaceOptions)
                 || !string.Equals(frozen.PermissionMode, AgentRuntimeConfigurationResolver.NormalizePermissionMode(invocation.PermissionMode), StringComparison.Ordinal))
                 throw new RunAdmissionException("IDEMPOTENCY_KEY_REUSE", "The client message id was already used with different spatial settings.");
             return;

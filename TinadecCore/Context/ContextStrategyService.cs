@@ -23,6 +23,21 @@ public sealed class ContextStrategyService : IContextStrategyService
         ContextMemoryPolicyDto? policy,
         double? compactionTriggerRatioOverride,
         string? recallPolicyOverride)
+        => ResolveProfile(
+            strategyOverride,
+            policy,
+            compactionTriggerRatioOverride,
+            recallPolicyOverride,
+            allowCrossSessionRecallOverride: null,
+            evolutionModeOverride: null);
+
+    public ContextStrategyProfile ResolveProfile(
+        string? strategyOverride,
+        ContextMemoryPolicyDto? policy,
+        double? compactionTriggerRatioOverride,
+        string? recallPolicyOverride,
+        bool? allowCrossSessionRecallOverride,
+        string? evolutionModeOverride)
     {
         var raw = string.IsNullOrWhiteSpace(strategyOverride)
             ? policy?.Strategy ?? "managed"
@@ -53,15 +68,27 @@ public sealed class ContextStrategyService : IContextStrategyService
             _ => "balanced"
         };
 
-        var allowCrossSession = policy?.AllowCrossSessionRecall ?? true;
+        var allowCrossSession = allowCrossSessionRecallOverride ?? policy?.AllowCrossSessionRecall ?? true;
         var defaultHistoryRecall = strategy != "direct";
-        var defaultCrossSession = strategy == "deep_curator" && allowCrossSession;
+        var defaultCrossSession = allowCrossSessionRecallOverride is { } explicitCross
+            ? explicitCross && defaultHistoryRecall
+            : strategy == "deep_curator" && allowCrossSession;
         var (historyRecallEnabled, crossSessionRecallEnabled) = normalizedRecallOverride switch
         {
             "disabled" or "none" or "off" => (false, false),
             "session_only" or "local" => (true, false),
-            "cross_session" or "cross_session_enabled" => (true, true),
+            "cross_session" or "cross_session_enabled" => (true, allowCrossSessionRecallOverride ?? true),
             _ => (defaultHistoryRecall, defaultCrossSession)
+        };
+
+        var normalizedEvolution = string.IsNullOrWhiteSpace(evolutionModeOverride)
+            ? policy?.EvolutionMode?.Trim().ToLowerInvariant()
+            : evolutionModeOverride.Trim().ToLowerInvariant();
+        var activeEvolutionEnabled = strategy != "direct" && normalizedEvolution switch
+        {
+            "candidate_only" => false,
+            "auto_evolve" => true,
+            _ => !(policy?.CandidateOnly ?? false)
         };
 
         return strategy switch
@@ -85,7 +112,7 @@ public sealed class ContextStrategyService : IContextStrategyService
                 HistoryRecallEnabled: historyRecallEnabled,
                 CrossSessionRecallEnabled: crossSessionRecallEnabled,
                 ExplorationDigestEnabled: true,
-                ActiveMemoryEvolutionEnabled: true,
+                ActiveMemoryEvolutionEnabled: activeEvolutionEnabled,
                 CompactionTriggerRatio: triggerRatio,
                 RecallFidelity: fidelity),
             _ => new ContextStrategyProfile(
@@ -96,7 +123,7 @@ public sealed class ContextStrategyService : IContextStrategyService
                 HistoryRecallEnabled: historyRecallEnabled,
                 CrossSessionRecallEnabled: crossSessionRecallEnabled,
                 ExplorationDigestEnabled: false,
-                ActiveMemoryEvolutionEnabled: true,
+                ActiveMemoryEvolutionEnabled: activeEvolutionEnabled,
                 CompactionTriggerRatio: triggerRatio,
                 RecallFidelity: fidelity)
         };

@@ -87,4 +87,13 @@ public sealed record ContextBuildRequest(
 
     /// <summary>Optional mode- or session-level recall fidelity override (<c>summary_only</c>, <c>balanced</c>, <c>verbatim_first</c>).</summary>
     public string? RecallPolicyOverride { get; init; }
+
+    /// <summary>Optional mode- or session-level cross-session recall override.</summary>
+    public bool? AllowCrossSessionRecallOverride { get; init; }
+
+    /// <summary>Optional mode- or session-level memory evolution mode override (<c>auto_evolve</c>, <c>candidate_only</c>).</summary>
+    public string? EvolutionModeOverride { get; init; }
+
+    /// <summary>Optional mode- or session-level core markdown max tokens override (<c>256..8000</c>).</summary>
+    public int? CoreMarkdownMaxTokensOverride { get; init; }
 }

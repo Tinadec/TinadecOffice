@@ -144,12 +144,16 @@ public static class InteractionsEndpoints
             permissionMode = pm.GetString()!.Trim().ToLowerInvariant();
         }
         var spaceOptions = session.SpaceOptions;
-        var hasExplicitSpaceOptions = el.TryGetProperty("space_options", out var optionsElement) && optionsElement.ValueKind != JsonValueKind.Null;
+        var hasSpaceOptionsProperty = el.TryGetProperty("space_options", out var optionsElement);
+        var hasExplicitSpaceOptions = hasSpaceOptionsProperty && optionsElement.ValueKind != JsonValueKind.Null;
         if (hasExplicitSpaceOptions)
         {
-            try { spaceOptions = optionsElement.Deserialize<SpaceRunOptions>(SettingsJson); }
+            try { spaceOptions = SpaceRunOptionsJson.Parse(optionsElement); }
             catch (JsonException) { return Results.BadRequest(new { code = "invalid_space_options", message = "space_options must contain supported spatial settings." }); }
-            if (spaceOptions is null) return Results.BadRequest(new { code = "invalid_space_options", message = "space_options must be an object." });
+        }
+        else if (hasSpaceOptionsProperty && optionsElement.ValueKind == JsonValueKind.Null)
+        {
+            spaceOptions = session.ViewMode == "space" ? new SpaceRunOptions() : null;
         }
         try
         {

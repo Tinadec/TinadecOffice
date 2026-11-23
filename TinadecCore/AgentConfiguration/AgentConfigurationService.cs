@@ -136,7 +136,8 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
     {
         var name = String(input, "display_name") ?? String(input, "name") ?? throw new ArgumentException("display_name is required.");
         var orchestrationTier = GraphValidation.NormalizeOrchestrationTier(String(input, "orchestration_tier"));
-        var defaultOptionsJson = input.TryGetProperty("default_options", out var defOpts)
+        var defaultOptionsJson = (input.TryGetProperty("default_options", out var defOpts)
+                || input.TryGetProperty("defaultOptions", out defOpts))
             ? GraphValidation.NormalizeDefaultOptionsJson(defOpts, "mode")
             : null;
         var row = new AgentModeRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, Slug = Slug(String(input, "slug") ?? name), DisplayName = name.Trim(), Description = String(input, "description"), OrchestrationTier = orchestrationTier, DefaultOptionsJson = defaultOptionsJson, Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now, CreatedByPrincipalId = scope.PrincipalId, UpdatedByPrincipalId = scope.PrincipalId };

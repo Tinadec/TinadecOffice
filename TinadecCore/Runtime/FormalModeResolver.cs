@@ -163,7 +163,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var runtimePolicy = ParseRuntimePolicy(mv);
             var modeInstructions = ParseModeInstructions(mv);
             var orchestrationTier = ParseOrchestrationTier(mv);
-            var defaultOptions = ParseDefaultOptions(mv);
+            var (defaultOptions, isLegacyCanvasContextOnly) = ParseDefaultOptionsWithLegacyFallback(mv, runtimePolicy);
             var (modeSlug, modeDisplayName) = ParseModeIdentity(mv, interfaceLocale);
             var isPackManaged = await cfg.AgentPackManagedResources.AsNoTracking()
                 .AnyAsync(m => m.TenantId == sess.TenantId && m.WorkspaceId == sess.WorkspaceId && m.ResourceKind == "mode" && m.LogicalEntityId == mv.AgentModeId, ct)
@@ -401,6 +401,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 ModeDisplayName = modeDisplayName,
                 OrchestrationTier = orchestrationTier,
                 DefaultOptions = defaultOptions,
+                IsLegacyCanvasContextOnly = isLegacyCanvasContextOnly,
                 IsPackManaged = isPackManaged,
                 Edges = edges,
                 HasDeclaredEdges = edges.Count > 0,
@@ -740,27 +741,186 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             : throw new InvalidDataException($"Mode snapshot declares unsupported orchestration_tier '{text}'.");
     }
 
-    private static SpaceRunOptions? ParseDefaultOptions(ModeVersionRecord version)
+    internal static SpaceRunOptions? ParseDefaultOptions(ModeVersionRecord version, ModeRuntimePolicyDto? runtimePolicy = null) =>
+        ParseDefaultOptionsWithLegacyFallback(version, runtimePolicy).Options;
+
+    internal static (SpaceRunOptions? Options, bool IsLegacyCanvasOnly) ParseDefaultOptionsWithLegacyFallback(
+        ModeVersionRecord version,
+        ModeRuntimePolicyDto? runtimePolicy = null)
     {
-        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return null;
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return (null, false);
         using var document = JsonDocument.Parse(version.SnapshotJson);
-        if (!document.RootElement.TryGetProperty("default_options", out var element)
-            || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            return null;
-        if (element.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("Mode snapshot default_options must be an object.");
-        static bool ReadBool(JsonElement obj, string snake, string camel) =>
-            (obj.TryGetProperty(snake, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False && v.GetBoolean())
-            || (obj.TryGetProperty(camel, out var c) && c.ValueKind is JsonValueKind.True or JsonValueKind.False && c.GetBoolean());
-        var workflowId = OptionalGuid(element, "workflow_mode_version_id") ?? OptionalGuid(element, "workflowModeVersionId");
-        return new SpaceRunOptions(
-            PlanFirst: ReadBool(element, "plan_first", "planFirst"),
-            SpecEnabled: ReadBool(element, "spec_enabled", "specEnabled"),
-            MultiAgent: ReadBool(element, "multi_agent", "multiAgent"),
-            WorkflowModeVersionId: workflowId,
-            BulletinBoard: ReadBool(element, "bulletin_board", "bulletinBoard"),
-            Worktree: ReadBool(element, "worktree", "worktree"));
+        var root = document.RootElement;
+
+        SpaceRunOptions? defaultOptions = null;
+        var hasExplicitDefaultOptions = root.TryGetProperty("default_options", out var element)
+            && element.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined);
+        if (hasExplicitDefaultOptions)
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Mode snapshot default_options must be an object.");
+            try
+            {
+                defaultOptions = SpaceRunOptionsJson.Parse(element, rejectUnknownFields: false);
+            }
+            catch (JsonException exception)
+            {
+                throw new InvalidDataException("Mode snapshot default_options is invalid.", exception);
+            }
+            ValidateDefaultOptionsSnapshot(defaultOptions);
+        }
+
+        // Read-only backward-compatible fallback for historical modes that persisted
+        // context_strategy / context_advanced under canvas_layout before default_options carried them.
+        if (!root.TryGetProperty("canvas_layout", out var canvasLayout) || canvasLayout.ValueKind != JsonValueKind.Object)
+        {
+            return (defaultOptions, false);
+        }
+
+        var settings = runtimePolicy?.Settings;
+        string? legacyStrategy = null;
+        if (defaultOptions?.ContextStrategy is null && !RuntimeSettingsHasString(settings, "context_strategy"))
+        {
+            var rawStrategy = OptionalString(canvasLayout, "context_strategy") ?? OptionalString(canvasLayout, "contextStrategy");
+            var normalizedStrategy = rawStrategy?.Trim().ToLowerInvariant();
+            if (normalizedStrategy is "direct" or "managed" or "deep_curator")
+                legacyStrategy = normalizedStrategy;
+        }
+
+        ContextPolicyParamsOverride? legacyAdvanced = null;
+        if ((canvasLayout.TryGetProperty("context_advanced", out var legacyAdvEl)
+                || canvasLayout.TryGetProperty("contextAdvanced", out legacyAdvEl))
+            && legacyAdvEl.ValueKind == JsonValueKind.Object)
+        {
+            legacyAdvanced = ParseLegacyCanvasAdvanced(legacyAdvEl);
+        }
+
+        var baseAdv = defaultOptions?.ContextAdvanced;
+        var mergedAdvanced = ContextPolicyParamsOverride.Normalize(new ContextPolicyParamsOverride(
+            RecallFidelity: baseAdv?.RecallFidelity
+                ?? (RuntimeSettingsHasString(settings, "recall_fidelity", "recall_policy") ? null : legacyAdvanced?.RecallFidelity),
+            CompactionTriggerRatio: baseAdv?.CompactionTriggerRatio
+                ?? (RuntimeSettingsHasNumber(settings, "compaction_trigger_ratio") ? null : legacyAdvanced?.CompactionTriggerRatio),
+            RecentMessageLimit: baseAdv?.RecentMessageLimit
+                ?? (RuntimeSettingsHasNumber(settings, "recent_message_limit") ? null : legacyAdvanced?.RecentMessageLimit),
+            AllowCrossSessionRecall: baseAdv?.AllowCrossSessionRecall
+                ?? (RuntimeSettingsHasBoolean(settings, "allow_cross_session_recall") ? null : legacyAdvanced?.AllowCrossSessionRecall),
+            EvolutionMode: baseAdv?.EvolutionMode
+                ?? (RuntimeSettingsHasString(settings, "evolution_mode", "memory_evolution_mode") ? null : legacyAdvanced?.EvolutionMode),
+            CoreMarkdownMaxTokens: baseAdv?.CoreMarkdownMaxTokens
+                ?? (RuntimeSettingsHasNumber(settings, "core_markdown_max_tokens") ? null : legacyAdvanced?.CoreMarkdownMaxTokens)));
+
+        var mergedStrategy = defaultOptions?.ContextStrategy ?? legacyStrategy;
+
+        if (defaultOptions is not null)
+        {
+            return (SpaceRunOptions.Normalize(defaultOptions with
+            {
+                ContextStrategy = mergedStrategy,
+                ContextAdvanced = mergedAdvanced
+            }), false);
+        }
+
+        if (mergedStrategy is not null || mergedAdvanced is not null)
+        {
+            return (SpaceRunOptions.Normalize(new SpaceRunOptions(
+                ContextStrategy: mergedStrategy,
+                ContextAdvanced: mergedAdvanced)), true);
+        }
+
+        return (null, false);
     }
+
+    private static void ValidateDefaultOptionsSnapshot(SpaceRunOptions options)
+    {
+        if (options.ContextStrategy is { } strategy && strategy is not ("direct" or "managed" or "deep_curator"))
+            throw new InvalidDataException($"Mode snapshot default_options declares unsupported context_strategy '{strategy}'.");
+        if (options.ContextAdvanced is { } adv)
+        {
+            if (adv.RecallFidelity is { } fidelity && fidelity is not ("summary_only" or "balanced" or "verbatim_first"))
+                throw new InvalidDataException($"Mode snapshot default_options declares unsupported recall_fidelity '{fidelity}'.");
+            if (adv.CompactionTriggerRatio is { } ratio && (double.IsNaN(ratio) || double.IsInfinity(ratio) || ratio is < 0.40 or > 0.95))
+                throw new InvalidDataException("Mode snapshot default_options compaction_trigger_ratio must be between 0.40 and 0.95.");
+            if (adv.RecentMessageLimit is { } limit && limit is < 4 or > 200)
+                throw new InvalidDataException("Mode snapshot default_options recent_message_limit must be between 4 and 200.");
+            if (adv.CoreMarkdownMaxTokens is { } maxTokens && maxTokens is < 256 or > 8000)
+                throw new InvalidDataException("Mode snapshot default_options core_markdown_max_tokens must be between 256 and 8000.");
+            if (adv.EvolutionMode is { } evolution && evolution is not ("auto_evolve" or "candidate_only"))
+                throw new InvalidDataException($"Mode snapshot default_options declares unsupported evolution_mode '{evolution}'.");
+        }
+    }
+
+    private static ContextPolicyParamsOverride? ParseLegacyCanvasAdvanced(JsonElement element)
+    {
+        var rawFidelity = (OptionalString(element, "recall_fidelity") ?? OptionalString(element, "recallFidelity"))?.Trim().ToLowerInvariant();
+        var fidelity = rawFidelity is "summary_only" or "balanced" or "verbatim_first" ? rawFidelity : null;
+
+        double? ratio = null;
+        if ((element.TryGetProperty("compaction_trigger_ratio", out var ratioEl)
+                || element.TryGetProperty("compactionTriggerRatio", out ratioEl))
+            && ratioEl.ValueKind == JsonValueKind.Number
+            && ratioEl.TryGetDouble(out var parsedRatio)
+            && !double.IsNaN(parsedRatio) && !double.IsInfinity(parsedRatio)
+            && parsedRatio is >= 0.40 and <= 0.95)
+        {
+            ratio = parsedRatio;
+        }
+
+        int? limit = null;
+        if ((element.TryGetProperty("recent_message_limit", out var limitEl)
+                || element.TryGetProperty("recentMessageLimit", out limitEl))
+            && limitEl.ValueKind == JsonValueKind.Number
+            && limitEl.TryGetInt32(out var parsedLimit)
+            && parsedLimit is >= 4 and <= 200)
+        {
+            limit = parsedLimit;
+        }
+
+        var crossSession = OptionalBoolean(element, "allow_cross_session_recall")
+            ?? OptionalBoolean(element, "allowCrossSessionRecall");
+
+        var rawEvolution = (OptionalString(element, "evolution_mode") ?? OptionalString(element, "evolutionMode"))?.Trim().ToLowerInvariant();
+        var evolution = rawEvolution is "auto_evolve" or "candidate_only" ? rawEvolution : null;
+
+        int? maxTokens = null;
+        if ((element.TryGetProperty("core_markdown_max_tokens", out var tokensEl)
+                || element.TryGetProperty("coreMarkdownMaxTokens", out tokensEl))
+            && tokensEl.ValueKind == JsonValueKind.Number
+            && tokensEl.TryGetInt32(out var parsedTokens)
+            && parsedTokens is >= 256 and <= 8000)
+        {
+            maxTokens = parsedTokens;
+        }
+
+        return ContextPolicyParamsOverride.Normalize(new ContextPolicyParamsOverride(
+            RecallFidelity: fidelity,
+            CompactionTriggerRatio: ratio,
+            RecentMessageLimit: limit,
+            AllowCrossSessionRecall: crossSession,
+            EvolutionMode: evolution,
+            CoreMarkdownMaxTokens: maxTokens));
+    }
+
+    private static bool RuntimeSettingsHasString(JsonElement? settings, params string[] keys)
+    {
+        if (settings is not { ValueKind: JsonValueKind.Object } obj) return false;
+        foreach (var key in keys)
+        {
+            if (obj.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(val.GetString()))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool RuntimeSettingsHasNumber(JsonElement? settings, string key) =>
+        settings is { ValueKind: JsonValueKind.Object } obj
+        && obj.TryGetProperty(key, out var val)
+        && val.ValueKind == JsonValueKind.Number;
+
+    private static bool RuntimeSettingsHasBoolean(JsonElement? settings, string key) =>
+        settings is { ValueKind: JsonValueKind.Object } obj
+        && obj.TryGetProperty(key, out var val)
+        && val.ValueKind is JsonValueKind.True or JsonValueKind.False;
 
     private static IReadOnlyList<ModeNodeSnapshot> ParseModeSnapshot(ModeVersionRecord version)
     {

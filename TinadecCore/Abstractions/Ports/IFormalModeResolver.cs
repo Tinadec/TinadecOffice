@@ -82,9 +82,11 @@ public sealed record FormalModeRoster(
 
     /// <summary>
     /// Optional preset run switches (<c>plan_first</c>, <c>spec_enabled</c>, <c>multi_agent</c>,
-    /// <c>bulletin_board</c>, <c>worktree</c>) frozen with the mode version.
+    /// <c>bulletin_board</c>, <c>worktree</c>, plus optional <c>context_strategy</c> / <c>context_advanced</c>)
+    /// frozen with the mode version.
     /// </summary>
     public SpaceRunOptions? DefaultOptions { get; init; }
+    public bool IsLegacyCanvasContextOnly { get; init; }
     public bool IsPackManaged { get; init; }
 
     // DmaEA graph orchestration: the declared communication topology, conversation
