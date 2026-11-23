@@ -47,7 +47,10 @@ test("nested code is signed before the bundle that seals it", () => {
     const frameworkIndex = plan.indexOf(electron);
     assert.ok(crashpadIndex >= 0, "the crashpad helper is part of the plan");
     assert.ok(crashpadIndex < frameworkIndex, "helpers are signed before their framework");
-    assert.ok(plan.indexOf(join(app, "Contents", "Frameworks", "TinadecOffice Helper.app")) < plan.indexOf(app));
+    // Without the non-negative check a dropped Helper would still satisfy "-1 < outer index".
+    const helperIndex = plan.indexOf(join(app, "Contents", "Frameworks", "TinadecOffice Helper.app"));
+    assert.ok(helperIndex >= 0, "the helper app is part of the plan");
+    assert.ok(helperIndex < plan.indexOf(app), "the helper app is signed before the bundle that seals it");
     // Runtime binaries are sealed at staging time, not here: re-signing the bundle copies would break
     // the byte-for-byte comparison against the Office channel archives.
     for (const relative of RUNTIME_EXECUTABLES) {
@@ -89,4 +92,35 @@ test("bundled runtime must stay byte-identical to the staged runtime", () => {
 test("signing arguments are ad-hoc with an explicit seal refresh", () => {
   assert.deepEqual(codesignArguments("/tmp/x.app"), ["--force", "--sign", "-", "--timestamp=none", "/tmp/x.app"]);
   assert.throws(() => signMacAdhoc(join(tmpdir(), "missing-" + process.pid + ".app"), { run: () => {}, platform: "darwin" }), /existing .app/);
+});
+
+test("every planned target is signed with the ad-hoc arguments, outer bundle last", () => {
+  const { root, app } = fixtureApp();
+  try {
+    const calls = [];
+    const signed = signMacAdhoc(app, { run: (command, args) => calls.push([command, args]), platform: "darwin" });
+    // The failing-path test above never reaches the callback, so this is the only assertion that
+    // would notice signMacAdhoc passing wrong arguments or signing in a different order.
+    assert.ok(calls.length > 0, "the fixture app has nested code to sign");
+    assert.deepEqual(calls.map(([, args]) => args.at(-1)), signed, "callbacks see exactly the reported targets");
+    assert.ok(calls.every(([command]) => command === "codesign"));
+    assert.equal(signed.at(-1), app, "the outer bundle is the last target signed");
+    for (const [, args] of calls) {
+      assert.deepEqual(args, codesignArguments(args.at(-1)), "each target gets the seal-refresh arguments");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a staged runtime file without its bundled copy fails instead of being skipped", () => {
+  const { root, app, staged } = fixtureApp();
+  try {
+    // A file missing from staging is a --dir build; a file missing from the bundle is a broken copy.
+    rmSync(join(staged, RUNTIME_EXECUTABLES[0]));
+    rmSync(join(app, "Contents", "Resources", "runtime", RUNTIME_EXECUTABLES[1]));
+    assert.throws(() => assertBundledRuntimeMatches(app, staged), /Bundled runtime is missing/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

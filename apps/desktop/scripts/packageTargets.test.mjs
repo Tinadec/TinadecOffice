@@ -51,7 +51,13 @@ test("macOS ships a dmg sealed by the ad-hoc hook and Linux a .deb, each named a
 	// channel archives are built from that directory and compared byte-for-byte with the bundle copy,
 	// so signing only the bundle copies would fail every macOS release verification.
 	const packager = readFileSync(join(desktopDir, "scripts", "package.mjs"), "utf8");
-	assert.match(packager, /signStagedRuntime\(join\(desktopDir, "runtime"\)\)/, "package.mjs seals the staged runtime first");
+	// Presence alone is not the contract: the seal has to happen BEFORE electron-builder copies the
+	// runtime into the bundle, otherwise the bundle copies stay unsigned and the byte comparison fails.
+	const sealIndex = packager.indexOf('signStagedRuntime(join(desktopDir, "runtime"))');
+	const builderIndex = packager.indexOf("const result = spawnSync(");
+	assert.ok(sealIndex >= 0, "package.mjs seals the staged runtime before packaging");
+	assert.ok(builderIndex >= 0, "package.mjs still spawns electron-builder through one call");
+	assert.ok(sealIndex < builderIndex, "the staged runtime is sealed before electron-builder copies it");
 });
 
 test("The deb has the metadata the packager refuses to build without", () => {

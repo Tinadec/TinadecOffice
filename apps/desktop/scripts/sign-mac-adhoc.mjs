@@ -103,8 +103,15 @@ export function assertBundledRuntimeMatches(appPath, runtimeDir, { readFile = re
   const checked = [];
   for (const relative of RUNTIME_EXECUTABLES) {
     const staged = join(runtimeDir, relative);
+    // A staged file without its bundled copy means electron-builder did not copy the runtime into
+    // the bundle. Skipping it here would let the release ship an app whose module archive and bundle
+    // disagree, which is exactly what this assertion exists to prevent.
+    if (!existsSync(staged)) continue;
     const bundled = join(appPath, 'Contents', 'Resources', 'runtime', relative);
-    if (!existsSync(staged) || !existsSync(bundled)) continue;
+    if (!existsSync(bundled)) {
+      throw new Error('Bundled runtime is missing ' + relative
+        + '. The staged runtime was not copied into the bundle; check extraResources before packaging.');
+    }
     if (!readFile(staged).equals(readFile(bundled))) {
       throw new Error('Bundled runtime differs from the staged runtime: ' + relative
         + '. Sign the staged runtime before packaging so the Office channel archives stay byte-identical.');
