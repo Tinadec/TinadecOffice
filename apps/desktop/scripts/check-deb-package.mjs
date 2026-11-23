@@ -19,6 +19,14 @@ const rootDir = resolve(desktopDir, "..", "..");
 const RUNTIME_EXECUTABLES = ["core/TinadecCore.Api", "gateway/TinadecGateway", "tools/TinadecTools", "tools/bwrap", "tools/rg", "native/rg/rg"];
 const RUNTIME_RESOURCES = ["core/appsettings.json", "core/Configuration/default-agent-runtime.toml", "tools/Nlog.config"];
 
+/// Debian `.deb` control versions replace SemVer prerelease hyphens (`-`) with tilde (`~`) so
+/// prerelease builds sort before the matching release; accept both forms when checking `control`.
+export function expectedDebianVersionPrefixes(version) {
+	if (!version) return [];
+	const debianVersion = version.replaceAll("-", "~");
+	return debianVersion === version ? [version] : [version, debianVersion];
+}
+
 export function inspectDeb({ control, desktopEntries, dataEntries, desktopFile, version, runtimeFiles = {} }) {
 	const problems = [];
 	const fields = parseControlFields(control);
@@ -27,7 +35,11 @@ export function inspectDeb({ control, desktopEntries, dataEntries, desktopFile, 
 	for (const field of required) {
 		if (!fields[field]) problems.push(`control has no '${field}'`);
 	}
-	if (fields.Version && version && !fields.Version.startsWith(version)) {
+	if (
+		fields.Version &&
+		version &&
+		!expectedDebianVersionPrefixes(version).some((prefix) => fields.Version.startsWith(prefix))
+	) {
 		problems.push(`control Version '${fields.Version}' does not carry the app version '${version}'`);
 	}
 	if (fields.Maintainer && !fields.Maintainer.includes("@")) {
