@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.DmaEA;
 
@@ -33,19 +34,22 @@ public sealed class RunDossierService : IRunDossier
     private readonly IPlanLedger? _plan;
     private readonly IExplorationGraph? _exploration;
     private readonly ILogger<RunDossierService>? _logger;
+    private readonly IRunContextDiagnosticsService _contextDiagnostics;
 
     public RunDossierService(
         ILifecycleManager lifecycle,
         IRunReplayService? replay = null,
         IPlanLedger? plan = null,
         IExplorationGraph? exploration = null,
-        ILogger<RunDossierService>? logger = null)
+        ILogger<RunDossierService>? logger = null,
+        IRunContextDiagnosticsService? contextDiagnostics = null)
     {
         _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
         _replay = replay;
         _plan = plan;
         _exploration = exploration;
         _logger = logger;
+        _contextDiagnostics = contextDiagnostics ?? new RunContextDiagnosticsService(_lifecycle, _replay);
     }
 
     public async Task<RunDossier?> BuildAsync(
@@ -85,6 +89,8 @@ public sealed class RunDossierService : IRunDossier
             .Distinct(StringComparer.Ordinal)
             .Count();
 
+        var contextHealth = await ReadContextHealthAsync(query, notes, cancellationToken).ConfigureAwait(false);
+
         return new RunDossier(
             run,
             tasks,
@@ -98,7 +104,45 @@ public sealed class RunDossierService : IRunDossier
                 findingCount,
                 questions.Count,
                 evidenceRefs,
-                truncated));
+                truncated),
+            contextHealth);
+    }
+
+    private async Task<ContextHealthSummaryDto?> ReadContextHealthAsync(
+        RunDossierQuery query,
+        List<string> notes,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var diag = await _contextDiagnostics.DiagnoseRunAsync(
+                query.RunId,
+                query.TenantId,
+                query.WorkspaceId,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (diag is null)
+            {
+                return null;
+            }
+
+            return new ContextHealthSummaryDto
+            {
+                PeakOccupancyPct = diag.WindowBuckets.PeakOccupancyPct,
+                DegradationDetected = diag.WindowBuckets.DegradationDetected,
+                DroppedTokens = diag.Compaction.TotalDroppedTokensAcrossPacks,
+                PackCount = diag.Compaction.PackCount,
+                CompactionCount = diag.Compaction.Packs.Count(p => p.HasCompactionDigest),
+                MaxSameArgsRetryStreak = diag.Governance.MaxSameArgsRetryStreak,
+                ActiveSignals = diag.Governance.ActiveSignals.Take(UnifiedGovernanceSignalCodes.Ordered.Count).ToArray(),
+                SignalCounts = diag.Governance.SignalCounts
+            };
+        }
+        catch (Exception failure) when (failure is not OperationCanceledException)
+        {
+            _logger?.LogDebug(failure, "run_dossier: context diagnostics read failed for run {RunId}", query.RunId);
+            notes.Add("Context health diagnostics could not be assembled for this run.");
+            return null;
+        }
     }
 
     /// <summary>

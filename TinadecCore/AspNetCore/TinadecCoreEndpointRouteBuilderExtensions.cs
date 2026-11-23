@@ -31,6 +31,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapGovernanceEndpoints();
         endpoints.MapMemoryReviewEndpoints();
         endpoints.MapContextMemoryEndpoints();
+        endpoints.MapContextDiagnosticsEndpoints();
         endpoints.MapEvolutionEndpoints();
         endpoints.MapAgentEvaluationEndpoints();
         endpoints.MapRunReplayEndpoints();

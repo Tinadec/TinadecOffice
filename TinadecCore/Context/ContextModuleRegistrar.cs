@@ -19,12 +19,13 @@ public sealed class ContextModuleRegistrar : IModuleRegistrar
     {
         builder.Services.AddSingleton<IContextStrategyService, ContextStrategyService>();
         builder.Services.AddSingleton<IContextProvider, ContextProvider>();
+        builder.Services.AddContextOverlapAuditor();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "strategies"],
-            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions", "workspace_skills", "micro_compaction", "context_strategy"],
+            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions", "workspace_skills", "micro_compaction", "context_strategy", "context_overlap_audit"],
             Language = "C#",
             MafPrimitives = ["context"],
             RegistrationStatus = ModuleRegistrationStatus.NotConfigured
@@ -327,8 +328,14 @@ internal sealed class ContextProvider : IContextProvider
                 ["context_strategy"] = profile.Strategy,
                 ["compaction_trigger_ratio"] = profile.CompactionTriggerRatio.ToString("0.##", CultureInfo.InvariantCulture),
                 ["recall_fidelity"] = profile.RecallFidelity,
+                ["recent_message_limit"] = recentMessageLimit.ToString(CultureInfo.InvariantCulture),
                 ["history_recall_enabled"] = profile.HistoryRecallEnabled ? "true" : "false",
                 ["cross_session_recall_enabled"] = profile.CrossSessionRecallEnabled ? "true" : "false",
+                ["active_memory_evolution_enabled"] = profile.ActiveMemoryEvolutionEnabled ? "true" : "false",
+                ["evolution_mode"] = !string.IsNullOrWhiteSpace(request.EvolutionModeOverride)
+                    ? request.EvolutionModeOverride.Trim().ToLowerInvariant()
+                    : (policy?.EvolutionMode ?? (profile.ActiveMemoryEvolutionEnabled ? "auto_evolve" : "candidate_only")),
+                ["core_markdown_max_tokens"] = Math.Clamp(request.CoreMarkdownMaxTokensOverride ?? policy?.CoreMarkdownMaxTokens ?? 1500, 128, 8000).ToString(CultureInfo.InvariantCulture),
                 ["compaction_recommended"] = compactionRecommended ? "true" : "false",
                 ["user_profile_memory_items"] = principalHotCount.ToString(CultureInfo.InvariantCulture),
                 ["project_core_memory_items"] = projectHotCount.ToString(CultureInfo.InvariantCulture),
@@ -497,10 +504,18 @@ internal sealed class ContextProvider : IContextProvider
                 request.ContextStrategyOverride,
                 policy,
                 request.CompactionTriggerRatioOverride,
-                request.RecallPolicyOverride);
+                request.RecallPolicyOverride,
+                request.AllowCrossSessionRecallOverride,
+                request.EvolutionModeOverride);
         }
 
-        var effectivePolicy = BuildOverriddenPolicy(policy, request.CompactionTriggerRatioOverride, request.RecallPolicyOverride);
+        var effectivePolicy = BuildOverriddenPolicy(
+            policy,
+            request.CompactionTriggerRatioOverride,
+            request.RecallPolicyOverride,
+            request.AllowCrossSessionRecallOverride,
+            request.EvolutionModeOverride,
+            request.CoreMarkdownMaxTokensOverride);
         var resolved = _strategyService.ResolveProfile(request.ContextStrategyOverride, effectivePolicy);
         if (string.IsNullOrWhiteSpace(request.RecallPolicyOverride))
         {
@@ -511,7 +526,7 @@ internal sealed class ContextProvider : IContextProvider
         {
             "disabled" or "none" or "off" => resolved with { HistoryRecallEnabled = false, CrossSessionRecallEnabled = false },
             "session_only" or "local" => resolved with { HistoryRecallEnabled = true, CrossSessionRecallEnabled = false },
-            "cross_session" or "cross_session_enabled" => resolved with { HistoryRecallEnabled = true, CrossSessionRecallEnabled = true },
+            "cross_session" or "cross_session_enabled" => resolved with { HistoryRecallEnabled = true, CrossSessionRecallEnabled = request.AllowCrossSessionRecallOverride ?? true },
             _ => resolved
         };
     }
@@ -519,9 +534,16 @@ internal sealed class ContextProvider : IContextProvider
     private static ContextMemoryPolicyDto? BuildOverriddenPolicy(
         ContextMemoryPolicyDto? policy,
         double? compactionTriggerRatioOverride,
-        string? recallPolicyOverride)
+        string? recallPolicyOverride,
+        bool? allowCrossSessionRecallOverride = null,
+        string? evolutionModeOverride = null,
+        int? coreMarkdownMaxTokensOverride = null)
     {
-        if (compactionTriggerRatioOverride is null && string.IsNullOrWhiteSpace(recallPolicyOverride))
+        if (compactionTriggerRatioOverride is null
+            && string.IsNullOrWhiteSpace(recallPolicyOverride)
+            && allowCrossSessionRecallOverride is null
+            && string.IsNullOrWhiteSpace(evolutionModeOverride)
+            && coreMarkdownMaxTokensOverride is null)
         {
             return policy;
         }
@@ -531,15 +553,21 @@ internal sealed class ContextProvider : IContextProvider
         var fidelity = normalizedRecall is "summary_only" or "balanced" or "verbatim_first"
             ? normalizedRecall
             : basePolicy.RecallFidelity;
-        var allowCrossSession = normalizedRecall switch
+        var allowCrossSession = allowCrossSessionRecallOverride ?? (normalizedRecall switch
         {
             "disabled" or "none" or "off" or "session_only" or "local" => false,
             "cross_session" or "cross_session_enabled" => true,
             _ => basePolicy.AllowCrossSessionRecall
-        };
+        });
         var ratio = compactionTriggerRatioOverride is { } r && !double.IsNaN(r)
             ? Math.Clamp(r, 0.40, 0.95)
             : basePolicy.CompactionTriggerRatio;
+        var evolutionMode = string.IsNullOrWhiteSpace(evolutionModeOverride)
+            ? basePolicy.EvolutionMode
+            : evolutionModeOverride.Trim().ToLowerInvariant();
+        var candidateOnly = string.IsNullOrWhiteSpace(evolutionModeOverride)
+            ? basePolicy.CandidateOnly
+            : string.Equals(evolutionMode, "candidate_only", StringComparison.OrdinalIgnoreCase);
 
         return new ContextMemoryPolicyDto
         {
@@ -551,10 +579,10 @@ internal sealed class ContextProvider : IContextProvider
             AllowCrossSessionRecall = allowCrossSession,
             MicroCompactStaleToolOutputs = basePolicy.MicroCompactStaleToolOutputs,
             OffloadLargeToolPayloadBytes = basePolicy.OffloadLargeToolPayloadBytes,
-            EvolutionMode = basePolicy.EvolutionMode,
-            CandidateOnly = basePolicy.CandidateOnly,
+            EvolutionMode = evolutionMode,
+            CandidateOnly = candidateOnly,
             RetrievalLimit = basePolicy.RetrievalLimit,
-            CoreMarkdownMaxTokens = basePolicy.CoreMarkdownMaxTokens,
+            CoreMarkdownMaxTokens = coreMarkdownMaxTokensOverride ?? basePolicy.CoreMarkdownMaxTokens,
             ProjectMarkdownProjection = basePolicy.ProjectMarkdownProjection,
             ProjectMemoryPath = basePolicy.ProjectMemoryPath,
             CompanionCanWriteProjectMemory = basePolicy.CompanionCanWriteProjectMemory,
@@ -579,7 +607,7 @@ internal sealed class ContextProvider : IContextProvider
             return [];
         }
 
-        var configuredMaxTokens = Math.Clamp(policy?.CoreMarkdownMaxTokens ?? 1500, 128, 8000);
+        var configuredMaxTokens = Math.Clamp(request.CoreMarkdownMaxTokensOverride ?? policy?.CoreMarkdownMaxTokens ?? 1500, 128, 8000);
         var perDocMaxTokens = Math.Clamp(configuredMaxTokens, 128, Math.Max(128, tokenBudget / 4));
         var perDocMaxChars = perDocMaxTokens * 4;
 

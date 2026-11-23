@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.DmaEA.LiveExplainer;
 
@@ -75,27 +76,27 @@ public static class LiveExplainerModes
         TryNormalize(raw, out var normalized) ? normalized : Auto;
 }
 
-/// <summary>The 7 canonical governance red-line signals surfaced in L0/L1 Live Digest.</summary>
+/// <summary>
+/// Canonical 9 governance and isolation red-line signals unified across Live Digest,
+/// Trajectory diagnostics, RunContextDiagnosticsService, and P2 self-evolution.
+/// </summary>
 public static class GovernanceSignalCodes
 {
-    public const string ApprovalRejected = "APPROVAL_REJECTED";
-    public const string FsStaleVersion = "FS_STALE_VERSION";
-    public const string SameArgsRetry = "SAME_ARGS_RETRY";
-    public const string Timeout = "TIMEOUT";
-    public const string WorktreeGuard = "WORKTREE_GUARD";
-    public const string LoopDetected = "LOOP_DETECTED";
-    public const string ContextPressure = "CONTEXT_PRESSURE";
+    public const string ApprovalRejected = UnifiedGovernanceSignalCodes.ApprovalRejected;
+    public const string FsNotObserved = UnifiedGovernanceSignalCodes.FsNotObserved;
+    public const string FsStaleVersion = UnifiedGovernanceSignalCodes.FsStaleVersion;
+    public const string WorktreeGuard = UnifiedGovernanceSignalCodes.WorktreeGuard;
+    public const string WriteScopeLocked = UnifiedGovernanceSignalCodes.WriteScopeLocked;
+    public const string Timeout = UnifiedGovernanceSignalCodes.Timeout;
+    public const string SameArgsRetry = UnifiedGovernanceSignalCodes.SameArgsRetry;
+    public const string LoopDetected = UnifiedGovernanceSignalCodes.LoopDetected;
+    public const string ContextPressure = UnifiedGovernanceSignalCodes.ContextPressure;
 
-    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-    {
-        ApprovalRejected,
-        FsStaleVersion,
-        SameArgsRetry,
-        Timeout,
-        WorktreeGuard,
-        LoopDetected,
-        ContextPressure
-    };
+    public static readonly IReadOnlyList<string> Ordered = UnifiedGovernanceSignalCodes.Ordered;
+
+    public static readonly IReadOnlySet<string> All = UnifiedGovernanceSignalCodes.All;
+
+    public static string DefaultSeverity(string code) => UnifiedGovernanceSignalCodes.DefaultSeverity(code);
 }
 
 public static class LiveDigestPhases

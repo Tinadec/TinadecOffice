@@ -89,7 +89,10 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddTinadecSpatialBoard();
         // The tinadec_* workbench tools: Tools only knows the port, Runtime owns the
         // implementation because configuration, skills, MCP and market all meet here.
-        services.AddSingleton<ITinadecConfigToolGateway, TinadecConfigToolGateway>();
+        services.AddSingleton<TinadecConfigToolGateway>();
+        services.AddSingleton<ITinadecConfigToolGateway>(sp => sp.GetRequiredService<TinadecConfigToolGateway>());
+        services.AddSingleton<IContextAuditCatalogReader>(sp => sp.GetRequiredService<TinadecConfigToolGateway>());
+        services.AddSingleton<IRunModelInvocationReader>(sp => sp.GetRequiredService<TinadecConfigToolGateway>());
         services.AddSingleton<IAcpApprovalBridge, CoreAcpApprovalBridge>();
         services.AddSingleton<ITeamBoardMcpBridge, TeamBoardMcpBridge>();
         services.AddSingleton<ILifecycleHookService, LifecycleHookService>();

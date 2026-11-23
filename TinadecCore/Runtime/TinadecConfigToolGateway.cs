@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Context;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
@@ -31,7 +32,7 @@ namespace TinadecCore.Runtime;
 /// <item>Writes enforce validation, optimistic revision checks, and version history snapshots.</item>
 /// </list>
 /// </summary>
-public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
+public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IContextAuditCatalogReader, IRunModelInvocationReader
 {
     private const int MaxRows = 50;
     private const int MaxText = 240;
@@ -69,6 +70,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
     private readonly ReadinessService? _readiness;
     private readonly IServerFailureReader? _failureReader;
     private readonly IContextMemoryService? _contextMemory;
+    private readonly IToolExecutionCoordinator? _toolExecutions;
 
     public TinadecConfigToolGateway(
         IAgentTopologyService topology,
@@ -91,7 +93,8 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         IDbContextFactory<LifecycleDbContext>? lifecycleDb = null,
         ReadinessService? readiness = null,
         IServerFailureReader? failureReader = null,
-        IContextMemoryService? contextMemory = null)
+        IContextMemoryService? contextMemory = null,
+        IToolExecutionCoordinator? toolExecutions = null)
     {
         _topology = topology;
         _packs = packs;
@@ -114,6 +117,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
         _readiness = readiness;
         _failureReader = failureReader;
         _contextMemory = contextMemory;
+        _toolExecutions = toolExecutions;
     }
 
     public async Task<ToolWireResponseDto> ExecuteAsync(
@@ -214,8 +218,12 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
                 return Ok(wire, await InspectSystemHealthAsync(scope, ct).ConfigureAwait(false));
             case "context_memory":
                 return await InspectContextMemoryAsync(scope, wire, parameters, ct).ConfigureAwait(false);
+            case "context_audit":
+                return await InspectContextAuditAsync(scope, wire, parameters, limit, ct).ConfigureAwait(false);
+            case "run_diagnostics":
+                return await InspectRunDiagnosticsAsync(scope, wire, parameters, limit, ct).ConfigureAwait(false);
             default:
-                return Fail(wire, "invalid_request", "target must be one of agents, agent, modes, mode, catalog, models, prompts, prompt_pipeline, tools, skills, mcp, external_cli, run_replay, recent_failures, system_health, context_memory.");
+                return Fail(wire, "invalid_request", "target must be one of agents, agent, modes, mode, catalog, models, prompts, prompt_pipeline, tools, skills, mcp, external_cli, run_replay, recent_failures, system_health, context_memory, context_audit, run_diagnostics.");
         }
     }
 
@@ -975,6 +983,547 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway
             documents = dto.Documents,
             strategy_presets = dto.StrategyPresets,
         });
+    }
+
+    private async Task<ToolWireResponseDto> InspectContextAuditAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        JsonElement parameters,
+        int limit,
+        CancellationToken ct)
+    {
+        var projectId = ProjectOf(scope, parameters, parameters);
+        var rawRunId = Text(parameters, "run_id");
+        Guid? runId = null;
+        if (!string.IsNullOrWhiteSpace(rawRunId))
+        {
+            if (!Guid.TryParse(rawRunId.Trim(), out var parsedRun) || parsedRun == Guid.Empty)
+                return Fail(wire, "invalid_request", "run_id must be a valid GUID when provided to target=context_audit.");
+            runId = parsedRun;
+        }
+
+        var modeId = Text(parameters, "mode_id");
+        var agentId = Text(parameters, "agent_id");
+        var kGramSize = ReadNullableInt(parameters, "k_gram_size");
+        var windowSize = ReadNullableInt(parameters, "window_size");
+
+        var authorizedRoot = !string.IsNullOrWhiteSpace(scope.WorkspaceRoot)
+            ? scope.WorkspaceRoot
+            : _configuration?["TinadecTools:DefaultWorkspaceRoot"];
+
+        var auditor = new ContextOverlapAuditor(
+            _lifecycle,
+            _sessions,
+            _promptFragments,
+            _skills,
+            toolRegistry: null,
+            _provider,
+            _mcpServers,
+            catalogReader: this);
+
+        ContextOverlapAuditDto audit;
+        try
+        {
+            audit = await auditor.AuditAsync(
+                new ContextOverlapAuditRequestDto
+                {
+                    ProjectId = projectId,
+                    ModeId = modeId,
+                    AgentId = agentId,
+                    RunId = runId,
+                    KGramSize = kGramSize,
+                    WindowSize = windowSize,
+                    MaxExcerptLength = MaxText,
+                    MaxMatchesPerPair = 5
+                },
+                new ContextAuditExecutionScope(
+                    scope.TenantId,
+                    scope.WorkspaceId,
+                    scope.SessionId,
+                    projectId,
+                    authorizedRoot),
+                ct).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return Fail(wire, "not_found", ex.Message);
+        }
+
+        return OkSnake(wire, new
+        {
+            ok = true,
+            target = "context_audit",
+            scope = audit.Scope,
+            project_id = audit.ProjectId,
+            mode_id = audit.ModeId,
+            agent_id = audit.AgentId,
+            run_id = audit.RunId,
+            k_gram_size = audit.KGramSize,
+            window_size = audit.WindowSize,
+            source_count = audit.SourceCount,
+            total_estimated_tokens = audit.TotalEstimatedTokens,
+            duplicate_estimated_tokens = audit.DuplicateEstimatedTokens,
+            overall_overlap_percent = audit.OverallOverlapPercent,
+            pairs_total = audit.Pairs.Count,
+            pairs_truncated = audit.Pairs.Count > limit,
+            pairs = audit.Pairs.Take(limit).Select(p => new
+            {
+                id = p.Id,
+                source_a_id = p.SourceAId,
+                source_a_label = Truncate(RedactSensitiveText(p.SourceALabel), MaxText),
+                source_a_kind = p.SourceAKind,
+                source_b_id = p.SourceBId,
+                source_b_label = Truncate(RedactSensitiveText(p.SourceBLabel), MaxText),
+                source_b_kind = p.SourceBKind,
+                shared_chars = p.SharedChars,
+                overlap_percent = p.OverlapPercent,
+                overlap_percent_a = p.OverlapPercentA,
+                overlap_percent_b = p.OverlapPercentB,
+                estimated_duplicate_tokens = p.EstimatedDuplicateTokens,
+                match_count = p.MatchCount,
+                remediation_code = p.RemediationCode,
+                remediation_summary = p.RemediationSummary,
+                matches = p.Matches.Take(5).Select(m => new
+                {
+                    id = m.Id,
+                    source_a_lines = m.SourceALines,
+                    source_b_lines = m.SourceBLines,
+                    line_range_pair = m.LineRangePair,
+                    shared_chars = m.SharedChars,
+                    estimated_duplicate_tokens = m.EstimatedDuplicateTokens,
+                    excerpt = Truncate(RedactSensitiveText(m.Excerpt), MaxText),
+                    remediation_code = m.RemediationCode,
+                }).ToArray(),
+            }).ToArray(),
+            sources_total = audit.Sources.Count,
+            sources_truncated = audit.Sources.Count > limit,
+            sources = audit.Sources.Take(limit).Select(s => new
+            {
+                id = s.Id,
+                label = Truncate(RedactSensitiveText(s.Label), MaxText),
+                kind = s.Kind,
+                path = s.Path,
+                char_count = s.CharCount,
+                line_count = s.LineCount,
+                estimated_tokens = s.EstimatedTokens,
+                duplicated_chars = s.DuplicatedChars,
+                overlap_percent = s.OverlapPercent,
+            }).ToArray(),
+        });
+    }
+
+    private async Task<ToolWireResponseDto> InspectRunDiagnosticsAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        JsonElement parameters,
+        int limit,
+        CancellationToken ct)
+    {
+        var rawRunId = Text(parameters, "run_id") ?? Text(parameters, "target_id") ?? Text(parameters, "id");
+        if (string.IsNullOrWhiteSpace(rawRunId) || !Guid.TryParse(rawRunId.Trim(), out var runGuid) || runGuid == Guid.Empty)
+            return Fail(wire, "invalid_request", "target=run_diagnostics requires a valid run_id (or target_id) GUID.");
+
+        var diagnosticsService = _lifecycle is null
+            ? null
+            : new RunContextDiagnosticsService(_lifecycle, _runReplay, _toolExecutions, modelInvocations: this);
+
+        if (diagnosticsService is null)
+            return Fail(wire, "service_unavailable", "Run context diagnostics service is not available in this host.");
+
+        var diag = await diagnosticsService.DiagnoseRunAsync(
+            runGuid,
+            scope.TenantId,
+            scope.WorkspaceId,
+            cancellationToken: ct).ConfigureAwait(false);
+        if (diag is null)
+            return Fail(wire, "run_not_found", $"No run context diagnostics were found for run '{runGuid}'.");
+
+        return OkSnake(wire, new
+        {
+            ok = true,
+            target = "run_diagnostics",
+            run_id = diag.RunId,
+            session_id = diag.SessionId,
+            status = diag.Status,
+            mode_version_id = diag.ModeVersionId,
+            generated_at = diag.GeneratedAt,
+            window_buckets = new
+            {
+                total_samples = diag.WindowBuckets.TotalSamples,
+                total_errors = diag.WindowBuckets.TotalErrors,
+                overall_error_rate = diag.WindowBuckets.OverallErrorRate,
+                avg_latency_ms = diag.WindowBuckets.AvgLatencyMs,
+                peak_occupancy_pct = diag.WindowBuckets.PeakOccupancyPct,
+                low_occupancy_error_rate = diag.WindowBuckets.LowOccupancyErrorRate,
+                high_occupancy_error_rate = diag.WindowBuckets.HighOccupancyErrorRate,
+                low_occupancy_avg_latency_ms = diag.WindowBuckets.LowOccupancyAvgLatencyMs,
+                high_occupancy_avg_latency_ms = diag.WindowBuckets.HighOccupancyAvgLatencyMs,
+                degradation_detected = diag.WindowBuckets.DegradationDetected,
+                degradation_reason_codes = diag.WindowBuckets.DegradationReasonCodes,
+                buckets = diag.WindowBuckets.Buckets,
+                samples_truncated = diag.WindowBuckets.Samples.Count > limit,
+                samples = diag.WindowBuckets.Samples.Take(limit).ToArray(),
+            },
+            compaction = new
+            {
+                selected_pack_id = diag.Compaction.SelectedPackId,
+                pack_count = diag.Compaction.PackCount,
+                total_dropped_tokens_across_packs = diag.Compaction.TotalDroppedTokensAcrossPacks,
+                critical_dropped_sources = diag.Compaction.CriticalDroppedSources,
+                reconciliation = diag.Compaction.Reconciliation,
+                categories = diag.Compaction.Root.Children.Select(c => new
+                {
+                    id = c.Id,
+                    label = c.Label,
+                    category = c.Category,
+                    retained_tokens = c.RetainedTokens,
+                    dropped_tokens = c.DroppedTokens,
+                    share_percent = c.SharePercent,
+                    budget_share_percent = c.BudgetSharePercent,
+                    item_count = c.ItemCount,
+                    dropped_item_count = c.DroppedItemCount,
+                }).ToArray(),
+                packs = diag.Compaction.Packs.Take(limit).ToArray(),
+            },
+            governance = new
+            {
+                signal_counts = diag.Governance.SignalCounts,
+                active_signals = diag.Governance.ActiveSignals,
+                signals = diag.Governance.Signals.Select(s => new
+                {
+                    code = s.Code,
+                    severity = s.Severity,
+                    count = s.Count,
+                    max_retry_streak = s.MaxRetryStreak,
+                    detail = Truncate(RedactSensitiveText(s.Detail), MaxText),
+                    subject_ids = s.SubjectIds.Take(8).ToArray(),
+                }).ToArray(),
+                max_same_args_retry_streak = diag.Governance.MaxSameArgsRetryStreak,
+                retry_streaks = diag.Governance.RetryStreaks.Take(limit).Select(r => new
+                {
+                    execution_id = r.ExecutionId,
+                    tool_id = r.ToolId,
+                    scope_key = r.ScopeKey,
+                    streak_count = r.StreakCount,
+                    arguments_summary = Truncate(RedactSensitiveText(r.ArgumentsSummary), MaxText),
+                }).ToArray(),
+                total_tool_calls = diag.Governance.TotalToolCalls,
+                total_model_calls = diag.Governance.TotalModelCalls,
+                error_count = diag.Governance.ErrorCount,
+                total_added_lines = diag.Governance.TotalAddedLines,
+                total_removed_lines = diag.Governance.TotalRemovedLines,
+                file_edits = diag.Governance.FileEdits.Take(limit).ToArray(),
+                error_frames = diag.Governance.ErrorFrames.Take(Math.Min(limit, 10)).ToArray(),
+            },
+            executive_findings = diag.ExecutiveFindings,
+        });
+    }
+
+    public async Task<IReadOnlyList<ContextAuditSourceInputDto>> GatherCatalogSourcesAsync(
+        ContextOverlapAuditRequestDto request,
+        ContextAuditExecutionScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        var includePrompts = request.IncludePrompts ?? true;
+        var includeTools = request.IncludeTools ?? true;
+        var results = new List<ContextAuditSourceInputDto>();
+
+        await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        HashSet<Guid>? allowedAgentIds = null;
+        HashSet<Guid>? allowedPipelineIds = null;
+
+        if (!string.IsNullOrWhiteSpace(request.ModeId))
+        {
+            var trimmedMode = request.ModeId.Trim();
+            AgentModeRecord? modeRow;
+            if (Guid.TryParse(trimmedMode, out var parsedModeGuid) && parsedModeGuid != Guid.Empty)
+            {
+                modeRow = await db.AgentModes.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == parsedModeGuid && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var modeMatches = await db.AgentModes.AsNoTracking()
+                    .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == trimmedMode)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                modeRow = modeMatches.FirstOrDefault(x => !string.Equals(x.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                    ?? modeMatches.FirstOrDefault();
+            }
+
+            if (modeRow is null)
+            {
+                throw new KeyNotFoundException($"Mode '{request.ModeId}' was not found.");
+            }
+
+            if (includePrompts && !string.IsNullOrWhiteSpace(modeRow.Instructions))
+            {
+                results.Add(new ContextAuditSourceInputDto
+                {
+                    Id = $"mode:{modeRow.Id}:instructions",
+                    Label = $"{modeRow.DisplayName} Mode Instructions",
+                    Kind = ContextAuditSourceKinds.PipelineTemplate,
+                    Content = modeRow.Instructions
+                });
+            }
+
+            var modeNodeAgentIds = await db.ModeNodes.AsNoTracking()
+                .Where(x => x.ModeId == modeRow.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+                .Select(x => x.AgentDefinitionId)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            allowedAgentIds = modeNodeAgentIds.ToHashSet();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.AgentId))
+        {
+            var trimmedAgent = request.AgentId.Trim();
+            AgentDefinitionRecord? singleAgent;
+            if (Guid.TryParse(trimmedAgent, out var parsedAgentGuid) && parsedAgentGuid != Guid.Empty)
+            {
+                singleAgent = await db.AgentDefinitions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == parsedAgentGuid && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var agentMatches = await db.AgentDefinitions.AsNoTracking()
+                    .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Slug == trimmedAgent)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                singleAgent = agentMatches.FirstOrDefault(x => !string.Equals(x.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                    ?? agentMatches.FirstOrDefault();
+            }
+
+            if (singleAgent is null)
+            {
+                throw new KeyNotFoundException($"Agent '{request.AgentId}' was not found.");
+            }
+
+            allowedAgentIds = allowedAgentIds is null
+                ? [singleAgent.Id]
+                : allowedAgentIds.Intersect([singleAgent.Id]).ToHashSet();
+        }
+
+        if (includePrompts)
+        {
+            var agentQuery = db.AgentDefinitions.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status != "archived" && x.Enabled);
+            var agentRows = await agentQuery.ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (allowedAgentIds is not null)
+            {
+                agentRows = agentRows.Where(a => allowedAgentIds.Contains(a.Id)).ToList();
+            }
+
+            allowedPipelineIds = allowedAgentIds is not null
+                ? agentRows.Where(a => a.BasePromptPipelineId.HasValue).Select(a => a.BasePromptPipelineId!.Value).ToHashSet()
+                : null;
+
+            var allowedSlugs = agentRows.Select(a => a.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var agent in agentRows.OrderBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(agent.SystemPrompt))
+                {
+                    results.Add(new ContextAuditSourceInputDto
+                    {
+                        Id = $"agent:{agent.Id}",
+                        Label = string.IsNullOrWhiteSpace(agent.DisplayName) ? agent.Slug : agent.DisplayName,
+                        Kind = ContextAuditSourceKinds.SystemPrompt,
+                        Content = agent.SystemPrompt
+                    });
+                }
+            }
+
+            var pipelines = await db.PromptPipelines.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status != "archived")
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (allowedPipelineIds is not null)
+            {
+                pipelines = pipelines.Where(p => allowedPipelineIds.Contains(p.Id)).ToList();
+            }
+
+            foreach (var pipeline in pipelines.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                var tpl = ContextOverlapAuditor.ExtractPipelineGraphTemplates(pipeline.GraphJson);
+                if (!string.IsNullOrWhiteSpace(tpl))
+                {
+                    results.Add(new ContextAuditSourceInputDto
+                    {
+                        Id = $"pipeline:{pipeline.Id}",
+                        Label = string.IsNullOrWhiteSpace(pipeline.DisplayName) ? pipeline.Slug : pipeline.DisplayName,
+                        Kind = ContextAuditSourceKinds.PipelineTemplate,
+                        Content = tpl
+                    });
+                }
+            }
+
+            if (_promptFragments is not null)
+            {
+                var fragments = await _promptFragments.ListAsync(enabled: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+                foreach (var frag in fragments)
+                {
+                    if (!frag.Enabled || string.IsNullOrWhiteSpace(frag.Content)) continue;
+                    if (allowedAgentIds is not null
+                        && string.Equals(frag.Scope, "agent", StringComparison.OrdinalIgnoreCase)
+                        && (!frag.TargetAgentId.HasValue || !allowedAgentIds.Contains(frag.TargetAgentId.Value))
+                        && (string.IsNullOrWhiteSpace(frag.TargetAgentSlug) || !allowedSlugs.Contains(frag.TargetAgentSlug)))
+                    {
+                        continue;
+                    }
+
+                    results.Add(new ContextAuditSourceInputDto
+                    {
+                        Id = $"fragment:{frag.Id}",
+                        Label = string.IsNullOrWhiteSpace(frag.Title) ? frag.Key : frag.Title,
+                        Kind = ContextAuditSourceKinds.PromptFragment,
+                        Content = frag.Content
+                    });
+                }
+            }
+        }
+
+        if (includeTools)
+        {
+            var seenTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var toolLines = new List<string>();
+            void AddToolLine(string id, string? desc)
+            {
+                if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(desc) && seenTools.Add(id))
+                {
+                    toolLines.Add($"{id}: {RedactSensitiveText(desc)}");
+                }
+            }
+
+            foreach (var entry in CoreTinadecConfigTools.AllManifestEntries())
+            {
+                AddToolLine(entry.Id, entry.Description);
+            }
+
+            foreach (var teamEntry in TeamToolCatalog.Entries)
+            {
+                AddToolLine(teamEntry.Id, teamEntry.Description);
+            }
+
+            if (_provider is not null)
+            {
+                try
+                {
+                    var root = !string.IsNullOrWhiteSpace(scope.AuthorizedWorkspaceRoot)
+                        ? scope.AuthorizedWorkspaceRoot
+                        : _configuration?["TinadecTools:DefaultWorkspaceRoot"] ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(root))
+                    {
+                        var manifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+                        foreach (var tool in manifest.Tools)
+                        {
+                            AddToolLine(tool.Id, tool.Description);
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Non-fatal if tool provider process is unavailable.
+                }
+            }
+
+            if (toolLines.Count > 0)
+            {
+                results.Add(new ContextAuditSourceInputDto
+                {
+                    Id = "tools:catalog",
+                    Label = $"Tool Schemas ({toolLines.Count})",
+                    Kind = ContextAuditSourceKinds.ToolSchema,
+                    Content = string.Join('\n', toolLines)
+                });
+            }
+
+            if (_mcpServers is not null || _mcp is not null)
+            {
+                try
+                {
+                    var mcpList = _mcpServers is not null
+                        ? await _mcpServers.ListConfiguredAsync(scope.ProjectId, cancellationToken).ConfigureAwait(false)
+                        : await _mcp!.ListAsync(scope.ProjectId, cancellationToken).ConfigureAwait(false);
+                    var mcpLines = mcpList
+                        .Where(m => m.Enabled)
+                        .Select(m => $"- {m.Name} ({m.Id}, transport={m.Transport})")
+                        .ToArray();
+                    if (mcpLines.Length > 0)
+                    {
+                        results.Add(new ContextAuditSourceInputDto
+                        {
+                            Id = "mcp:configured_servers",
+                            Label = $"MCP Servers ({mcpLines.Length})",
+                            Kind = ContextAuditSourceKinds.ToolSchema,
+                            Content = "Configured MCP servers:\n" + string.Join('\n', mcpLines)
+                        });
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Non-fatal.
+                }
+            }
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<ModelInvocationDto>> ListForRunAsync(
+        Guid tenantId,
+        Guid workspaceId,
+        Guid runId,
+        int limit = 500,
+        CancellationToken cancellationToken = default)
+    {
+        if (_lifecycleDb is null)
+        {
+            return [];
+        }
+
+        await using var db = await _lifecycleDb.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = (await db.ModelInvocations.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.WorkspaceId == workspaceId && x.RunId == runId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(x => x.StartedAt)
+            .ThenBy(x => x.Attempt)
+            .ThenBy(x => x.Id)
+            .Take(Math.Clamp(limit, 1, 2000))
+            .ToArray();
+
+        return rows.Select(value => new ModelInvocationDto
+        {
+            Id = value.Id,
+            CallId = value.CallId,
+            Attempt = value.Attempt,
+            SessionId = value.SessionId,
+            RunId = value.RunId,
+            TurnId = value.TurnId,
+            AgentInstanceId = value.AgentInstanceId,
+            AgentDefinitionId = value.AgentDefinitionId,
+            AgentVersionId = value.AgentVersionId,
+            ModeVersionId = value.ModeVersionId,
+            StrategySource = value.StrategySource,
+            RouteId = value.RouteId,
+            RouteVersionId = value.RouteVersionId,
+            ProviderInstanceId = value.ProviderInstanceId,
+            ProviderVersionId = value.ProviderVersionId,
+            Model = value.Model,
+            Protocol = value.Protocol,
+            FallbackPosition = value.FallbackPosition,
+            Status = value.Status,
+            ErrorCategory = value.ErrorCategory,
+            SafeErrorMessage = value.SafeErrorMessage,
+            InputTokens = value.InputTokens,
+            OutputTokens = value.OutputTokens,
+            TotalTokens = value.TotalTokens,
+            StartedAt = value.StartedAt,
+            CompletedAt = value.CompletedAt
+        }).ToArray();
     }
 
     // ── tinadec_agent_apply ──

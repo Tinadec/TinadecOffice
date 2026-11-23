@@ -72,6 +72,12 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IOperationalTriggerEvaluator, OperationalTriggerEvaluator>();
         builder.Services.AddSingleton<TinadecCore.Abstractions.Ports.IOrchestrationDirectiveValidator, Orchestration.OrchestrationDirectiveValidator>();
         builder.Services.AddSingleton<IRunReplayService, RunReplayService>();
+        builder.Services.AddSingleton<IRunContextDiagnosticsService>(sp => new RunContextDiagnosticsService(
+            sp.GetRequiredService<ILifecycleManager>(),
+            sp.GetService<IRunReplayService>(),
+            sp.GetService<IToolExecutionCoordinator>(),
+            sp.GetService<IRunModelInvocationReader>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<RunContextDiagnosticsService>>()));
         // B9: one run's dossier, assembled from the lifecycle row, the replay, the plan ledger and the
         // exploration graph. Every optional source is reported as a note when this host lacks it.
         builder.Services.AddSingleton<IRunDossier>(sp => new RunDossierService(
@@ -79,7 +85,8 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
             sp.GetService<IRunReplayService>(),
             sp.GetService<IPlanLedger>(),
             sp.GetService<IExplorationGraph>(),
-            sp.GetService<Microsoft.Extensions.Logging.ILogger<RunDossierService>>()));
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<RunDossierService>>(),
+            sp.GetService<IRunContextDiagnosticsService>()));
         // Hard insert (todo D2): process-local, like the in-flight tool registry.
         builder.Services.AddSingleton<IRunInterrupts, RunInterruptRegistry>();
         builder.Services.AddSingleton<ITaskLineageLookup, CheckpointTaskLineageLookup>();

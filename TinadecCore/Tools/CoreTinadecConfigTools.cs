@@ -28,6 +28,8 @@ public static class CoreTinadecConfigTools
             + "one mode's graph, the authoring catalog, sanitized models & model_profiles, prompt fragments "
             + "& pipelines, one full prompt_pipeline graph, skills, MCP servers, redacted external CLI tools, "
             + "context_memory ([context]/[memory] runtime.toml policy, hot Markdown budgets & presets), "
+            + "context_audit (64-char Winnowing cross-source overlap audit with 1-based line ranges & remediation_code), "
+            + "run_diagnostics (5% occupancy rot detector, compaction reconciliation & unified governance signals), "
             + "run_replay, recent_failures, or system_health. Results are sanitized (no secrets).",
             InspectSchema, requiresApproval: false, risk: "low", retrySafety: "safe", confirmation: []),
         CoreVirtualToolPolicy.TinadecAgentApplyToolId => Entry(
@@ -100,13 +102,16 @@ public static class CoreTinadecConfigTools
 
     private const string InspectSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"tools\",\"skills\",\"mcp\",\"external_cli\",\"run_replay\",\"recent_failures\",\"system_health\",\"context_memory\"],\"description\":\"What to read. 'agent' needs agent_id; 'mode' needs mode_id; 'prompt_pipeline' needs pipeline_id; 'run_replay' needs run_id (replay + frozen snapshot + invocations + prompt warnings); 'recent_failures' returns sanitized recent 5xx failures; 'system_health' returns ReadinessService, model cooling breakers, and MCP status; 'context_memory' reads [context]/[memory] runtime.toml policy, hot Markdown budgets & strategy presets (optional companion_id).\"}," +
-        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug, required for target=agent.\"}," +
-        "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug, required for target=mode.\"}," +
+        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"tools\",\"skills\",\"mcp\",\"external_cli\",\"run_replay\",\"recent_failures\",\"system_health\",\"context_memory\",\"context_audit\",\"run_diagnostics\"],\"description\":\"What to read. 'agent' needs agent_id; 'mode' needs mode_id; 'prompt_pipeline' needs pipeline_id; 'run_replay' needs run_id (replay + frozen snapshot + invocations + prompt warnings); 'run_diagnostics' needs run_id (5% window occupancy buckets, Context Rot Detector, compaction reconciliation, and unified governance signals); 'context_audit' runs 64-char Winnowing overlap audit across workspace instructions, prompts, skills, and tool schemas (optional project_id/mode_id/agent_id/run_id); 'recent_failures' returns sanitized recent 5xx failures; 'system_health' returns ReadinessService, model cooling breakers, and MCP status; 'context_memory' reads [context]/[memory] runtime.toml policy, hot Markdown budgets & strategy presets (optional companion_id).\"}," +
+        "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug, required for target=agent and optional filter for target=context_audit.\"}," +
+        "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug, required for target=mode and optional filter for target=context_audit.\"}," +
         "\"pipeline_id\":{\"type\":\"string\",\"description\":\"Prompt pipeline id (GUID) or slug, required for target=prompt_pipeline.\"}," +
-        "\"run_id\":{\"type\":\"string\",\"description\":\"Run id (GUID), required for target=run_replay.\"}," +
+        "\"project_id\":{\"type\":\"string\",\"description\":\"Optional project GUID for target=context_audit or target=context_memory.\"}," +
+        "\"run_id\":{\"type\":\"string\",\"description\":\"Run id (GUID), required for target=run_replay and target=run_diagnostics, optional for target=context_audit.\"}," +
         "\"companion_id\":{\"type\":\"string\",\"description\":\"Optional companion GUID when target=context_memory inspects companion memory.\"}," +
         "\"target_id\":{\"type\":\"string\",\"description\":\"Optional alias for run_id/agent_id/mode_id/pipeline_id.\"}," +
+        "\"k_gram_size\":{\"type\":\"integer\",\"minimum\":8,\"maximum\":512,\"description\":\"Optional Winnowing k-gram length for target=context_audit (default 64).\"}," +
+        "\"window_size\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":256,\"description\":\"Optional Winnowing window size for target=context_audit (default 16).\"}," +
         "\"query\":{\"type\":\"string\",\"description\":\"Optional literal filter matched against names, slugs and descriptions.\"}," +
         "\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":50,\"description\":\"Rows to return; defaults to 20 and is capped at 50.\"}" +
         "},\"required\":[\"target\"],\"additionalProperties\":false}";

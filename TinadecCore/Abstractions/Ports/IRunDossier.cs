@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using TinadecCore.Contracts.Dtos;
+
 namespace TinadecCore.Abstractions.Ports;
 
 /// <param name="Limit">
@@ -77,7 +80,8 @@ public sealed record RunDossier(
     IReadOnlyList<RunDossierFinding> Findings,
     IReadOnlyList<string> OpenQuestions,
     IReadOnlyList<string> Notes,
-    RunDossierTotals Totals);
+    RunDossierTotals Totals,
+    [property: JsonPropertyName("context_health")] ContextHealthSummaryDto? ContextHealth = null);
 
 /// <summary>
 /// B9: one run's dossier — what it was told, what its plan claimed, what its workers closed, what
