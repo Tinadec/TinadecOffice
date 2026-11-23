@@ -72,23 +72,50 @@ internal static class BubblewrapLauncher
                     Add("--bind", path, path);
         }
 
+        static string Normalize(string path) => path.Length > 1 ? Path.TrimEndingDirectorySeparator(path) : path;
+
+        var protectedPaths = permissions.ProtectedPaths
+            .Select(Normalize)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path.Length)
+            .ToList();
+        var protectedDirectories = protectedPaths.Where(Directory.Exists).ToList();
+        var readExceptions = permissions.ReadExceptions
+            .Select(Normalize)
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        bool IsWithinProtected(string path) =>
+            protectedDirectories.Any(root => TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(root, path));
+
+        // Read exceptions outside protected storage (e.g. AppContext.BaseDirectory) must be mounted
+        // before tmpfs storage masks so a parent --ro-bind never covers a child --tmpfs prior to --remount-ro.
+        foreach (var path in readExceptions.Where(path => !IsWithinProtected(path)))
+            Add("--ro-bind", path, path);
+
         var maskedDirectories = new List<string>();
-        foreach (var path in permissions.ProtectedPaths.Distinct(StringComparer.Ordinal).OrderBy(path => path.Length))
+        foreach (var path in protectedPaths)
         {
             if (Directory.Exists(path)) { Add("--tmpfs", path); maskedDirectories.Add(path); }
             else if (File.Exists(path)) Add("--ro-bind", "/dev/null", path);
         }
-        foreach (var path in permissions.ReadExceptions.Where(Directory.Exists).Distinct(StringComparer.Ordinal))
-            Add("--ro-bind", path, path);
-        // Host-owned scratch paths are the only writable exceptions within masked storage.
-        foreach (var path in writePaths.Where(Directory.Exists).Distinct(StringComparer.Ordinal))
-            if (maskedDirectories.Any(root => TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(root, path)))
-                Add("--bind", path, path);
-        // Rebinding the assigned checkout must not expose its own nested runtime directories.
-        foreach (var path in permissions.ProtectedPaths.Distinct(StringComparer.Ordinal).OrderBy(path => path.Length))
+        var postMaskMounts = new List<string>();
+        foreach (var path in readExceptions.Where(IsWithinProtected))
         {
-            if (!writePaths.Any(write => write != path && TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(write, path)
-                && maskedDirectories.Any(mask => mask != write && TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(mask, write)))) continue;
+            Add("--ro-bind", path, path);
+            postMaskMounts.Add(path);
+        }
+        // Host-owned scratch paths are the only writable exceptions within masked storage.
+        foreach (var path in writePaths.Select(Normalize).Where(Directory.Exists).Distinct(StringComparer.Ordinal))
+            if (maskedDirectories.Any(root => TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(root, path)))
+            {
+                Add("--bind", path, path);
+                postMaskMounts.Add(path);
+            }
+        // Rebinding the assigned checkout (or nested read exceptions) must not expose nested runtime directories.
+        foreach (var path in protectedPaths)
+        {
+            if (!postMaskMounts.Any(mount => mount != path && TinadecTools.Tools.FileRW.WorkspaceRootSet.IsWithin(mount, path))) continue;
             if (Directory.Exists(path)) Add("--tmpfs", path);
             else if (File.Exists(path)) Add("--ro-bind", "/dev/null", path);
         }

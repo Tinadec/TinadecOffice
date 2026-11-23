@@ -233,5 +233,49 @@ public sealed class PosixSandboxTests : IDisposable
         Assert.Single(grants);
     }
 
+    [Fact]
+    public void BubblewrapMountView_AncestorReadExceptionDoesNotCoverProtectedDirectoryBeforeRemountRo()
+    {
+        var baseDir = Path.Combine(_root, "app-base");
+        var protectedTemp = Path.Combine(baseDir, ".tinadec", "temp");
+        Directory.CreateDirectory(protectedTemp);
+
+        var start = new System.Diagnostics.ProcessStartInfo("bwrap");
+        var permissions = new SandboxPermissions
+        {
+            WritePaths = [baseDir],
+            ProtectedPaths = [protectedTemp],
+            ReadExceptions = [baseDir + Path.DirectorySeparatorChar]
+        };
+
+        BubblewrapLauncher.AddMountView(start, permissions, [baseDir]);
+
+        var args = start.ArgumentList.ToList();
+        var roBindBase = IndexOfSequence(args, "--ro-bind", baseDir, baseDir);
+        var tmpfsTemp = IndexOfSequence(args, "--tmpfs", protectedTemp);
+        var remountTemp = IndexOfSequence(args, "--remount-ro", protectedTemp);
+        Assert.True(roBindBase >= 0, $"expected normalized ancestor --ro-bind in: {string.Join(' ', args)}");
+        Assert.True(tmpfsTemp > roBindBase, "ancestor --ro-bind must come before child --tmpfs so --remount-ro hits the tmpfs mountpoint");
+        Assert.True(remountTemp > tmpfsTemp, "--remount-ro must come after --tmpfs");
+    }
+
+    private static int IndexOfSequence(IReadOnlyList<string> items, params string[] sequence)
+    {
+        for (var i = 0; i <= items.Count - sequence.Length; i++)
+        {
+            var matched = true;
+            for (var j = 0; j < sequence.Length; j++)
+            {
+                if (!string.Equals(items[i + j], sequence[j], StringComparison.Ordinal))
+                {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) return i;
+        }
+        return -1;
+    }
+
     private static string Quote(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 }
