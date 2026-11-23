@@ -17,6 +17,7 @@ namespace TinadecTools.Tests;
 /// They only execute on Linux and macOS (posix-core CI); on Windows they return immediately, and
 /// the Windows backend keeps its own real-process coverage.
 /// </summary>
+[Collection("CommandSandbox")]
 public sealed class PosixSandboxIntegrationTests : IDisposable
 {
     private const string KeptVariable = "TINADEC_SANDBOX_IT_KEPT";

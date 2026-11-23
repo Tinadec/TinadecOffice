@@ -13,6 +13,7 @@ namespace TinadecTools.Tests;
 /// These tests pin that the dictionary reaches the backend on both the standalone and the governed
 /// path, and that a real git actually obeys it.
 /// </summary>
+[Collection("CommandSandbox")]
 public sealed class GitHookShellSuppressionTests
 {
     private const string FailingHook = "#!/bin/sh\necho HOOK_RAN >&2\nexit 1\n";

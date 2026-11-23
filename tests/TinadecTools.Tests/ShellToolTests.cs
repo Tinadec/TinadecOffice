@@ -8,6 +8,7 @@ using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
+[Collection("CommandSandbox")]
 public sealed class ShellToolTests
 {
     private static long _nextCallId = 50_000;
