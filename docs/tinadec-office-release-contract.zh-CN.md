@@ -134,3 +134,33 @@ Manager 只负责机器级运行时和 Pack 的获取、完整性校验、版本
 - **消费侧的 `agent-pack` 拒绝已修**：`TinadecManger/src/shared/manifest.ts` 的 `VALID_FAMILIES`/`VALID_DELIVERY` 此前不含 `agent-pack`，实测用 Manager 自己的 `validateManifest()` 跑真实产物得到的 2 条拒绝（`$.products[4].family`、`.delivery`）会让 `assertManifestOrThrow()` 拒绝整份 Office catalog；补上两个合法值后同一份真 catalog 读数为 **0 条**（Manager 仓库 commit `eda169c`）。
 - Manager 的 `extractArchive()` 直接调 PATH 上的 `tar`：在 Windows 开发机上它可能是 Git Bash 的 GNU tar，读不了 zip（`tests/install-flow.test.ts` 4 例在本机因此为红，且与本次改动无关，在 HEAD 上同样红）。渠道按平台分裂归档格式之后，Linux/macOS 拿到的都是 tar.gz，正好落在两种 `tar` 都能读的那一格；生产路径（Explorer 启动，PATH 里 System32 在前）用 bsdtar 读 zip。
 - macOS 是 ad-hoc 签名，`.dmg` 不带公证；`format: "executable"` 对 `.deb`/`.dmg` 的含义只有"单文件交付"，不代表 Manager 能解包安装。
+
+## 模块化 CI/CD 与多通道发布架构
+
+仓库的 GitHub Actions 已重构为 **8 个模块化工作流**（原单体 `ci.yml` 已拆离），把日常 PR 门禁、主干全量验证、共享三平台打包引擎与多通道发版解耦：
+
+| 工作流 | 职责 | 触发方式 |
+| --- | --- | --- |
+| `ci-app.yml` | App 层门禁（`check-dependencies`、`test:scripts`、`TinadecUI`、`desktop` 测试/类型检查/构建、`web` 构建） | PR（App 路径过滤）、`workflow_dispatch`、`workflow_call` |
+| `ci-gateway.yml` | Gateway 构建与测试、快照防漂移、`apps/desktop` `check:drift` 契约校验 | PR（Gateway/契约路径过滤）、`workflow_dispatch`、`workflow_call` |
+| `ci-core.yml` | .NET 11 Core & Tools 测试（Linux/Windows）、PostgreSQL 存储测试、Docker 镜像构建验证 | PR（Core/Tools 路径过滤）、`workflow_dispatch`、`workflow_call` |
+| `main-full-pipeline.yml` | 串联三层 CI 与 `_desktop-build.yml`，产出 `main` 7 天验证产物（不发布 Release） | `push: main`、`workflow_dispatch` |
+| `_desktop-build.yml` | 共享三平台打包引擎（`win-x64`、`linux-x64`、`osx-arm64` 打包、渠道校验、按需冒烟、上传构件） | 仅 `workflow_call` |
+| `create-version.yml` | 手动输入 `X.Y.Z` 校验版本号并推送 `vX.Y.Z` 标签，显式派发 `desktop-release.yml` | `workflow_dispatch` |
+| `desktop-release.yml` | Stable 正式版发布：调用 `_desktop-build.yml`，合并三腿 catalog、生成 `SHA256SUMS` 并发布 Latest Release | `push: tags: ['v*']`、`workflow_dispatch` |
+| `nightly-release.yml` | Nightly 预览版发布：定时/手动检查 `main` 新提交、构建三平台并发布 Prerelease 与滚动清理 | `schedule`（每日 `0 18 * * *` UTC）、`workflow_dispatch` |
+
+### 三类构建通道与版本标识
+
+通过 `_desktop-build.yml` 与打包脚本统一接收以下环境变量，确保内嵌 SemVer、外部安装器文件名、Release 下载基址与 catalog 渠道字段四处一致：
+
+- `OFFICE_RELEASE_VERSION`：写入临时 `apps/desktop/package.json` 与 `catalog.json` `releaseVersion` 的合法 SemVer。
+- `OFFICE_ARTIFACT_LABEL`：外部安装包与渠道产物的文件名标签（如 `TinadecOffice-<label>-win-x64-setup.exe`）；与包版本一致时省略覆盖以保持 Stable 兼容。
+- `OFFICE_RELEASE_TAG`：GitHub Release tag 与 `catalog.json` `releaseBaseUrl` 路径段（`.../releases/download/<tag>`）。
+- `OFFICE_RELEASE_CHANNEL`：写入 fragment 与最终 `catalog.json` 的 `channel` 值，并由 `verify-office-channel.mjs` 与 `merge-office-channel-catalog.mjs` 跨腿一致性校验。
+
+| 通道 | `OFFICE_RELEASE_VERSION` | `OFFICE_ARTIFACT_LABEL` / `OFFICE_RELEASE_TAG` | `OFFICE_RELEASE_CHANNEL` | 交付与策略 |
+| --- | --- | --- | --- | --- |
+| `main` 验证构建 | `0.0.0-main.<short_sha>` | `main-<short_sha>` / `main-<short_sha>` | `main` | 仅上传为 7 天有效期的 Actions Artifacts，不创建 GitHub Release |
+| Stable 正式版 | `<X.Y.Z>` | `<X.Y.Z>` / `v<X.Y.Z>` | `stable` | 默认 `run_smoke: true`；以 `--verify-tag --latest` 发布为 Latest Release；正文由 `scripts/release-body.mjs` 读取 `docs/releases/v<X.Y.Z>.md` 组装 |
+| Nightly 预览版 | `0.0.0-nightly.<short_sha>` | `nightly-<short_sha>` / `nightly-<short_sha>` | `nightly` | `main` 提交未变化时自动跳过（除非 `force_release: true`）；以 `--prerelease --latest=false` 发布；正文由 `scripts/release-body.mjs --nightly --commit <sha> --display-version nightly-<short_sha>` 组装；仅保留最新 7 个 `nightly-*` Release，超出的连同标签一起清理（`--cleanup-tag`） |
