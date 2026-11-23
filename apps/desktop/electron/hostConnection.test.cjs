@@ -52,6 +52,19 @@ test('identity mismatch is blocked without automatic retry or leaking error cont
   assert.equal(JSON.stringify(result).includes(secret), false);
   assert.equal(f.host.isReady(), false); f.host.stop();
 });
+test('a bootstrap configuration failure names the document instead of "temporarily unavailable"', async () => {
+  const startupFailure = { code: 'configuration_missing', document: 'storage.toml', message: 'ignored by the host snapshot' };
+  const f = fixture(async () => { throw Object.assign(new Error('service_start_failed'), { startupFailure }); });
+  const status = await f.host.start();
+  assert.equal(status.state, 'unavailable');
+  assert.equal(status.error.code, 'host_startup_configuration_invalid');
+  assert.equal(status.error.document, 'storage.toml');
+  assert.equal(status.error.reason, 'configuration_missing');
+  // The child's own message never becomes user-visible text; the window words it from the code.
+  assert.doesNotMatch(status.error.message, /ignored by the host snapshot/);
+  f.host.stop();
+});
+
 test('closing host aborts pending verification and ignores its late success', async () => {
   let release; let signal;
   const f = fixture(options => { signal = options.signal; return new Promise(resolve => { release = resolve; }); });

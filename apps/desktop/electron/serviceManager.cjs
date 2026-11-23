@@ -163,6 +163,22 @@ function createServiceManager({
     child.stderr?.removeAllListeners('data');
   }
 
+  const FAILURE_LINE = /(unhandled exception|exception|error|fatal|failed|refused|denied)/i;
+  /**
+   * Keep the LAST failure line, not the first: a service usually prints "Error: retrying" before the
+   * line that actually ended it. Chunks are stderr pipe reads, not lines, so an unfinished trailing
+   * line is held until the next chunk (or the stream close) completes it.
+   */
+  function recordFailureLines(child, chunk) {
+    child.stderrPending += String(chunk);
+    const lines = child.stderrPending.split(/\r?\n/);
+    child.stderrPending = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed && FAILURE_LINE.test(trimmed)) child.lastDiagnostic = trimmed.slice(0, 500);
+    }
+  }
+
   function startProcess(label, command, args, cwd, env, logsDir) {
     const logSink = createLogSink(logsDir, { budgetDirectory: join(logsDir, '..') });
     logSink.write(label, `${new Date().toISOString()} starting ${label}\n`);
@@ -185,8 +201,14 @@ function createServiceManager({
     }
 
     child.startupError = null;
+    // The last failure-looking stderr line is what a startup timeout should say out loud. The full
+    // stream already lands in the service log; a user staring at "host unavailable" needs the one
+    // line that names the cause (a crashed Core prints "Unhandled exception. ..." here).
+    child.lastDiagnostic = '';
+    child.stderrPending = '';
     for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => {
       try { logSink.write(label, data); } catch (error) { console.error(`[tinadec] ${label} log write failed: ${error.message}`); }
+      if (stream === child.stderr) recordFailureLines(child, data);
     });
     ownedChildren.set(label, child);
     child.once('error', (error) => {
@@ -194,6 +216,8 @@ function createServiceManager({
       closeLog(child);
     });
     child.once('close', () => {
+      // Flush a final line that never got its newline before the pipe closed.
+      recordFailureLines(child, '\n');
       if (ownedChildren.get(label) === child) ownedChildren.delete(label);
       closeLog(child);
     });
@@ -216,11 +240,26 @@ function createServiceManager({
       }
       if (child.startupError) throw child.startupError;
       if (child.exitCode !== null || child.signalCode != null) {
-        throw new Error(`${label} exited with code ${child.exitCode}. See the service log for details.`);
+        throw serviceStartFailure(label, child);
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
-    throw new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    const timeout = new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    timeout.code = 'service_start_failed';
+    timeout.diagnostic = child.lastDiagnostic || null;
+    throw timeout;
+  }
+
+  /** A startup failure that keeps its cause: the caller logs it, the UI stays sanitized. */
+  function serviceStartFailure(label, child) {
+    const detail = child.lastDiagnostic ? ': ' + child.lastDiagnostic : '';
+    const error = new Error(`${label} exited with code ${child.exitCode ?? child.signalCode}${detail}`);
+    error.code = 'service_start_failed';
+    error.diagnostic = child.lastDiagnostic || null;
+    error.exitCode = child.exitCode;
+    // A signal termination reports a null exit code; keep the signal so the host log can say which one.
+    error.signal = child.signalCode ?? null;
+    return error;
   }
 
   function waitForExit(child, timeoutMs) {
