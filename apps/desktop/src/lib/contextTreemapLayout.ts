@@ -1,9 +1,16 @@
 /**
  * Deterministic Squarified Treemap layout (Bruls, Huizing & van Wijk 2000)
- * + Phase 11 `ContextPackDto` hierarchy and compaction reconciliation.
+ * + Core `RunContextDiagnosticsDto.compaction` projection and legacy `ContextPackDto` fallback.
  */
 
-import type { ContextBudgetShareDto, ContextPackDto } from '@/api'
+import type {
+  CompactionReconciliationDto,
+  ContextBudgetShareDto,
+  ContextCategoryNodeDto,
+  ContextCompactionDiagnosticsDto,
+  ContextPackDto,
+  RunContextDiagnosticsDto,
+} from '@/api'
 
 export type ContextTreemapCategory =
   | 'system_prompt'
@@ -591,4 +598,144 @@ export function findTreemapPath(root: ContextTreemapNode, nodeId: string): Conte
     if (sub.length > 0) return [root, ...sub]
   }
   return []
+}
+
+const VALID_TREEMAP_CATEGORIES = new Set<ContextTreemapCategory>([
+  'system_prompt',
+  'mode_pipeline',
+  'project_instructions',
+  'tool_schemas',
+  'skills_catalog',
+  'memory',
+  'compacted_digest',
+  'conversation_turns',
+  'tool_outputs',
+  'other',
+])
+
+function normalizeTreemapCategory(raw?: string | null): ContextTreemapCategory {
+  if (raw && VALID_TREEMAP_CATEGORIES.has(raw as ContextTreemapCategory)) {
+    return raw as ContextTreemapCategory
+  }
+  return raw ? classifyContextSource(raw) : 'other'
+}
+
+function mapCoreCategoryNode(dto: ContextCategoryNodeDto): ContextTreemapNode {
+  const category = normalizeTreemapCategory(dto.category)
+  return {
+    id: dto.id,
+    label: dto.label || (dto.depth === 1 ? categoryDefaultLabel(category) : dto.id),
+    category,
+    sourceKey: dto.source_key ?? null,
+    depth: dto.depth ?? 0,
+    retainedTokens: Math.max(0, dto.retained_tokens ?? 0),
+    droppedTokens: Math.max(0, dto.dropped_tokens ?? 0),
+    retainedBytesEstimate:
+      dto.retained_bytes_estimate ?? Math.max(0, dto.retained_tokens ?? 0) * BYTES_PER_TOKEN_ESTIMATE,
+    droppedBytesEstimate:
+      dto.dropped_bytes_estimate ?? Math.max(0, dto.dropped_tokens ?? 0) * BYTES_PER_TOKEN_ESTIMATE,
+    sharePercent: dto.share_percent ?? 0,
+    budgetSharePercent: dto.budget_share_percent ?? 0,
+    itemCount: dto.item_count ?? 0,
+    droppedItemCount: dto.dropped_item_count ?? 0,
+    items: (dto.items ?? []).map((item, idx) => ({
+      id: item.id || `${dto.id}:item:${idx + 1}`,
+      source: item.source,
+      tokens: Math.max(0, item.tokens ?? 0),
+      bytesEstimate: item.bytes_estimate ?? Math.max(0, item.tokens ?? 0) * BYTES_PER_TOKEN_ESTIMATE,
+      dropped: Boolean(item.dropped),
+    })),
+    children: (dto.children ?? []).map(mapCoreCategoryNode),
+  }
+}
+
+function mapCoreReconciliation(dto: CompactionReconciliationDto): CompactionReconciliation {
+  const retainedTokens = Math.max(0, dto.retained_tokens ?? 0)
+  const droppedTokens = Math.max(0, dto.dropped_tokens ?? 0)
+  return {
+    packId: dto.pack_id ?? '',
+    laneKey: dto.lane_key ?? null,
+    createdAt: dto.created_at ?? '',
+    tokenBudget: Math.max(0, dto.token_budget ?? 0),
+    retainedTokens,
+    droppedTokens,
+    preCompactionTokens: Math.max(0, dto.pre_compaction_tokens ?? retainedTokens + droppedTokens),
+    retainedBytesEstimate:
+      dto.retained_bytes_estimate ?? retainedTokens * BYTES_PER_TOKEN_ESTIMATE,
+    droppedBytesEstimate:
+      dto.dropped_bytes_estimate ?? droppedTokens * BYTES_PER_TOKEN_ESTIMATE,
+    utilizationPercent: dto.utilization_percent ?? 0,
+    retainedRatioPercent: dto.retained_ratio_percent ?? 0,
+    droppedRatioPercent: dto.dropped_ratio_percent ?? 0,
+    hasPricingData: Boolean(dto.has_pricing_data),
+    hasCompactionDigest: Boolean(dto.has_compaction_digest),
+    previousPackRetainedDelta:
+      dto.previous_pack_retained_delta !== undefined ? dto.previous_pack_retained_delta : null,
+    previousPackDroppedDelta:
+      dto.previous_pack_dropped_delta !== undefined ? dto.previous_pack_dropped_delta : null,
+  }
+}
+
+/**
+ * Project Core's authoritative `ContextCompactionDiagnosticsDto` directly into
+ * `ContextTreemapModel` so `computeSquarifiedTreemap` renders Core's exact numbers.
+ */
+export function fromCoreCompactionDiagnostics(
+  compaction: ContextCompactionDiagnosticsDto,
+  fallbackPacks: ContextPackDto[] = [],
+): ContextTreemapModel {
+  const reconciliation = mapCoreReconciliation(compaction.reconciliation)
+  const root = mapCoreCategoryNode(compaction.root)
+  const packList = (compaction.packs ?? []).map((p) => ({
+    id: p.pack_id,
+    laneKey: p.lane_key ?? null,
+    createdAt: p.created_at,
+    estimatedTokens: Math.max(0, p.retained_tokens ?? 0),
+    tokenBudget: Math.max(0, p.token_budget ?? 0),
+    droppedTokens: Math.max(0, p.dropped_tokens ?? 0),
+  }))
+
+  const matchedPack =
+    fallbackPacks.find((p) => p.id === (compaction.selected_pack_id || reconciliation.packId))
+    ?? (reconciliation.packId
+      ? {
+          id: reconciliation.packId,
+          run_id: '',
+          lane_key: reconciliation.laneKey,
+          evidence_count: root.itemCount,
+          estimated_tokens: reconciliation.retainedTokens,
+          token_budget: reconciliation.tokenBudget,
+          sources: root.items.filter((i) => !i.dropped).map((i) => i.source),
+          created_at: reconciliation.createdAt,
+        }
+      : null)
+
+  return {
+    pack: matchedPack,
+    packCount: compaction.pack_count ?? packList.length,
+    root,
+    reconciliation,
+    packs: packList,
+  }
+}
+
+/**
+ * Resolve `ContextTreemapModel` preferring Core's authoritative `RunContextDiagnosticsDto.compaction`
+ * while falling back cleanly to `buildContextTreemapModel(contextPacks, selectedPackId)` for
+ * older snapshots or offline alternate-pack inspection.
+ */
+export function resolveContextTreemapModel(options: {
+  diagnostics?: RunContextDiagnosticsDto | null
+  contextPacks?: ContextPackDto[]
+  selectedPackId?: string | null
+}): ContextTreemapModel {
+  const comp = options.diagnostics?.compaction
+  const fallbackPacks = options.contextPacks ?? []
+  if (comp && comp.root) {
+    const activeCorePackId = comp.selected_pack_id || comp.reconciliation?.pack_id || null
+    if (!options.selectedPackId || options.selectedPackId === activeCorePackId || fallbackPacks.length === 0) {
+      return fromCoreCompactionDiagnostics(comp, fallbackPacks)
+    }
+  }
+  return buildContextTreemapModel(fallbackPacks, options.selectedPackId)
 }

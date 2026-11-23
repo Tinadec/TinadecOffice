@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, Layers, Sparkles, X, ZoomIn } from '@lucide/vue'
-import type { ContextPackDto } from '@/api'
+import { ChevronRight, Database, Layers, Sparkles, X, ZoomIn } from '@lucide/vue'
+import type { ContextPackDto, RunContextDiagnosticsDto } from '@/api'
 import {
-  buildContextTreemapModel,
   computeSquarifiedTreemap,
   findTreemapPath,
+  resolveContextTreemapModel,
   type ContextTreemapCategory,
   type ContextTreemapModel,
   type ContextTreemapNode,
@@ -14,17 +14,22 @@ import {
 
 const props = withDefaults(defineProps<{
   contextPacks?: ContextPackDto[]
+  diagnostics?: RunContextDiagnosticsDto | null
   model?: ContextTreemapModel | null
+  stale?: boolean
   compact?: boolean
 }>(), {
   contextPacks: () => [],
+  diagnostics: null,
   model: null,
+  stale: false,
   compact: false,
 })
 
 const emit = defineEmits<{
   'select-segment': [node: ContextTreemapNode | null]
   'diagnose-segment': [node: ContextTreemapNode, model: ContextTreemapModel]
+  'select-pack': [packId: string | null]
 }>()
 
 const { t } = useI18n()
@@ -41,7 +46,15 @@ const inspectedNodeId = ref<string | null>(null)
 
 const activeModel = computed<ContextTreemapModel>(() => {
   if (props.model) return props.model
-  return buildContextTreemapModel(props.contextPacks, selectedPackId.value)
+  return resolveContextTreemapModel({
+    diagnostics: props.diagnostics,
+    contextPacks: props.contextPacks,
+    selectedPackId: selectedPackId.value,
+  })
+})
+
+watch(selectedPackId, (nextPackId) => {
+  emit('select-pack', nextPackId)
 })
 
 watch(
@@ -137,6 +150,10 @@ function formatBytes(bytes: number): string {
         <strong>{{ t('trajectoryEval.treemap.title') }}</strong>
       </div>
       <div class="tm-head-right">
+        <span v-if="stale" class="tm-pill is-stale mono" data-testid="treemap-cached-badge">
+          <Database :size="11" aria-hidden="true" />
+          <span>{{ t('trajectoryEval.offline.cachedBadge') }}</span>
+        </span>
         <select
           v-if="activeModel.packs.length > 1 && !model"
           v-model="selectedPackId"
@@ -386,6 +403,12 @@ function formatBytes(bytes: number): string {
   background: var(--bg-status-warn);
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
+}
+
+.tm-pill.is-stale {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-style: dashed;
 }
 
 .tm-empty {

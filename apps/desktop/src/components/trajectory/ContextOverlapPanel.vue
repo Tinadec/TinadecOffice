@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
   ChevronRight,
   CopyCheck,
+  Database,
   FileSearch,
   RefreshCw,
   Sparkles,
@@ -12,12 +13,19 @@ import {
 import {
   api,
   type AgentViewDto,
+  type ContextAuditExtraSourceDto,
   type PromptPipelineDto,
   type ToolDescriptorDto,
 } from '@/api'
 import {
+  buildOverlapCacheScopeKey,
+  fetchOverlapAuditWithCache,
+  getCachedOverlapAudit,
+} from '@/lib/contextDiagnosticsCache'
+import {
   auditContextOverlap,
   formatLineRangePair,
+  fromCoreOverlapAuditDto,
   type ContextAuditSource,
   type ContextOverlapAuditResult,
   type ContextOverlapPairSummary,
@@ -25,13 +33,16 @@ import {
 } from '@/lib/contextOverlapWinnowing'
 
 const props = withDefaults(defineProps<{
-  /** Pre-supplied audit sources; when omitted and `autoLoadMode !== 'none'`, loads live sources. */
+  /** Pre-supplied audit sources; when omitted and `autoLoadMode !== 'none'`, queries Core `POST /api/v1/context/audit-overlap`. */
   sources?: ContextAuditSource[]
   autoLoadMode?: 'none' | 'prompts' | 'tools' | 'all'
   agents?: AgentViewDto[]
   promptPipelines?: PromptPipelineDto[]
   tools?: ToolDescriptorDto[]
   projectId?: string
+  modeId?: string | null
+  agentId?: string | null
+  runId?: string | null
   canAccessBackend?: boolean
   collapsible?: boolean
   defaultOpen?: boolean
@@ -45,6 +56,9 @@ const props = withDefaults(defineProps<{
   promptPipelines: () => [],
   tools: () => [],
   projectId: undefined,
+  modeId: null,
+  agentId: null,
+  runId: null,
   canAccessBackend: true,
   collapsible: false,
   defaultOpen: true,
@@ -55,16 +69,23 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'diagnose-overlap': [audit: ContextOverlapAuditResult, pair?: ContextOverlapPairSummary]
+  'audit-updated': [audit: ContextOverlapAuditResult, meta: { stale: boolean; cachedAt: string | null }]
 }>()
 
 const { t } = useI18n()
 
 const expanded = ref(props.collapsible ? props.defaultOpen : true)
 const loading = ref(false)
-const loadedRemoteSources = ref<ContextAuditSource[]>([])
+const remoteAuditResult = ref<ContextOverlapAuditResult | null>(null)
+const isStaleSnapshot = ref(false)
+const cachedSnapshotAt = ref<string | null>(null)
 const customInstructionsOpen = ref(false)
 const customInstructionsText = ref('')
 const expandedPairIds = ref<Set<string>>(new Set())
+
+let activeAbort: AbortController | null = null
+let customDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let requestEpoch = 0
 
 function extractPipelineTemplates(pipelines: PromptPipelineDto[]): ContextAuditSource[] {
   const out: ContextAuditSource[] = []
@@ -94,7 +115,7 @@ function extractPipelineTemplates(pipelines: PromptPipelineDto[]): ContextAuditS
   return out
 }
 
-const propDerivedSources = computed<ContextAuditSource[]>(() => {
+const extraSources = computed<ContextAuditSource[]>(() => {
   if (props.sources) return props.sources
 
   const list: ContextAuditSource[] = []
@@ -126,121 +147,158 @@ const propDerivedSources = computed<ContextAuditSource[]>(() => {
     }
   }
 
+  if (customInstructionsText.value.trim().length > 0) {
+    list.push({
+      id: 'custom:workspace_instructions',
+      label: 'AGENTS.md / .apm/instructions',
+      kind: 'workspace_instructions',
+      content: customInstructionsText.value,
+    })
+  }
+
   return list
 })
 
-async function loadLiveSources(): Promise<void> {
-  if (props.sources || props.autoLoadMode === 'none' || !props.canAccessBackend) return
+const scopeCacheKey = computed(() =>
+  buildOverlapCacheScopeKey({
+    runId: props.runId,
+    projectId: props.projectId,
+    modeId: props.modeId,
+    agentId: props.agentId,
+    autoLoadMode: props.autoLoadMode,
+  }),
+)
+
+function seedFromCacheIfPresent(): void {
+  if (props.sources || remoteAuditResult.value) return
+  const cached = getCachedOverlapAudit(scopeCacheKey.value, {
+    projectId: props.projectId,
+    runId: props.runId,
+  })
+  if (cached) {
+    remoteAuditResult.value = fromCoreOverlapAuditDto(cached.data)
+    isStaleSnapshot.value = !props.canAccessBackend
+    cachedSnapshotAt.value = cached.cachedAt
+  }
+}
+
+async function loadCoreOverlapAudit(): Promise<void> {
+  if (props.sources || props.autoLoadMode === 'none') return
+
+  activeAbort?.abort()
+  const controller = new AbortController()
+  activeAbort = controller
+  const epoch = ++requestEpoch
+
+  if (!props.canAccessBackend || typeof api.auditContextOverlap !== 'function') {
+    const cached = getCachedOverlapAudit(scopeCacheKey.value, {
+      projectId: props.projectId,
+      runId: props.runId,
+    })
+    if (cached) {
+      const mapped = fromCoreOverlapAuditDto(cached.data)
+      remoteAuditResult.value = mapped
+      isStaleSnapshot.value = true
+      cachedSnapshotAt.value = cached.cachedAt
+      emit('audit-updated', mapped, { stale: true, cachedAt: cached.cachedAt })
+    }
+    return
+  }
+
   loading.value = true
   try {
-    const gathered: ContextAuditSource[] = []
-
     const wantPrompts = props.autoLoadMode === 'prompts' || props.autoLoadMode === 'all'
     const wantTools = props.autoLoadMode === 'tools' || props.autoLoadMode === 'all'
+    const extraDtos: ContextAuditExtraSourceDto[] = extraSources.value.map((s) => ({
+      id: s.id,
+      label: s.label,
+      kind: s.kind,
+      content: s.content,
+      path: s.path ?? null,
+      meta: s.meta ?? null,
+    }))
 
-    const tasks: Array<Promise<void>> = []
+    const outcome = await fetchOverlapAuditWithCache(
+      scopeCacheKey.value,
+      () =>
+        api.auditContextOverlap(
+          {
+            project_id: props.projectId ?? null,
+            mode_id: props.modeId ?? null,
+            agent_id: props.agentId ?? null,
+            run_id: props.runId ?? null,
+            include_prompts: wantPrompts,
+            include_skills: wantPrompts || wantTools,
+            include_tools: wantTools,
+            k_gram_size: props.kGramSize,
+            window_size: props.windowSize,
+            extra_sources: extraDtos.length > 0 ? extraDtos : null,
+          },
+          controller.signal,
+        ),
+      {
+        projectId: props.projectId,
+        runId: props.runId,
+        canAccessBackend: props.canAccessBackend,
+      },
+    )
 
-    if (wantPrompts && typeof api.listPromptFragments === 'function') {
-      tasks.push(
-        api.listPromptFragments({ enabled: true }).then((fragments) => {
-          for (const frag of fragments) {
-            if (!frag.content || !frag.content.trim()) continue
-            gathered.push({
-              id: `fragment:${frag.id}`,
-              label: frag.title || frag.key,
-              kind: 'prompt_fragment',
-              content: frag.content,
-            })
-          }
-        }).catch(() => { /* ignore optional endpoint failure */ }),
-      )
+    if (epoch !== requestEpoch || controller.signal.aborted) return
+
+    if (outcome.data) {
+      const mapped = fromCoreOverlapAuditDto(outcome.data)
+      remoteAuditResult.value = mapped
+      isStaleSnapshot.value = outcome.stale
+      cachedSnapshotAt.value = outcome.cachedAt
+      emit('audit-updated', mapped, { stale: outcome.stale, cachedAt: outcome.cachedAt })
+    } else {
+      isStaleSnapshot.value = Boolean(outcome.error)
     }
-
-    if (wantPrompts && props.promptPipelines.length === 0 && typeof api.listPromptPipelines === 'function') {
-      tasks.push(
-        api.listPromptPipelines().then((pipelines) => {
-          gathered.push(...extractPipelineTemplates(pipelines))
-        }).catch(() => { /* ignore */ }),
-      )
-    }
-
-    if ((wantPrompts || wantTools) && typeof api.listToolSkills === 'function') {
-      tasks.push(
-        api.listToolSkills(props.projectId).then(async (res) => {
-          const enabledSkills = (res.skills ?? []).filter((s) => s.enabled !== false).slice(0, 24)
-          for (const skill of enabledSkills) {
-            let body = typeof skill.content === 'string' && skill.content.trim()
-              ? skill.content
-              : ''
-            if (!body && typeof api.getToolSkill === 'function') {
-              try {
-                const detail = await api.getToolSkill(skill.resource_id, props.projectId)
-                if (typeof detail.content === 'string') body = detail.content
-              } catch {
-                // fallback to description
-              }
-            }
-            const combined = [skill.description, skill.when_to_use, body].filter(Boolean).join('\n')
-            if (combined.trim()) {
-              gathered.push({
-                id: `skill:${skill.resource_id}`,
-                label: skill.name || skill.resource_id,
-                kind: 'skill',
-                path: skill.relative_path || skill.path || null,
-                content: combined,
-              })
-            }
-          }
-        }).catch(() => { /* ignore */ }),
-      )
-    }
-
-    if (wantTools && props.tools.length === 0 && typeof api.listTools === 'function') {
-      tasks.push(
-        api.listTools().then((tools) => {
-          const lines = tools
-            .filter((tool) => tool.description && tool.description.trim())
-            .map((tool) => `${tool.id}: ${tool.description}`)
-          if (lines.length > 0) {
-            gathered.push({
-              id: 'tools:live-catalog',
-              label: t('trajectoryEval.overlap.toolDescriptionsSource', { count: lines.length }),
-              kind: 'tool_schema',
-              content: lines.join('\n'),
-            })
-          }
-        }).catch(() => { /* ignore */ }),
-      )
-    }
-
-    await Promise.all(tasks)
-    loadedRemoteSources.value = gathered
+  } catch {
+    // Aborted or unexpected error: preserve any existing remoteAuditResult / offline fallback.
   } finally {
-    loading.value = false
+    if (epoch === requestEpoch) {
+      loading.value = false
+    }
+    if (activeAbort === controller) {
+      activeAbort = null
+    }
   }
 }
 
 onMounted(() => {
+  seedFromCacheIfPresent()
   if (expanded.value && !props.sources && props.autoLoadMode !== 'none') {
-    void loadLiveSources()
+    void loadCoreOverlapAudit()
   }
 })
 
+onBeforeUnmount(() => {
+  activeAbort?.abort()
+  if (customDebounceTimer) clearTimeout(customDebounceTimer)
+})
+
 watch(
-  () => [expanded.value, props.projectId],
+  () => [expanded.value, props.projectId, props.modeId, props.agentId, props.runId, props.canAccessBackend],
   ([isOpen]) => {
     if (isOpen && !props.sources && props.autoLoadMode !== 'none') {
-      void loadLiveSources()
+      void loadCoreOverlapAudit()
     }
   },
 )
 
-const combinedSources = computed<ContextAuditSource[]>(() => {
+watch(customInstructionsText, () => {
+  if (props.sources || props.autoLoadMode === 'none' || !expanded.value) return
+  if (customDebounceTimer) clearTimeout(customDebounceTimer)
+  customDebounceTimer = setTimeout(() => {
+    void loadCoreOverlapAudit()
+  }, 260)
+})
+
+const localFallbackSources = computed<ContextAuditSource[]>(() => {
+  if (!props.sources) return extraSources.value
   const byId = new Map<string, ContextAuditSource>()
-  for (const s of propDerivedSources.value) byId.set(s.id, s)
-  for (const s of loadedRemoteSources.value) {
-    if (!byId.has(s.id)) byId.set(s.id, s)
-  }
+  for (const s of props.sources) byId.set(s.id, s)
   if (customInstructionsText.value.trim().length > 0) {
     byId.set('custom:workspace_instructions', {
       id: 'custom:workspace_instructions',
@@ -252,12 +310,15 @@ const combinedSources = computed<ContextAuditSource[]>(() => {
   return [...byId.values()]
 })
 
-const auditResult = computed<ContextOverlapAuditResult>(() =>
-  auditContextOverlap(combinedSources.value, {
+const auditResult = computed<ContextOverlapAuditResult>(() => {
+  if (!props.sources && remoteAuditResult.value) {
+    return remoteAuditResult.value
+  }
+  return auditContextOverlap(localFallbackSources.value, {
     kGramSize: props.kGramSize,
     windowSize: props.windowSize,
-  }),
-)
+  })
+})
 
 function togglePair(pairId: string): void {
   const next = new Set(expandedPairIds.value)
@@ -290,7 +351,7 @@ function kindLabel(kind: ContextSourceKind): string {
       <button
         v-if="collapsible"
         type="button"
-        class="overlap-toggle"
+        class="overlap-toggle ui-pressable"
         :aria-expanded="expanded"
         data-testid="context-overlap-toggle"
         @click="expanded = !expanded"
@@ -306,6 +367,15 @@ function kindLabel(kind: ContextSourceKind): string {
       </div>
 
       <div class="overlap-head-right">
+        <span
+          v-if="isStaleSnapshot"
+          class="overlap-pill is-stale mono"
+          :title="cachedSnapshotAt ?? undefined"
+          data-testid="overlap-cached-badge"
+        >
+          <Database :size="11" aria-hidden="true" />
+          <span>{{ t('trajectoryEval.offline.cachedBadge') }}</span>
+        </span>
         <span class="overlap-pill mono" data-testid="overlap-source-count">
           {{ t('trajectoryEval.overlap.sourcesCount', { count: auditResult.sourceCount }) }}
         </span>
@@ -322,11 +392,11 @@ function kindLabel(kind: ContextSourceKind): string {
         <button
           v-if="expanded && !sources && autoLoadMode !== 'none'"
           type="button"
-          class="overlap-icon-btn"
+          class="overlap-icon-btn ui-pressable"
           :disabled="loading"
           :title="t('trajectoryEval.overlap.rescan')"
           data-testid="overlap-rescan-btn"
-          @click="loadLiveSources"
+          @click="loadCoreOverlapAudit"
         >
           <RefreshCw :size="12" :class="{ spinning: loading }" />
         </button>
@@ -345,7 +415,7 @@ function kindLabel(kind: ContextSourceKind): string {
         <div class="overlap-toolbar-actions">
           <button
             type="button"
-            class="overlap-ghost-btn"
+            class="overlap-ghost-btn ui-pressable"
             data-testid="overlap-paste-toggle"
             @click="customInstructionsOpen = !customInstructionsOpen"
           >
@@ -355,7 +425,7 @@ function kindLabel(kind: ContextSourceKind): string {
           <button
             v-if="auditResult.pairs.length > 0"
             type="button"
-            class="overlap-ghost-btn"
+            class="overlap-ghost-btn ui-pressable"
             data-testid="overlap-diagnose-all-btn"
             @click="emit('diagnose-overlap', auditResult, auditResult.pairs[0])"
           >
@@ -375,7 +445,7 @@ function kindLabel(kind: ContextSourceKind): string {
         />
       </div>
 
-      <div v-if="loading" class="overlap-empty">
+      <div v-if="loading && !remoteAuditResult" class="overlap-empty">
         {{ t('trajectoryEval.overlap.scanning') }}
       </div>
       <div v-else-if="auditResult.sourceCount < 2" class="overlap-empty" data-testid="overlap-insufficient">
@@ -487,6 +557,7 @@ function kindLabel(kind: ContextSourceKind): string {
 .overlap-pill {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   height: 21px;
   padding: 0 7px;
   border-radius: 999px;
@@ -500,6 +571,12 @@ function kindLabel(kind: ContextSourceKind): string {
   background: var(--bg-status-warn);
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
+}
+
+.overlap-pill.is-stale {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-style: dashed;
 }
 
 .overlap-icon-btn {
@@ -729,5 +806,11 @@ function kindLabel(kind: ContextSourceKind): string {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
 }
 </style>

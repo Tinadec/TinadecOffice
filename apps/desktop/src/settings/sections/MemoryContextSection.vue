@@ -14,11 +14,18 @@ import {
   RotateCcw,
   Save,
   Sliders,
+  Sparkles,
+  ThumbsDown,
   UserRound,
 } from '@lucide/vue'
-import { api as baseApi, type ProjectDto } from '@/api'
+import {
+  api as baseApi,
+  type ContextEvolutionProposalDto,
+  type ProjectDto,
+} from '@/api'
 import ModeContextStrategySection from '@/components/modeEditor/ModeContextStrategySection.vue'
-import { UiBadge, UiButton, UiLabel, UiSelectField, UiSwitch, UiTextarea } from '@/components/ui'
+import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField, UiSwitch, UiTextarea } from '@/components/ui'
+import { triggerDiagnoseInComposer } from '@/lib/offlineDiagnosticReport'
 import { useNotifications } from '@/composables/useNotifications'
 import { companionApi, type CompanionSummary } from '@/lib/companionApi'
 import {
@@ -44,8 +51,9 @@ import { scopedApi } from '@/lib/storageScope'
 import { patchAgentCenterUi } from '@/settings/drafts/uiState'
 import MemoryScopeLedgerPanel from '@/settings/memoryContext/MemoryScopeLedgerPanel.vue'
 
-export type MemoryContextTabKey = 'principal' | 'project' | 'companion' | 'policy'
+export type MemoryContextTabKey = 'principal' | 'project' | 'companion' | 'policy' | 'evolution'
 type ScopeViewMode = 'split' | 'markdown' | 'ledger'
+type ProposalFilterStatus = 'pending' | 'applied' | 'rejected' | 'all'
 
 const props = withDefaults(
   defineProps<{
@@ -115,13 +123,29 @@ const policyStrategyDraft = ref<ContextStrategyTier>('managed')
 const policyAdvancedDraft = ref<Partial<ContextPolicyParams>>({ ...DEFAULT_CONTEXT_POLICY_PARAMS })
 const companionCanWriteProjectDraft = ref(false)
 
+const proposals = ref<ContextEvolutionProposalDto[]>([])
+const pendingProposalCount = ref(0)
+const autoTuneLowRiskSwitch = ref(false)
+const proposalFilter = ref<ProposalFilterStatus>('pending')
+const proposalsLoading = ref(false)
+const busyProposalId = ref<string | null>(null)
+const proposalReasonDrafts = reactive<Record<string, string>>({})
+const appliedTomlPreviews = reactive<Record<string, string>>({})
+const appliedSummaries = reactive<Record<string, string>>({})
+
 let readGeneration = 0
 
 const tabs = computed(() => [
-  { key: 'principal' as const, icon: UserRound, label: t('memoryContext.tabs.principal') },
-  { key: 'project' as const, icon: FolderGit2, label: t('memoryContext.tabs.project') },
-  { key: 'companion' as const, icon: Bot, label: t('memoryContext.tabs.companion') },
-  { key: 'policy' as const, icon: Sliders, label: t('memoryContext.tabs.policy') },
+  { key: 'principal' as const, icon: UserRound, label: t('memoryContext.tabs.principal'), badgeCount: 0 },
+  { key: 'project' as const, icon: FolderGit2, label: t('memoryContext.tabs.project'), badgeCount: 0 },
+  { key: 'companion' as const, icon: Bot, label: t('memoryContext.tabs.companion'), badgeCount: 0 },
+  { key: 'policy' as const, icon: Sliders, label: t('memoryContext.tabs.policy'), badgeCount: 0 },
+  {
+    key: 'evolution' as const,
+    icon: Sparkles,
+    label: t('memoryContext.tabs.evolution'),
+    badgeCount: pendingProposalCount.value,
+  },
 ])
 
 const selectedProject = computed(
@@ -248,6 +272,7 @@ const tomlPreviewText = computed(() => {
     `compaction_trigger_ratio = ${adv.compaction_trigger_ratio.toFixed(2)}`,
     `recall_fidelity = "${adv.recall_fidelity}" # "summary_only" | "balanced" | "verbatim_first"`,
     `allow_cross_session_recall = ${adv.allow_cross_session_recall}`,
+    `auto_tune_low_risk_context_policy = ${autoTuneLowRiskSwitch.value} # conservative default: human review queue`,
     '',
     '[memory]',
     `evolution_mode = "${adv.evolution_mode}" # "auto_evolve" | "candidate_only"`,
@@ -329,6 +354,26 @@ async function loadScopeData(scope: MemoryDocumentScope, gen = readGeneration) {
   ledgerItems[scope] = items
 }
 
+async function loadEvolutionProposals(gen = readGeneration) {
+  if (!canAccessBackend.value || typeof api.listContextEvolutionProposals !== 'function') return
+  proposalsLoading.value = true
+  try {
+    const statusParam = proposalFilter.value === 'all' ? undefined : proposalFilter.value
+    const result = await api.listContextEvolutionProposals({
+      status: statusParam,
+      project_id: selectedProjectId.value || undefined,
+    })
+    if (gen !== readGeneration) return
+    proposals.value = result.items
+    pendingProposalCount.value = result.pending_count
+    autoTuneLowRiskSwitch.value = result.auto_tune_low_risk_context_policy
+  } catch {
+    // Non-fatal when older backend does not yet expose P2 evolution endpoint.
+  } finally {
+    if (gen === readGeneration) proposalsLoading.value = false
+  }
+}
+
 async function reload() {
   if (!canAccessBackend.value) return
   const gen = ++readGeneration
@@ -342,11 +387,12 @@ async function reload() {
     if (gen !== readGeneration) return
     applyLoadedPolicy(loadedPolicy)
 
-    if (activeTab.value !== 'policy') {
-      await loadScopeData(activeTab.value, gen)
-    } else {
-      await loadScopeData('principal', gen)
-    }
+    await Promise.all([
+      activeTab.value !== 'policy' && activeTab.value !== 'evolution'
+        ? loadScopeData(activeTab.value, gen)
+        : loadScopeData('principal', gen),
+      loadEvolutionProposals(gen),
+    ])
   } catch (error) {
     if (gen !== readGeneration) return
     loadError.value = error instanceof Error ? error.message : t('memoryContext.errors.loadFailed')
@@ -368,11 +414,22 @@ watch(canAccessBackend, (ready) => {
 })
 
 watch(activeTab, (tab) => {
-  if (!canAccessBackend.value || tab === 'policy') return
+  if (!canAccessBackend.value) return
+  if (tab === 'evolution') {
+    void loadEvolutionProposals()
+    return
+  }
+  if (tab === 'policy') return
   if (!documents[tab]) {
     void loadScopeData(tab).catch((error: unknown) => {
       loadError.value = error instanceof Error ? error.message : t('memoryContext.errors.loadFailed')
     })
+  }
+})
+
+watch(proposalFilter, () => {
+  if (canAccessBackend.value) {
+    void loadEvolutionProposals()
   }
 })
 
@@ -554,6 +611,82 @@ function openSourceSession(sessionId: string) {
   void router?.push('/')
 }
 
+function proposalDiffKeys(proposal: ContextEvolutionProposalDto): string[] {
+  const cmp = proposal.metrics_comparison
+  if (!cmp) return []
+  const keys = new Set<string>([
+    ...Object.keys(cmp.before_values ?? {}),
+    ...Object.keys(cmp.after_values ?? {}),
+  ])
+  return [...keys]
+}
+
+function proposalEvidenceRuns(proposal: ContextEvolutionProposalDto): string[] {
+  if (Array.isArray(proposal.evidence_run_ids) && proposal.evidence_run_ids.length > 0) {
+    return proposal.evidence_run_ids
+  }
+  return proposal.source_run_id ? [proposal.source_run_id] : []
+}
+
+function shortRunId(runId: string): string {
+  return runId.length > 12 ? `${runId.slice(0, 8)}…` : runId
+}
+
+async function handleApplyProposal(proposal: ContextEvolutionProposalDto) {
+  if (busyProposalId.value || !canAccessBackend.value) return
+  busyProposalId.value = proposal.id
+  try {
+    const reason = proposalReasonDrafts[proposal.id]?.trim() || null
+    const res = await api.applyContextEvolutionProposal(proposal.id, {
+      reason,
+      expected_content_hash: policy.value?.content_hash ?? null,
+    })
+    if (res.updated_toml_preview) {
+      appliedTomlPreviews[proposal.id] = res.updated_toml_preview
+    }
+    if (res.summary) {
+      appliedSummaries[proposal.id] = res.summary
+    }
+    const idx = proposals.value.findIndex((p) => p.id === proposal.id)
+    if (idx >= 0) {
+      proposals.value[idx] = res.proposal
+    }
+    pendingProposalCount.value = Math.max(0, pendingProposalCount.value - 1)
+    if (proposal.target_scope === 'global') {
+      const freshPolicy = await contextMemoryApi.getPolicy().catch(() => null)
+      if (freshPolicy) applyLoadedPolicy(freshPolicy)
+    }
+    notify.success(t('memoryContext.evolution.appliedToast'))
+  } catch (error) {
+    notify.error(error, { title: t('memoryContext.errors.saveFailed') })
+  } finally {
+    busyProposalId.value = null
+  }
+}
+
+async function handleRejectProposal(proposal: ContextEvolutionProposalDto) {
+  if (busyProposalId.value || !canAccessBackend.value) return
+  busyProposalId.value = proposal.id
+  try {
+    const reason = proposalReasonDrafts[proposal.id]?.trim() || null
+    const updated = await api.rejectContextEvolutionProposal(proposal.id, reason)
+    const idx = proposals.value.findIndex((p) => p.id === proposal.id)
+    if (idx >= 0) {
+      proposals.value[idx] = updated
+    }
+    pendingProposalCount.value = Math.max(0, pendingProposalCount.value - 1)
+    notify.success(t('memoryContext.evolution.rejectedToast'))
+  } catch (error) {
+    notify.error(error, { title: t('memoryContext.errors.saveFailed') })
+  } finally {
+    busyProposalId.value = null
+  }
+}
+
+async function handleDiagnoseProposal(proposal: ContextEvolutionProposalDto) {
+  await triggerDiagnoseInComposer({ proposal })
+}
+
 async function canLeave(): Promise<boolean> {
   if (!hasAnyUnsavedChanges.value) return true
   if (typeof confirm !== 'function') return true
@@ -614,10 +747,13 @@ defineExpose({ canLeave, reload })
         >
           <component :is="tab.icon" :size="15" aria-hidden="true" />
           <span>{{ tab.label }}</span>
+          <span v-if="tab.badgeCount > 0" class="mc-tab-count mono" data-testid="evolution-pending-badge">
+            {{ tab.badgeCount }}
+          </span>
         </button>
       </div>
 
-      <div v-if="activeTab !== 'policy'" class="mc-view-switcher" role="group">
+      <div v-if="activeTab !== 'policy' && activeTab !== 'evolution'" class="mc-view-switcher" role="group">
         <button
           type="button"
           :class="['mc-view-btn', { active: viewMode === 'split' }]"
@@ -993,11 +1129,30 @@ defineExpose({ canLeave, reload })
 
     <!-- TAB 4: Policy & TOML -->
     <section
-      v-else
+      v-else-if="activeTab === 'policy'"
       class="mc-tab-panel"
       role="tabpanel"
       data-testid="memory-panel-policy"
     >
+      <div
+        v-if="pendingProposalCount > 0"
+        class="mc-evolution-callout"
+        data-testid="policy-evolution-callout"
+      >
+        <div class="mc-evolution-callout__copy">
+          <Sparkles :size="14" aria-hidden="true" />
+          <span>{{ t('memoryContext.evolution.pendingCallout', { count: pendingProposalCount }) }}</span>
+        </div>
+        <UiButton
+          variant="outline"
+          size="sm"
+          data-testid="policy-jump-evolution-btn"
+          @click="activeTab = 'evolution'"
+        >
+          <span>{{ t('memoryContext.evolution.reviewAction') }}</span>
+        </UiButton>
+      </div>
+
       <!-- Always-On Informative Status Pills (No redundant off-switches) -->
       <div class="mc-always-on-card" data-testid="always-on-primitives">
         <h4>{{ t('memoryContext.policy.alwaysOnTitle') }}</h4>
@@ -1063,6 +1218,249 @@ defineExpose({ canLeave, reload })
           </UiButton>
         </div>
         <pre class="mc-toml-preview"><code>{{ tomlPreviewText }}</code></pre>
+      </div>
+    </section>
+
+    <!-- TAB 5: P2 Context Self-Evolution Proposals Review Queue -->
+    <section
+      v-else
+      class="mc-tab-panel"
+      role="tabpanel"
+      data-testid="memory-panel-evolution"
+    >
+      <div class="mc-scope-banner" data-testid="evolution-posture-banner">
+        <div class="mc-scope-banner-main">
+          <UiBadge variant="secondary">{{ t('memoryContext.evolution.conservativeBadge') }}</UiBadge>
+          <span class="mc-token-pill">
+            {{
+              autoTuneLowRiskSwitch
+                ? t('memoryContext.evolution.autoTuneEnabled')
+                : t('memoryContext.evolution.autoTuneDisabled')
+            }}
+          </span>
+        </div>
+        <p class="mc-scope-hint">{{ t('memoryContext.evolution.postureHint') }}</p>
+      </div>
+
+      <div class="mc-evolution-toolbar">
+        <div class="mc-view-switcher" role="group" :aria-label="t('memoryContext.evolution.filterLabel')">
+          <button
+            v-for="filterKey in (['pending', 'applied', 'rejected', 'all'] as const)"
+            :key="filterKey"
+            type="button"
+            :class="['mc-view-btn', { active: proposalFilter === filterKey }]"
+            :data-testid="`evolution-filter-${filterKey}`"
+            @click="proposalFilter = filterKey"
+          >
+            {{ t(`memoryContext.evolution.filters.${filterKey}`) }}
+          </button>
+        </div>
+
+        <UiButton
+          variant="outline"
+          size="sm"
+          :disabled="proposalsLoading || !canAccessBackend"
+          data-testid="evolution-refresh-btn"
+          @click="loadEvolutionProposals()"
+        >
+          <RefreshCw :size="13" aria-hidden="true" />
+          <span>{{ t('memoryContext.refresh') }}</span>
+        </UiButton>
+      </div>
+
+      <div v-if="proposalsLoading && proposals.length === 0" class="mc-evolution-empty">
+        {{ t('memoryContext.evolution.loading') }}
+      </div>
+      <div v-else-if="proposals.length === 0" class="mc-evolution-empty" data-testid="evolution-proposals-empty">
+        {{ t('memoryContext.evolution.empty') }}
+      </div>
+
+      <div v-else class="mc-proposal-list" data-testid="evolution-proposal-list">
+        <article
+          v-for="proposal in proposals"
+          :key="proposal.id"
+          class="mc-proposal-card"
+          :data-testid="`evolution-proposal-${proposal.id}`"
+        >
+          <header class="mc-proposal-head">
+            <div class="mc-proposal-badges">
+              <UiBadge variant="secondary">
+                {{
+                  proposal.kind === 'prompt_dedup_proposal'
+                    ? t('memoryContext.evolution.kinds.prompt_dedup_proposal')
+                    : t('memoryContext.evolution.kinds.context_policy_proposal')
+                }}
+              </UiBadge>
+              <UiBadge variant="outline">
+                {{
+                  proposal.target_scope === 'mode' && (proposal.target_mode_name || proposal.target_mode_slug)
+                    ? `${t('memoryContext.evolution.scopes.mode')}: ${proposal.target_mode_name || proposal.target_mode_slug}`
+                    : proposal.target_scope === 'workspace'
+                      ? t('memoryContext.evolution.scopes.workspace')
+                      : t('memoryContext.evolution.scopes.global')
+                }}
+              </UiBadge>
+              <UiBadge :variant="proposal.status === 'applied' ? 'default' : 'outline'">
+                {{
+                  proposal.status === 'applied'
+                    ? t('memoryContext.evolution.status.applied')
+                    : proposal.status === 'rejected'
+                      ? t('memoryContext.evolution.status.rejected')
+                      : t('memoryContext.evolution.status.pending')
+                }}
+              </UiBadge>
+            </div>
+            <span class="mc-token-pill">
+              {{ Math.round((proposal.confidence ?? 0) * 100) }}%
+            </span>
+          </header>
+
+          <div class="mc-proposal-copy">
+            <h4>{{ proposal.title || proposal.summary }}</h4>
+            <p v-if="proposal.title && proposal.summary !== proposal.title">{{ proposal.summary }}</p>
+            <p v-if="proposal.rationale" class="mc-proposal-rationale">{{ proposal.rationale }}</p>
+          </div>
+
+          <div
+            v-if="proposalEvidenceRuns(proposal).length > 0"
+            class="mc-proposal-runs"
+            data-testid="proposal-evidence-runs"
+          >
+            <span class="mc-proposal-runs__label">{{ t('memoryContext.evolution.evidenceRuns') }}</span>
+            <code
+              v-for="evRunId in proposalEvidenceRuns(proposal)"
+              :key="evRunId"
+              class="mc-doc-path"
+              :title="evRunId"
+              data-testid="proposal-evidence-run"
+            >{{ shortRunId(evRunId) }}</code>
+          </div>
+
+          <!-- Policy Before -> After Metrics Comparison -->
+          <div
+            v-if="proposal.metrics_comparison"
+            class="mc-proposal-evidence-box"
+            data-testid="proposal-before-after"
+          >
+            <div class="mc-proposal-metrics-strip mono">
+              <span>
+                {{
+                  t('memoryContext.evolution.degradedWindow', {
+                    degraded: proposal.metrics_comparison.degraded_run_count,
+                    total: proposal.metrics_comparison.window_run_count,
+                  })
+                }}
+              </span>
+              <span>
+                {{
+                  t('memoryContext.evolution.peakOccupancy', {
+                    pct: Math.round(proposal.metrics_comparison.avg_peak_occupancy_pct),
+                  })
+                }}
+              </span>
+              <span>
+                {{
+                  t('memoryContext.evolution.highLowErrorRate', {
+                    high: Math.round(proposal.metrics_comparison.high_occupancy_error_rate * 100),
+                    low: Math.round(proposal.metrics_comparison.low_occupancy_error_rate * 100),
+                  })
+                }}
+              </span>
+            </div>
+
+            <div v-if="proposalDiffKeys(proposal).length > 0" class="mc-diff-grid mono">
+              <div
+                v-for="diffKey in proposalDiffKeys(proposal)"
+                :key="diffKey"
+                class="mc-diff-row"
+              >
+                <span class="mc-diff-key">{{ diffKey }}</span>
+                <span class="mc-diff-before">{{ proposal.metrics_comparison.before_values?.[diffKey] ?? '—' }}</span>
+                <span class="mc-diff-arrow">&rarr;</span>
+                <strong class="mc-diff-after">{{ proposal.metrics_comparison.after_values?.[diffKey] ?? '—' }}</strong>
+              </div>
+            </div>
+
+            <p v-if="proposal.metrics_comparison.expected_benefit" class="mc-proposal-benefit">
+              {{ proposal.metrics_comparison.expected_benefit }}
+            </p>
+          </div>
+
+          <!-- Prompt / Skill Deduplication Winnowing Evidence -->
+          <div
+            v-if="proposal.dedup_evidence"
+            class="mc-proposal-evidence-box"
+            data-testid="proposal-dedup-evidence"
+          >
+            <div class="mc-proposal-metrics-strip mono">
+              <strong>{{ proposal.dedup_evidence.source_a_label }} &harr; {{ proposal.dedup_evidence.source_b_label }}</strong>
+              <span>{{ proposal.dedup_evidence.line_range_label }}</span>
+              <span>
+                {{ t('memoryContext.evolution.wastedTokens', { tokens: proposal.dedup_evidence.estimated_wasted_tokens }) }}
+              </span>
+            </div>
+            <p v-if="proposal.dedup_evidence.suggested_remediation" class="mc-proposal-benefit">
+              {{ proposal.dedup_evidence.suggested_remediation }}
+            </p>
+            <pre v-if="proposal.dedup_evidence.excerpt" class="mc-toml-preview">{{ proposal.dedup_evidence.excerpt }}</pre>
+          </div>
+
+          <!-- Applied TOML / Mode Version Audit Receipt -->
+          <div
+            v-if="appliedTomlPreviews[proposal.id] || appliedSummaries[proposal.id] || proposal.applied_toml_path || proposal.applied_mode_version"
+            class="mc-proposal-receipt"
+            data-testid="proposal-applied-receipt"
+          >
+            <p v-if="appliedSummaries[proposal.id] || proposal.decision_reason">
+              {{ appliedSummaries[proposal.id] || proposal.decision_reason }}
+            </p>
+            <code v-if="proposal.applied_toml_path" class="mc-doc-path">{{ proposal.applied_toml_path }}</code>
+            <pre v-if="appliedTomlPreviews[proposal.id]" class="mc-toml-preview"><code>{{ appliedTomlPreviews[proposal.id] }}</code></pre>
+          </div>
+
+          <footer class="mc-proposal-actions">
+            <UiInput
+              v-if="proposal.status === 'pending'"
+              v-model="proposalReasonDrafts[proposal.id]"
+              class="mc-proposal-reason-input"
+              :disabled="busyProposalId === proposal.id || !canAccessBackend"
+              :placeholder="t('memoryContext.evolution.reasonPlaceholder')"
+              data-testid="proposal-reason-input"
+            />
+            <div class="mc-proposal-buttons">
+              <UiButton
+                variant="ghost"
+                size="sm"
+                data-testid="proposal-diagnose-btn"
+                @click="handleDiagnoseProposal(proposal)"
+              >
+                <Sparkles :size="13" aria-hidden="true" />
+                <span>{{ t('trajectoryEval.actions.diagnoseInComposer') }}</span>
+              </UiButton>
+              <UiButton
+                v-if="proposal.status === 'pending'"
+                variant="outline"
+                size="sm"
+                :disabled="busyProposalId === proposal.id || !canAccessBackend"
+                data-testid="proposal-reject-btn"
+                @click="handleRejectProposal(proposal)"
+              >
+                <ThumbsDown :size="13" aria-hidden="true" />
+                <span>{{ t('memoryContext.evolution.rejectBtn') }}</span>
+              </UiButton>
+              <UiButton
+                v-if="proposal.status === 'pending'"
+                size="sm"
+                :disabled="busyProposalId === proposal.id || !canAccessBackend"
+                data-testid="proposal-apply-btn"
+                @click="handleApplyProposal(proposal)"
+              >
+                <CheckCircle2 :size="13" aria-hidden="true" />
+                <span>{{ t('memoryContext.evolution.applyBtn') }}</span>
+              </UiButton>
+            </div>
+          </footer>
+        </article>
       </div>
     </section>
   </div>
@@ -1542,6 +1940,215 @@ defineExpose({ canLeave, reload })
   font-size: 11px;
   line-height: 1.55;
   overflow-x: auto;
+}
+
+.mc-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.mc-evolution-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+}
+
+.mc-evolution-callout__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.mc-evolution-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mc-evolution-empty {
+  padding: 24px 16px;
+  border-radius: 11px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mc-proposal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mc-proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+
+.mc-proposal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mc-proposal-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mc-proposal-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mc-proposal-copy h4 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mc-proposal-copy p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.mc-proposal-rationale {
+  color: var(--text-muted) !important;
+}
+
+.mc-proposal-runs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mc-proposal-runs__label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mc-proposal-evidence-box,
+.mc-proposal-receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+}
+
+.mc-proposal-receipt p,
+.mc-proposal-benefit {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.mc-proposal-metrics-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.mc-diff-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.mc-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+}
+
+.mc-diff-key {
+  color: var(--text-secondary);
+}
+
+.mc-diff-before {
+  color: var(--text-muted);
+}
+
+.mc-diff-arrow {
+  color: var(--text-muted);
+}
+
+.mc-diff-after {
+  color: var(--text-primary);
+}
+
+.mc-proposal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.mc-proposal-reason-input {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.mc-proposal-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

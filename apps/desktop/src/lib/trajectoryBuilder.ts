@@ -7,9 +7,10 @@
 import type {
   AgentAssignmentDto,
   ContextPackDto,
+  ContextWindowBucketReportDto,
   ModelInvocationDto,
   OrchestrationSnapshotDto,
-  StepResultDto,
+  RunContextDiagnosticsDto,
   SupervisionFindingDto,
   TaskNodeDto,
   ToolExecutionTimelineItemDto,
@@ -23,6 +24,8 @@ export type GovernanceSignalCode =
   | 'WRITE_SCOPE_LOCKED'
   | 'TIMEOUT'
   | 'SAME_ARGS_RETRY'
+  | 'LOOP_DETECTED'
+  | 'CONTEXT_PRESSURE'
 
 export type GovernanceSignalSeverity = 'danger' | 'warn' | 'neutral'
 
@@ -159,6 +162,7 @@ export interface TrajectoryBuildInput {
   contextPacks?: ContextPackDto[]
   contextWindowTokens?: number | null
   coordinatorLabel?: string | null
+  diagnostics?: RunContextDiagnosticsDto | null
 }
 
 export const ALL_GOVERNANCE_SIGNALS: GovernanceSignalCode[] = [
@@ -169,6 +173,8 @@ export const ALL_GOVERNANCE_SIGNALS: GovernanceSignalCode[] = [
   'WRITE_SCOPE_LOCKED',
   'TIMEOUT',
   'SAME_ARGS_RETRY',
+  'LOOP_DETECTED',
+  'CONTEXT_PRESSURE',
 ]
 
 const SIGNAL_SEVERITY: Record<GovernanceSignalCode, GovernanceSignalSeverity> = {
@@ -179,6 +185,8 @@ const SIGNAL_SEVERITY: Record<GovernanceSignalCode, GovernanceSignalSeverity> = 
   WRITE_SCOPE_LOCKED: 'danger',
   TIMEOUT: 'danger',
   SAME_ARGS_RETRY: 'warn',
+  LOOP_DETECTED: 'danger',
+  CONTEXT_PRESSURE: 'warn',
 }
 
 export function signalSeverity(code: GovernanceSignalCode): GovernanceSignalSeverity {
@@ -364,6 +372,21 @@ export function detectToolGovernanceSignals(exec: ToolExecutionTimelineItemDto):
     add('SAME_ARGS_RETRY', exec.arguments_summary || exec.command || undefined)
   }
 
+  if (
+    errCat.includes('loop_detected')
+    || /\b(loop_detected|infinite loop|runaway loop)\b/i.test(blob)
+  ) {
+    add('LOOP_DETECTED', exec.summary || exec.error_category || undefined)
+  }
+
+  if (
+    errCat.includes('context_pressure')
+    || errCat.includes('context_overflow')
+    || /\b(context_pressure|compaction_recommended|high context occupancy)\b/i.test(blob)
+  ) {
+    add('CONTEXT_PRESSURE', exec.summary || exec.error_category || undefined)
+  }
+
   return [...found.values()]
 }
 
@@ -383,6 +406,8 @@ function detectFindingSignals(findings: SupervisionFindingDto[]): GovernanceSign
     if (text.includes('stale') && text.includes('version')) push('FS_STALE_VERSION')
     if (text.includes('not_observed') || text.includes('not observed')) push('FS_NOT_OBSERVED')
     if (text.includes('same_args') || text.includes('retry loop')) push('SAME_ARGS_RETRY')
+    if (text.includes('loop_detected') || text.includes('infinite loop')) push('LOOP_DETECTED')
+    if (text.includes('context_pressure') || text.includes('compaction_recommended')) push('CONTEXT_PRESSURE')
   }
   return [...map.values()]
 }
@@ -881,6 +906,8 @@ export function buildTrajectoryTree(input: TrajectoryBuildInput): TrajectorySumm
     WRITE_SCOPE_LOCKED: 0,
     TIMEOUT: 0,
     SAME_ARGS_RETRY: 0,
+    LOOP_DETECTED: 0,
+    CONTEXT_PRESSURE: 0,
   }
 
   let totalSteps = 0
@@ -905,7 +932,7 @@ export function buildTrajectoryTree(input: TrajectoryBuildInput): TrajectorySumm
 
   const activeSignals = ALL_GOVERNANCE_SIGNALS.filter((code) => signalCounts[code] > 0)
 
-  return {
+  const summary: TrajectorySummary = {
     runId,
     sessionId,
     status: root.status,
@@ -922,6 +949,8 @@ export function buildTrajectoryTree(input: TrajectoryBuildInput): TrajectorySumm
     signalCounts,
     activeSignals,
   }
+
+  return input.diagnostics ? enrichTrajectoryWithCoreGovernance(summary, input.diagnostics) : summary
 }
 
 export function flattenTrajectoryNodes(root: TrajectoryNode): TrajectoryNode[] {
@@ -1145,6 +1174,225 @@ export function buildContextWindowBuckets(input: {
     lowOccupancyAvgLatencyMs,
     highOccupancyAvgLatencyMs,
     degradationDetected,
+  }
+}
+
+const VALID_GOVERNANCE_SIGNAL_SET = new Set<GovernanceSignalCode>(ALL_GOVERNANCE_SIGNALS)
+
+function normalizeGovernanceSignalCode(raw?: string | null): GovernanceSignalCode | null {
+  if (!raw) return null
+  const upper = raw.trim().toUpperCase()
+  return VALID_GOVERNANCE_SIGNAL_SET.has(upper as GovernanceSignalCode)
+    ? (upper as GovernanceSignalCode)
+    : null
+}
+
+function normalizeSeverity(raw?: string | null, fallbackCode?: GovernanceSignalCode): GovernanceSignalSeverity {
+  if (raw === 'danger' || raw === 'warn' || raw === 'neutral') return raw
+  return fallbackCode ? signalSeverity(fallbackCode) : 'neutral'
+}
+
+/**
+ * Convert Core's authoritative `ContextWindowBucketReportDto` directly into
+ * `ContextWindowBucketReport` without re-bucketing invocations in the browser.
+ */
+export function fromCoreWindowBucketsDto(
+  dto: ContextWindowBucketReportDto | null | undefined,
+): ContextWindowBucketReport | null {
+  if (!dto || !Array.isArray(dto.buckets) || dto.buckets.length === 0) return null
+
+  const byIndex = new Map<number, (typeof dto.buckets)[number]>()
+  for (const b of dto.buckets) {
+    if (typeof b.index === 'number') byIndex.set(b.index, b)
+  }
+
+  const buckets: ContextWindowBucket[] = Array.from({ length: 20 }, (_, idx) => {
+    const raw = byIndex.get(idx)
+    const rangeStart = raw?.range_start ?? idx * 5
+    const rangeEnd = raw?.range_end ?? (idx + 1) * 5
+    return {
+      index: idx,
+      rangeStart,
+      rangeEnd,
+      label: raw?.label || `${rangeStart}-${rangeEnd}%`,
+      sampleCount: Math.max(0, raw?.sample_count ?? 0),
+      errorCount: Math.max(0, raw?.error_count ?? 0),
+      errorRate: Math.max(0, raw?.error_rate ?? 0),
+      avgLatencyMs: Math.max(0, Math.round(raw?.avg_latency_ms ?? 0)),
+      maxLatencyMs: Math.max(0, Math.round(raw?.max_latency_ms ?? 0)),
+      avgOccupancyPct: Math.max(0, raw?.avg_occupancy_pct ?? 0),
+    }
+  })
+
+  const samples: ContextWindowSamplePoint[] = (dto.samples ?? []).map((s) => ({
+    id: s.id,
+    sourceKind:
+      s.source_kind === 'invocation' || s.source_kind === 'tool' || s.source_kind === 'context_pack'
+        ? s.source_kind
+        : 'invocation',
+    occupancyPct: s.occupancy_pct ?? 0,
+    bucketIndex: Math.min(19, Math.max(0, s.bucket_index ?? 0)),
+    isError: Boolean(s.is_error),
+    latencyMs: Math.max(0, s.latency_ms ?? 0),
+    tokensUsed: Math.max(0, s.tokens_used ?? 0),
+    tokenBudget: Math.max(0, s.token_budget ?? 0),
+    timestamp: s.timestamp ?? '',
+  }))
+
+  return {
+    buckets,
+    samples,
+    totalSamples: Math.max(0, dto.total_samples ?? samples.length),
+    totalErrors: Math.max(0, dto.total_errors ?? 0),
+    overallErrorRate: Math.max(0, dto.overall_error_rate ?? 0),
+    avgLatencyMs: Math.max(0, Math.round(dto.avg_latency_ms ?? 0)),
+    peakOccupancyPct: Math.max(0, dto.peak_occupancy_pct ?? 0),
+    lowOccupancyErrorRate: Math.max(0, dto.low_occupancy_error_rate ?? 0),
+    highOccupancyErrorRate: Math.max(0, dto.high_occupancy_error_rate ?? 0),
+    lowOccupancyAvgLatencyMs: Math.max(0, Math.round(dto.low_occupancy_avg_latency_ms ?? 0)),
+    highOccupancyAvgLatencyMs: Math.max(0, Math.round(dto.high_occupancy_avg_latency_ms ?? 0)),
+    degradationDetected: Boolean(dto.degradation_detected),
+  }
+}
+
+/**
+ * Prefer Core's authoritative 5% window bucket report when available (unfiltered run scope),
+ * falling back to `buildContextWindowBuckets` during offline/legacy or node-filtered views.
+ */
+export function resolveContextWindowBuckets(input: {
+  diagnostics?: RunContextDiagnosticsDto | null
+  isNodeFiltered?: boolean
+  contextPacks?: ContextPackDto[]
+  modelInvocations?: ModelInvocationDto[]
+  toolExecutions?: ToolExecutionTimelineItemDto[]
+  contextWindowTokens?: number | null
+}): ContextWindowBucketReport {
+  if (!input.isNodeFiltered && input.diagnostics?.window_buckets) {
+    const mapped = fromCoreWindowBucketsDto(input.diagnostics.window_buckets)
+    if (mapped) return mapped
+  }
+  return buildContextWindowBuckets(input)
+}
+
+/**
+ * Overlay Core's authoritative unified governance signals, retry streaks, file edit deltas,
+ * and structured error frames onto a trajectory summary so Core remains the single source of truth.
+ */
+export function enrichTrajectoryWithCoreGovernance(
+  summary: TrajectorySummary,
+  diagnostics?: RunContextDiagnosticsDto | null,
+): TrajectorySummary {
+  const gov = diagnostics?.governance
+  if (!gov) return summary
+
+  const nodesById = new Map<string, TrajectoryNode>()
+  for (const n of flattenTrajectoryNodes(summary.root)) {
+    nodesById.set(n.id, n)
+  }
+
+  for (const streak of gov.retry_streaks ?? []) {
+    const target = nodesById.get(`tool:${streak.execution_id}`)
+    if (target) {
+      target.retryStreakCount = streak.streak_count
+      if (!target.signals.some((s) => s.code === 'SAME_ARGS_RETRY')) {
+        target.signals.push({
+          code: 'SAME_ARGS_RETRY',
+          severity: 'warn',
+          detail: streak.arguments_summary ?? `${streak.tool_id} repeated ${streak.streak_count}x`,
+          count: streak.streak_count,
+        })
+      }
+    }
+  }
+
+  for (const edit of gov.file_edits ?? []) {
+    const target = nodesById.get(`tool:${edit.execution_id}`)
+    if (target && !target.editStats) {
+      target.editStats = {
+        added: edit.added,
+        removed: edit.removed,
+        filePath: edit.file_path ?? target.resourcePath ?? null,
+      }
+    }
+  }
+
+  for (const frame of gov.error_frames ?? []) {
+    const sourceKey = frame.source_id || frame.execution_id
+    if (!sourceKey) continue
+    const target =
+      nodesById.get(`tool:${sourceKey}`)
+      ?? nodesById.get(`model:${sourceKey}`)
+      ?? nodesById.get(`step:${sourceKey}`)
+      ?? nodesById.get(sourceKey)
+    if (target && target.codeFrames.length === 0) {
+      target.codeFrames = [
+        {
+          id: frame.id,
+          title: frame.title,
+          filePath: frame.file_path ?? null,
+          line: frame.line ?? null,
+          column: frame.column ?? null,
+          command: frame.command ?? null,
+          cwd: frame.cwd ?? null,
+          errorCategory: frame.error_category ?? null,
+          lines: (frame.lines ?? []).map((l) => ({
+            lineNumber: l.line_number ?? null,
+            text: l.text,
+            highlight: Boolean(l.highlight),
+          })),
+        },
+      ]
+    }
+  }
+
+  const nextCounts: Record<GovernanceSignalCode, number> = { ...summary.signalCounts }
+  for (const [rawCode, count] of Object.entries(gov.signal_counts ?? {})) {
+    const code = normalizeGovernanceSignalCode(rawCode)
+    if (code && typeof count === 'number') {
+      nextCounts[code] = Math.max(nextCounts[code] ?? 0, count)
+    }
+  }
+
+  const coreRootSignals: GovernanceSignal[] = []
+  for (const sig of gov.signals ?? []) {
+    const code = normalizeGovernanceSignalCode(sig.code)
+    if (!code) continue
+    nextCounts[code] = Math.max(nextCounts[code] ?? 0, sig.count ?? 1)
+    coreRootSignals.push({
+      code,
+      severity: normalizeSeverity(sig.severity, code),
+      detail: sig.detail ?? null,
+      count: sig.count ?? 1,
+    })
+    for (const subj of sig.subject_ids ?? []) {
+      const target =
+        nodesById.get(`tool:${subj}`)
+        ?? nodesById.get(`model:${subj}`)
+        ?? nodesById.get(`step:${subj}`)
+        ?? nodesById.get(subj)
+      if (target && !target.signals.some((s) => s.code === code)) {
+        target.signals.push({
+          code,
+          severity: normalizeSeverity(sig.severity, code),
+          detail: sig.detail ?? null,
+          count: sig.max_retry_streak ?? 1,
+        })
+      }
+    }
+  }
+
+  summary.root.signals = mergeSignals([summary.root.signals, coreRootSignals])
+  const activeSignals = ALL_GOVERNANCE_SIGNALS.filter((code) => nextCounts[code] > 0)
+
+  return {
+    ...summary,
+    totalToolCalls: Math.max(summary.totalToolCalls, gov.total_tool_calls ?? 0),
+    totalModelCalls: Math.max(summary.totalModelCalls, gov.total_model_calls ?? 0),
+    errorCount: Math.max(summary.errorCount, gov.error_count ?? 0),
+    totalAddedLines: gov.total_added_lines > 0 ? gov.total_added_lines : summary.totalAddedLines,
+    totalRemovedLines: gov.total_removed_lines > 0 ? gov.total_removed_lines : summary.totalRemovedLines,
+    signalCounts: nextCounts,
+    activeSignals,
   }
 }
 

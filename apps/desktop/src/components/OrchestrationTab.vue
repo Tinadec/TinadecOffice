@@ -9,6 +9,7 @@ import {
   Archive,
   BarChart3,
   CheckCircle2,
+  Database,
   Download,
   GitBranch,
   Layers3,
@@ -27,12 +28,20 @@ import {
   type ContextPackDto,
   type ModelInvocationDto,
   type OrchestrationSnapshotDto,
+  type RunContextDiagnosticsDto,
   type StepResultDto,
   type SupervisionFindingDto,
   type ToolDescriptorDto,
   type ToolExecutionTimelineItemDto,
   type TopologyRunDto,
 } from '../api'
+import {
+  buildOverlapCacheScopeKey,
+  fetchRunDiagnosticsWithCache,
+  getCachedOverlapAudit,
+  getCachedRunDiagnostics,
+} from '../lib/contextDiagnosticsCache'
+import { useHostAccess } from '../lib/hostAccess'
 import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
 import OrchestrationMiniGraph, {
@@ -51,18 +60,17 @@ import ToolStatsDashboard from './tools/ToolStatsDashboard.vue'
 import SessionPlanPanel from './plan/SessionPlanPanel.vue'
 import TeammateSteerPopover, { type TeammateSteerTarget } from './teammate/TeammateSteerPopover.vue'
 import {
-  buildContextWindowBuckets,
   buildTrajectoryTree,
+  resolveContextWindowBuckets,
   type TrajectoryNode,
 } from '../lib/trajectoryBuilder'
 import {
-  buildContextTreemapModel,
+  resolveContextTreemapModel,
   type ContextTreemapModel,
   type ContextTreemapNode,
 } from '../lib/contextTreemapLayout'
 import {
-  auditContextOverlap,
-  type ContextAuditSource,
+  fromCoreOverlapAuditDto,
   type ContextOverlapAuditResult,
   type ContextOverlapPairSummary,
 } from '../lib/contextOverlapWinnowing'
@@ -89,12 +97,14 @@ const props = defineProps<{
   toolExecutions: ToolExecutionTimelineItemDto[]
   tools?: ToolDescriptorDto[]
   sessionId?: string | null
+  runId?: string | null
   topologyRun?: TopologyRunDto | null
   modelInvocations?: ModelInvocationDto[]
   focusedTarget?: string | OrchestrationFocusTarget | null
 }>()
 
 const { t, te, locale } = useI18n()
+const { canAccessBackend } = useHostAccess()
 
 function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
   if (te(key)) return params ? t(key, params) : t(key)
@@ -134,7 +144,95 @@ const selectedNodeId = ref<string | null>(null)
 const detailsBlockRef = ref<HTMLElement | null>(null)
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
-const effectiveSessionId = computed(() => props.sessionId || props.snapshot?.run?.session_id || null)
+const lastObservedSnapshot = ref<OrchestrationSnapshotDto | null>(null)
+const effectiveRunId = computed<string | null>(
+  () => props.snapshot?.run?.id ?? props.runId ?? lastObservedSnapshot.value?.run?.id ?? null,
+)
+const effectiveSessionId = computed(
+  () => props.sessionId || props.snapshot?.run?.session_id || lastObservedSnapshot.value?.run?.session_id || null,
+)
+
+watch(
+  () => props.snapshot,
+  (next) => {
+    if (next?.run?.id) {
+      lastObservedSnapshot.value = next
+    }
+  },
+  { immediate: true },
+)
+
+const runDiagnostics = ref<RunContextDiagnosticsDto | null>(null)
+const diagnosticsStale = ref(false)
+const diagnosticsCachedAt = ref<string | null>(null)
+const selectedTreemapPackId = ref<string | null>(null)
+const latestOverlapAudit = ref<ContextOverlapAuditResult | null>(null)
+let diagnosticsAbort: AbortController | null = null
+let diagnosticsEpoch = 0
+
+async function loadRunDiagnostics(): Promise<void> {
+  const targetRunId = effectiveRunId.value
+  diagnosticsAbort?.abort()
+  diagnosticsAbort = null
+
+  if (!targetRunId) {
+    runDiagnostics.value = null
+    diagnosticsStale.value = false
+    diagnosticsCachedAt.value = null
+    return
+  }
+
+  // Seed immediately from scoped local cache so reconnect/tab switch never flashes empty.
+  if (!runDiagnostics.value || runDiagnostics.value.run_id !== targetRunId) {
+    const cached = getCachedRunDiagnostics(targetRunId)
+    if (cached) {
+      runDiagnostics.value = cached.data
+      diagnosticsCachedAt.value = cached.cachedAt
+      diagnosticsStale.value = !canAccessBackend.value
+    }
+  }
+
+  const overlapScopeKey = buildOverlapCacheScopeKey({ runId: targetRunId, autoLoadMode: 'all' })
+  if (!latestOverlapAudit.value) {
+    const cachedOverlap = getCachedOverlapAudit(overlapScopeKey, { runId: targetRunId })
+    if (cachedOverlap) {
+      latestOverlapAudit.value = fromCoreOverlapAuditDto(cachedOverlap.data)
+    }
+  }
+
+  if (typeof api.getRunContextDiagnostics !== 'function') return
+
+  const epoch = ++diagnosticsEpoch
+  const controller = new AbortController()
+  diagnosticsAbort = controller
+
+  try {
+    const outcome = await fetchRunDiagnosticsWithCache(
+      targetRunId,
+      () =>
+        api.getRunContextDiagnostics(
+          targetRunId,
+          { selected_pack_id: selectedTreemapPackId.value },
+          controller.signal,
+        ),
+      { canAccessBackend: canAccessBackend.value },
+    )
+    if (epoch !== diagnosticsEpoch || controller.signal.aborted) return
+    if (outcome.data) {
+      runDiagnostics.value = outcome.data
+      diagnosticsStale.value = outcome.stale
+      diagnosticsCachedAt.value = outcome.cachedAt
+    } else if (outcome.error && runDiagnostics.value?.run_id === targetRunId) {
+      diagnosticsStale.value = true
+    }
+  } catch {
+    if (epoch === diagnosticsEpoch && !controller.signal.aborted && runDiagnostics.value?.run_id === targetRunId) {
+      diagnosticsStale.value = true
+    }
+  } finally {
+    if (diagnosticsAbort === controller) diagnosticsAbort = null
+  }
+}
 
 // Live topology lineage enrichment (`dispatched_by_task_id` & `instances` depth/parent) when available.
 const fetchedTopologyRun = ref<TopologyRunDto | null>(null)
@@ -176,7 +274,26 @@ async function loadRunTopology(): Promise<void> {
 
 onBeforeUnmount(() => {
   topologyAbort?.abort()
+  diagnosticsAbort?.abort()
 })
+
+watch(
+  () => [
+    effectiveRunId.value,
+    props.snapshot?.run?.status,
+    props.snapshot?.context_packs.length,
+    selectedTreemapPackId.value,
+    canAccessBackend.value,
+  ],
+  (next, prev) => {
+    if (next[0] !== prev?.[0]) {
+      selectedTreemapPackId.value = null
+      latestOverlapAudit.value = null
+    }
+    void loadRunDiagnostics()
+  },
+  { immediate: true },
+)
 
 watch(
   () => [
@@ -608,18 +725,33 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   emit('execute-tool', tool)
 }
 
+const effectiveSnapshotForDiagnostics = computed<OrchestrationSnapshotDto | null>(
+  () => props.snapshot ?? lastObservedSnapshot.value,
+)
+
+const hasCachedDiagnosticsFallback = computed(
+  () => !hasSnapshot.value && Boolean(runDiagnostics.value),
+)
+
+const activeCoreDiagnostics = computed<RunContextDiagnosticsDto | null>(
+  () => (selectedNode.value ? null : runDiagnostics.value),
+)
+
 const trajectorySummary = computed(() =>
   buildTrajectoryTree({
-    snapshot: props.snapshot,
+    snapshot: effectiveSnapshotForDiagnostics.value,
     toolExecutions: filteredToolExecutions.value,
     modelInvocations: effectiveModelInvocations.value,
     contextPacks: filteredContextPacks.value,
     coordinatorLabel: t('orchestrationPanel.roleCoordinator'),
+    diagnostics: activeCoreDiagnostics.value,
   }),
 )
 
 const contextWindowBuckets = computed(() =>
-  buildContextWindowBuckets({
+  resolveContextWindowBuckets({
+    diagnostics: activeCoreDiagnostics.value,
+    isNodeFiltered: Boolean(selectedNode.value),
     contextPacks: filteredContextPacks.value,
     modelInvocations: effectiveModelInvocations.value,
     toolExecutions: filteredToolExecutions.value,
@@ -627,43 +759,22 @@ const contextWindowBuckets = computed(() =>
 )
 
 const contextTreemapModel = computed(() =>
-  buildContextTreemapModel(filteredContextPacks.value),
+  resolveContextTreemapModel({
+    diagnostics: activeCoreDiagnostics.value,
+    contextPacks: filteredContextPacks.value,
+    selectedPackId: selectedTreemapPackId.value,
+  }),
 )
 
-const diagnosticsOverlapSources = computed<ContextAuditSource[] | undefined>(() => {
-  const activeTools = props.tools ?? toolCatalog.value
-  const list: ContextAuditSource[] = []
-  const toolLines = activeTools
-    .filter((tool) => tool.description && tool.description.trim().length > 0)
-    .map((tool) => `${tool.id}: ${tool.description}`)
-  if (toolLines.length > 0) {
-    list.push({
-      id: 'run:tool_schemas',
-      label: t('trajectoryEval.overlap.toolDescriptionsSource', { count: toolLines.length }),
-      kind: 'tool_schema',
-      content: toolLines.join('\n'),
-    })
+function onOverlapAuditUpdated(
+  audit: ContextOverlapAuditResult,
+  meta: { stale: boolean; cachedAt: string | null },
+) {
+  latestOverlapAudit.value = audit
+  if (meta.stale && !diagnosticsCachedAt.value) {
+    diagnosticsCachedAt.value = meta.cachedAt
   }
-  const findingText = (props.snapshot?.supervision_findings ?? [])
-    .map((f) => [f.summary, f.recommendation].filter(Boolean).join('\n'))
-    .filter(Boolean)
-    .join('\n')
-  if (findingText.trim().length > 0) {
-    list.push({
-      id: 'run:supervision',
-      label: t('orchestrationPanel.supervision'),
-      kind: 'other',
-      content: findingText,
-    })
-  }
-  return list.length >= 2 ? list : undefined
-})
-
-const diagnosticsOverlapAudit = computed<ContextOverlapAuditResult | null>(() => {
-  const srcs = diagnosticsOverlapSources.value
-  if (!srcs || srcs.length < 2) return null
-  return auditContextOverlap(srcs)
-})
+}
 
 function handleDiagnoseRun(overrides?: {
   node?: TrajectoryNode | null
@@ -673,15 +784,20 @@ function handleDiagnoseRun(overrides?: {
   pair?: ContextOverlapPairSummary | null
 }) {
   const input = {
-    runId: props.snapshot?.run?.id ?? null,
+    runId: effectiveRunId.value,
     sessionId: effectiveSessionId.value,
     trajectory: trajectorySummary.value,
     selectedNode: overrides?.node !== undefined ? overrides.node : selectedTrajectoryNode.value,
     treemap: overrides?.treemap ?? contextTreemapModel.value,
     selectedTreemapSegment: overrides?.segment !== undefined ? overrides.segment : selectedTreemapSegment.value,
     buckets: contextWindowBuckets.value,
-    overlap: overrides?.overlap ?? diagnosticsOverlapAudit.value,
+    overlap: overrides?.overlap ?? latestOverlapAudit.value,
     selectedOverlapPair: overrides?.pair ?? null,
+    diagnostics: activeCoreDiagnostics.value,
+    staleSnapshot:
+      diagnosticsStale.value && diagnosticsCachedAt.value
+        ? { cachedAt: diagnosticsCachedAt.value }
+        : null,
   }
   const draft = buildDiagnosticDraft(input)
   emit('diagnose-draft', draft)
@@ -690,12 +806,17 @@ function handleDiagnoseRun(overrides?: {
 
 function handleExportDiagnosticHtml() {
   const result = exportOfflineDiagnosticHtml({
-    runId: props.snapshot?.run?.id ?? null,
+    runId: effectiveRunId.value,
     sessionId: effectiveSessionId.value,
     trajectory: trajectorySummary.value,
     buckets: contextWindowBuckets.value,
     treemap: contextTreemapModel.value,
-    overlap: diagnosticsOverlapAudit.value,
+    overlap: latestOverlapAudit.value,
+    diagnostics: activeCoreDiagnostics.value,
+    staleSnapshot:
+      diagnosticsStale.value && diagnosticsCachedAt.value
+        ? { cachedAt: diagnosticsCachedAt.value }
+        : null,
   })
   emit('export-report', result)
 }
@@ -710,9 +831,143 @@ function handleExportDiagnosticHtml() {
       @focus-node="onFocusPlanNode"
     />
 
-    <div v-if="!hasSnapshot" class="orchestration-empty">
+    <div v-if="!hasSnapshot && !hasCachedDiagnosticsFallback" class="orchestration-empty">
       {{ t('orchestrationPanel.empty') }}
     </div>
+
+    <article
+      v-else-if="hasCachedDiagnosticsFallback"
+      class="orchestration-block"
+      data-testid="trajectory-diagnostics-block"
+    >
+      <div class="orchestration-block-head orchestration-block-head--between orchestration-block-head--wrap">
+        <div class="orchestration-block-title">
+          <Activity :size="15" />
+          <strong>{{ t('trajectoryEval.panel.title') }}</strong>
+        </div>
+        <div class="diagnostics-head-actions">
+          <button
+            type="button"
+            class="diagnostics-action-btn ui-pressable"
+            data-testid="diagnostics-diagnose-btn"
+            @click="handleDiagnoseRun()"
+          >
+            <Sparkles :size="12" aria-hidden="true" />
+            <span>{{ t('trajectoryEval.actions.diagnoseInComposer') }}</span>
+          </button>
+          <button
+            type="button"
+            class="diagnostics-action-btn ui-pressable"
+            data-testid="diagnostics-export-html-btn"
+            @click="handleExportDiagnosticHtml"
+          >
+            <Download :size="12" aria-hidden="true" />
+            <span>{{ t('trajectoryEval.panel.exportHtml') }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="diagnostics-stale-banner" role="status" data-testid="diagnostics-offline-banner">
+        <Database :size="13" aria-hidden="true" />
+        <span>{{ t('trajectoryEval.offline.staleBanner') }}</span>
+      </div>
+
+      <div
+        v-if="runDiagnostics?.executive_findings?.length"
+        class="diagnostics-findings-strip"
+        data-testid="diagnostics-executive-findings"
+      >
+        <div
+          v-for="finding in runDiagnostics.executive_findings.slice(0, 3)"
+          :key="finding.code"
+          class="diagnostics-finding-row"
+        >
+          <span class="diagnostics-finding-code mono">{{ finding.code }}</span>
+          <span>{{ finding.summary }}</span>
+        </div>
+      </div>
+
+      <div
+        class="orchestration-tabs"
+        role="tablist"
+        :aria-label="t('trajectoryEval.panel.tabsLabel')"
+        data-testid="diagnostics-subtabs"
+      >
+        <button
+          type="button"
+          role="tab"
+          class="orchestration-tab-btn"
+          :class="{ active: diagnosticsTab === 'tree' }"
+          :aria-selected="diagnosticsTab === 'tree'"
+          data-testid="diagnostics-tab-tree"
+          @click="diagnosticsTab = 'tree'"
+        >
+          <span>{{ t('trajectoryEval.panel.tabTree') }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="orchestration-tab-btn"
+          :class="{ active: diagnosticsTab === 'treemap' }"
+          :aria-selected="diagnosticsTab === 'treemap'"
+          data-testid="diagnostics-tab-treemap"
+          @click="diagnosticsTab = 'treemap'"
+        >
+          <span>{{ t('trajectoryEval.panel.tabTreemap') }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="orchestration-tab-btn"
+          :class="{ active: diagnosticsTab === 'overlap' }"
+          :aria-selected="diagnosticsTab === 'overlap'"
+          data-testid="diagnostics-tab-overlap"
+          @click="diagnosticsTab = 'overlap'"
+        >
+          <span>{{ t('trajectoryEval.panel.tabOverlap') }}</span>
+        </button>
+      </div>
+
+      <div v-if="diagnosticsTab === 'tree'" class="diagnostics-pane">
+        <TrajectoryTreePanel
+          :trajectory="trajectorySummary"
+          :selected-node-id="selectedTrajectoryNode?.id ?? null"
+          compact
+          @select-node="selectedTrajectoryNode = $event"
+          @diagnose-node="handleDiagnoseRun({ node: $event })"
+        />
+        <ContextWindowBucketChart
+          :report="contextWindowBuckets"
+          :diagnostics="activeCoreDiagnostics"
+          stale
+          compact
+        />
+      </div>
+
+      <div v-else-if="diagnosticsTab === 'treemap'" class="diagnostics-pane">
+        <ContextTreemap
+          :context-packs="filteredContextPacks"
+          :diagnostics="activeCoreDiagnostics"
+          stale
+          compact
+          @select-pack="selectedTreemapPackId = $event"
+          @select-segment="selectedTreemapSegment = $event"
+          @diagnose-segment="(segment, model) => handleDiagnoseRun({ segment, treemap: model })"
+        />
+      </div>
+
+      <div v-else class="diagnostics-pane">
+        <ContextOverlapPanel
+          :run-id="effectiveRunId"
+          auto-load-mode="all"
+          :can-access-backend="canAccessBackend"
+          :tools="tools ?? toolCatalog"
+          compact
+          @audit-updated="onOverlapAuditUpdated"
+          @diagnose-overlap="(audit, pair) => handleDiagnoseRun({ overlap: audit, pair })"
+        />
+      </div>
+    </article>
 
     <template v-else-if="snapshot">
       <article class="orchestration-block" data-testid="runtime-topology-block">
@@ -1017,7 +1272,7 @@ function handleExportDiagnosticHtml() {
           <div class="diagnostics-head-actions">
             <button
               type="button"
-              class="diagnostics-action-btn"
+              class="diagnostics-action-btn ui-pressable"
               data-testid="diagnostics-diagnose-btn"
               @click="handleDiagnoseRun()"
             >
@@ -1026,13 +1281,38 @@ function handleExportDiagnosticHtml() {
             </button>
             <button
               type="button"
-              class="diagnostics-action-btn"
+              class="diagnostics-action-btn ui-pressable"
               data-testid="diagnostics-export-html-btn"
               @click="handleExportDiagnosticHtml"
             >
               <Download :size="12" aria-hidden="true" />
               <span>{{ t('trajectoryEval.panel.exportHtml') }}</span>
             </button>
+          </div>
+        </div>
+
+        <div
+          v-if="diagnosticsStale"
+          class="diagnostics-stale-banner"
+          role="status"
+          data-testid="diagnostics-offline-banner"
+        >
+          <Database :size="13" aria-hidden="true" />
+          <span>{{ t('trajectoryEval.offline.staleBanner') }}</span>
+        </div>
+
+        <div
+          v-if="activeCoreDiagnostics?.executive_findings?.length"
+          class="diagnostics-findings-strip"
+          data-testid="diagnostics-executive-findings"
+        >
+          <div
+            v-for="finding in activeCoreDiagnostics.executive_findings.slice(0, 3)"
+            :key="finding.code"
+            class="diagnostics-finding-row"
+          >
+            <span class="diagnostics-finding-code mono">{{ finding.code }}</span>
+            <span>{{ finding.summary }}</span>
           </div>
         </div>
 
@@ -1087,6 +1367,8 @@ function handleExportDiagnosticHtml() {
           />
           <ContextWindowBucketChart
             :report="contextWindowBuckets"
+            :diagnostics="activeCoreDiagnostics"
+            :stale="diagnosticsStale"
             compact
           />
         </div>
@@ -1094,7 +1376,10 @@ function handleExportDiagnosticHtml() {
         <div v-else-if="diagnosticsTab === 'treemap'" class="diagnostics-pane">
           <ContextTreemap
             :context-packs="filteredContextPacks"
+            :diagnostics="activeCoreDiagnostics"
+            :stale="diagnosticsStale"
             compact
+            @select-pack="selectedTreemapPackId = $event"
             @select-segment="selectedTreemapSegment = $event"
             @diagnose-segment="(segment, model) => handleDiagnoseRun({ segment, treemap: model })"
           />
@@ -1102,10 +1387,12 @@ function handleExportDiagnosticHtml() {
 
         <div v-else class="diagnostics-pane">
           <ContextOverlapPanel
-            :sources="diagnosticsOverlapSources"
-            :auto-load-mode="diagnosticsOverlapSources ? 'none' : 'all'"
+            :run-id="effectiveRunId"
+            auto-load-mode="all"
+            :can-access-backend="canAccessBackend"
             :tools="tools ?? toolCatalog"
             compact
+            @audit-updated="onOverlapAuditUpdated"
             @diagnose-overlap="(audit, pair) => handleDiagnoseRun({ overlap: audit, pair })"
           />
         </div>
@@ -1779,5 +2066,48 @@ function handleExportDiagnosticHtml() {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.diagnostics-stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px dashed var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.diagnostics-findings-strip {
+  display: grid;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+}
+
+.diagnostics-finding-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.diagnostics-finding-code {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  color: var(--text-primary);
 }
 </style>

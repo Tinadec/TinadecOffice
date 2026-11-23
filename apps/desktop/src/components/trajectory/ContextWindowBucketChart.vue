@@ -1,22 +1,40 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Activity, AlertTriangle } from '@lucide/vue'
+import { Activity, AlertTriangle, Database } from '@lucide/vue'
+import type { RunContextDiagnosticsDto } from '@/api'
 import {
+  fromCoreWindowBucketsDto,
   type ContextWindowBucket,
   type ContextWindowBucketReport,
 } from '@/lib/trajectoryBuilder'
 
 const props = withDefaults(defineProps<{
   report: ContextWindowBucketReport
+  diagnostics?: RunContextDiagnosticsDto | null
+  stale?: boolean
   compact?: boolean
 }>(), {
+  diagnostics: null,
+  stale: false,
   compact: false,
 })
 
 const { t } = useI18n()
 
 const activeIndex = ref<number | null>(null)
+
+const effectiveReport = computed<ContextWindowBucketReport>(() => {
+  if (props.diagnostics?.window_buckets) {
+    const core = fromCoreWindowBucketsDto(props.diagnostics.window_buckets)
+    if (core) return core
+  }
+  return props.report
+})
+
+const degradationReasonCodes = computed<string[]>(
+  () => props.diagnostics?.window_buckets?.degradation_reason_codes ?? [],
+)
 
 const SVG_W = 400
 const SVG_H = 128
@@ -30,18 +48,18 @@ const SLOT_W = PLOT_W / 20
 
 const maxLatencyMs = computed(() => {
   let max = 0
-  for (const b of props.report.buckets) {
+  for (const b of effectiveReport.value.buckets) {
     if (b.avgLatencyMs > max) max = b.avgLatencyMs
   }
   return max > 0 ? max : 1000
 })
 
 const plotted = computed(() =>
-  props.report.buckets.map((bucket) => {
+  effectiveReport.value.buckets.map((bucket) => {
     const x = PAD_L + bucket.index * SLOT_W
     const barW = Math.max(4, SLOT_W - 3)
     const errH = bucket.sampleCount > 0 ? Math.max(2, Math.round(bucket.errorRate * PLOT_H)) : 0
-    const sampleH = bucket.sampleCount > 0 ? Math.max(2, Math.min(PLOT_H, Math.round((bucket.sampleCount / Math.max(1, props.report.totalSamples)) * PLOT_H))) : 0
+    const sampleH = bucket.sampleCount > 0 ? Math.max(2, Math.min(PLOT_H, Math.round((bucket.sampleCount / Math.max(1, effectiveReport.value.totalSamples)) * PLOT_H))) : 0
     const latY = PAD_T + PLOT_H - Math.round((bucket.avgLatencyMs / maxLatencyMs.value) * PLOT_H)
     return {
       bucket,
@@ -66,11 +84,11 @@ const latencyPolyline = computed(() =>
 
 const activeBucket = computed<ContextWindowBucket | null>(() => {
   if (activeIndex.value !== null) {
-    return props.report.buckets[activeIndex.value] ?? null
+    return effectiveReport.value.buckets[activeIndex.value] ?? null
   }
   // Default highlight: highest-occupancy populated bucket
-  for (let i = props.report.buckets.length - 1; i >= 0; i--) {
-    if (props.report.buckets[i]!.sampleCount > 0) return props.report.buckets[i]!
+  for (let i = effectiveReport.value.buckets.length - 1; i >= 0; i--) {
+    if (effectiveReport.value.buckets[i]!.sampleCount > 0) return effectiveReport.value.buckets[i]!
   }
   return null
 })
@@ -88,18 +106,23 @@ function formatPct(rate: number): string {
         <strong>{{ t('trajectoryEval.buckets.title') }}</strong>
       </div>
       <div class="bucket-kpis">
+        <span v-if="stale" class="bucket-pill is-stale mono" data-testid="bucket-cached-badge">
+          <Database :size="11" aria-hidden="true" />
+          <span>{{ t('trajectoryEval.offline.cachedBadge') }}</span>
+        </span>
         <span class="bucket-pill mono" data-testid="bucket-peak">
-          {{ t('trajectoryEval.buckets.peak', { pct: report.peakOccupancyPct }) }}
+          {{ t('trajectoryEval.buckets.peak', { pct: effectiveReport.peakOccupancyPct }) }}
         </span>
         <span class="bucket-pill mono">
-          {{ t('trajectoryEval.buckets.errorRate', { pct: formatPct(report.overallErrorRate) }) }}
+          {{ t('trajectoryEval.buckets.errorRate', { pct: formatPct(effectiveReport.overallErrorRate) }) }}
         </span>
         <span class="bucket-pill mono">
-          {{ t('trajectoryEval.buckets.avgLatency', { ms: report.avgLatencyMs }) }}
+          {{ t('trajectoryEval.buckets.avgLatency', { ms: effectiveReport.avgLatencyMs }) }}
         </span>
         <span
-          v-if="report.degradationDetected"
+          v-if="effectiveReport.degradationDetected"
           class="bucket-pill is-warn"
+          :title="degradationReasonCodes.length ? degradationReasonCodes.join(', ') : undefined"
           data-testid="bucket-degradation-badge"
         >
           <AlertTriangle :size="11" aria-hidden="true" />
@@ -108,7 +131,7 @@ function formatPct(rate: number): string {
       </div>
     </header>
 
-    <div v-if="report.totalSamples === 0" class="bucket-empty" data-testid="bucket-empty">
+    <div v-if="effectiveReport.totalSamples === 0" class="bucket-empty" data-testid="bucket-empty">
       {{ t('trajectoryEval.buckets.empty') }}
     </div>
 
@@ -261,6 +284,12 @@ function formatPct(rate: number): string {
   background: var(--bg-status-warn);
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
+}
+
+.bucket-pill.is-stale {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-style: dashed;
 }
 
 .bucket-empty {

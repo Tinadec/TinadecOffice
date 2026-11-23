@@ -1,11 +1,17 @@
 /**
- * 64-character rolling-hash Winnowing context overlap auditor.
+ * 64-character rolling-hash Winnowing context overlap adapter & offline fallback.
  *
- * Implements Schleimer, Wilkerson & Aiken (2003) Winnowing fingerprinting over
- * whitespace-normalized text while preserving exact 1-based original line ranges
- * (`L1 <-> L2`), deduplicated shared character counts, token waste estimates,
- * and source-aware remediation suggestions.
+ * Primary runtime truth lives in `TinadecCore.Context.ContextOverlapAuditor`
+ * (`POST /api/v1/context/audit-overlap`), mapped via `fromCoreOverlapAuditDto`.
+ * Local `auditContextOverlap` is retained strictly for pre-supplied/sandbox
+ * sources and resilient offline fallback when Core is unreachable.
  */
+
+import type {
+  ContextLineRangeDto,
+  ContextOverlapAuditDto,
+  OverlapPassageMatchDto,
+} from '@/api'
 
 export type ContextSourceKind =
   | 'system_prompt'
@@ -668,5 +674,123 @@ export function auditContextOverlap(
     pairs,
     matches: allMatches,
     sources: sourceStats,
+  }
+}
+
+const VALID_SOURCE_KINDS = new Set<ContextSourceKind>([
+  'system_prompt',
+  'pipeline_template',
+  'workspace_instructions',
+  'tool_schema',
+  'skill',
+  'prompt_fragment',
+  'other',
+])
+
+const VALID_REMEDIATION_CODES = new Set<OverlapRemediationCode>([
+  'move_to_skill_references',
+  'dedupe_workspace_instructions',
+  'dedupe_tool_schema_prose',
+  'consolidate_shared_skill',
+  'extract_shared_fragment',
+])
+
+function normalizeSourceKind(raw?: string | null): ContextSourceKind {
+  return raw && VALID_SOURCE_KINDS.has(raw as ContextSourceKind)
+    ? (raw as ContextSourceKind)
+    : 'other'
+}
+
+function normalizeRemediationCode(raw?: string | null): OverlapRemediationCode {
+  return raw && VALID_REMEDIATION_CODES.has(raw as OverlapRemediationCode)
+    ? (raw as OverlapRemediationCode)
+    : 'extract_shared_fragment'
+}
+
+function normalizeLineRange(raw?: ContextLineRangeDto | null): LineRange {
+  if (!raw) return { start: 1, end: 1 }
+  const start = Math.max(1, Math.floor(raw.start ?? raw.start_line ?? 1))
+  const end = Math.max(start, Math.floor(raw.end ?? raw.end_line ?? start))
+  return { start, end }
+}
+
+function mapCorePassageMatch(m: OverlapPassageMatchDto): OverlapPassageMatch {
+  const kindA = normalizeSourceKind(m.source_a_kind)
+  const kindB = normalizeSourceKind(m.source_b_kind)
+  const fallbackRem = resolveOverlapRemediation(kindA, kindB)
+  return {
+    id: m.id,
+    sourceAId: m.source_a_id,
+    sourceALabel: m.source_a_label,
+    sourceAKind: kindA,
+    sourceBId: m.source_b_id,
+    sourceBLabel: m.source_b_label,
+    sourceBKind: kindB,
+    sourceALines: normalizeLineRange(m.source_a_lines),
+    sourceBLines: normalizeLineRange(m.source_b_lines),
+    sharedChars: Math.max(0, m.shared_chars ?? 0),
+    estimatedDuplicateTokens: Math.max(0, m.estimated_duplicate_tokens ?? 0),
+    excerpt: m.excerpt ?? '',
+    remediationCode: m.remediation_code ? normalizeRemediationCode(m.remediation_code) : fallbackRem.code,
+    remediationSummary: m.remediation_summary || fallbackRem.summary,
+  }
+}
+
+/**
+ * Convert Core's authoritative `ContextOverlapAuditDto` (`POST /api/v1/context/audit-overlap`)
+ * into the normalized UI `ContextOverlapAuditResult` without re-running Winnowing in the browser.
+ */
+export function fromCoreOverlapAuditDto(dto: ContextOverlapAuditDto): ContextOverlapAuditResult {
+  const pairs: ContextOverlapPairSummary[] = (dto.pairs ?? []).map((p) => {
+    const kindA = normalizeSourceKind(p.source_a_kind)
+    const kindB = normalizeSourceKind(p.source_b_kind)
+    const fallbackRem = resolveOverlapRemediation(kindA, kindB)
+    const mappedMatches = (p.matches ?? []).map(mapCorePassageMatch)
+    return {
+      id: p.id,
+      sourceAId: p.source_a_id,
+      sourceALabel: p.source_a_label,
+      sourceAKind: kindA,
+      sourceBId: p.source_b_id,
+      sourceBLabel: p.source_b_label,
+      sourceBKind: kindB,
+      sharedChars: Math.max(0, p.shared_chars ?? 0),
+      overlapPercent: p.overlap_percent ?? 0,
+      overlapPercentA: p.overlap_percent_a ?? 0,
+      overlapPercentB: p.overlap_percent_b ?? 0,
+      estimatedDuplicateTokens: Math.max(0, p.estimated_duplicate_tokens ?? 0),
+      matchCount: p.match_count ?? mappedMatches.length,
+      matches: mappedMatches,
+      remediationCode: p.remediation_code ? normalizeRemediationCode(p.remediation_code) : fallbackRem.code,
+      remediationSummary: p.remediation_summary || fallbackRem.summary,
+    }
+  })
+
+  const matches: OverlapPassageMatch[] = Array.isArray(dto.matches)
+    ? dto.matches.map(mapCorePassageMatch)
+    : pairs.flatMap((p) => p.matches)
+
+  const sources: ContextOverlapSourceStats[] = (dto.sources ?? []).map((s) => ({
+    id: s.id,
+    label: s.label,
+    kind: normalizeSourceKind(s.kind),
+    path: s.path ?? null,
+    charCount: Math.max(0, s.char_count ?? 0),
+    lineCount: Math.max(0, s.line_count ?? 0),
+    estimatedTokens: Math.max(0, s.estimated_tokens ?? 0),
+    duplicatedChars: Math.max(0, s.duplicated_chars ?? 0),
+    overlapPercent: s.overlap_percent ?? 0,
+  }))
+
+  return {
+    kGramSize: dto.k_gram_size ?? DEFAULT_K,
+    windowSize: dto.window_size ?? DEFAULT_W,
+    sourceCount: dto.source_count ?? sources.length,
+    totalEstimatedTokens: Math.max(0, dto.total_estimated_tokens ?? 0),
+    duplicateEstimatedTokens: Math.max(0, dto.duplicate_estimated_tokens ?? 0),
+    overallOverlapPercent: dto.overall_overlap_percent ?? 0,
+    pairs,
+    matches,
+    sources,
   }
 }

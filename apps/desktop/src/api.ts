@@ -2088,6 +2088,415 @@ export interface ContextPackDto {
   created_at: string;
 }
 
+export interface ContextLineRangeDto {
+  start: number;
+  end: number;
+  start_line?: number;
+  end_line?: number;
+}
+
+export interface ContextAuditExtraSourceDto {
+  id: string;
+  label: string;
+  kind: string;
+  content: string;
+  path?: string | null;
+  meta?: string | null;
+}
+
+export interface ContextOverlapAuditRequestDto {
+  project_id?: string | null;
+  mode_id?: string | null;
+  agent_id?: string | null;
+  run_id?: string | null;
+  workspace_root?: string | null;
+  include_prompts?: boolean | null;
+  include_skills?: boolean | null;
+  include_tools?: boolean | null;
+  k_gram_size?: number | null;
+  window_size?: number | null;
+  max_excerpt_length?: number | null;
+  max_matches_per_pair?: number | null;
+  extra_sources?: ContextAuditExtraSourceDto[] | null;
+}
+
+export interface OverlapPassageMatchDto {
+  id: string;
+  source_a_id: string;
+  source_a_label: string;
+  source_a_kind: string;
+  source_b_id: string;
+  source_b_label: string;
+  source_b_kind: string;
+  source_a_lines: ContextLineRangeDto;
+  source_b_lines: ContextLineRangeDto;
+  line_range_pair?: string;
+  shared_chars: number;
+  estimated_duplicate_tokens: number;
+  excerpt: string;
+  remediation_code: string;
+  remediation_summary: string;
+}
+
+export interface ContextOverlapPairSummaryDto {
+  id: string;
+  source_a_id: string;
+  source_a_label: string;
+  source_a_kind: string;
+  source_b_id: string;
+  source_b_label: string;
+  source_b_kind: string;
+  shared_chars: number;
+  overlap_percent: number;
+  overlap_percent_a: number;
+  overlap_percent_b: number;
+  estimated_duplicate_tokens: number;
+  match_count: number;
+  matches: OverlapPassageMatchDto[];
+  remediation_code: string;
+  remediation_summary: string;
+}
+
+export interface ContextOverlapSourceStatsDto {
+  id: string;
+  label: string;
+  kind: string;
+  path?: string | null;
+  char_count: number;
+  line_count: number;
+  estimated_tokens: number;
+  duplicated_chars: number;
+  overlap_percent: number;
+}
+
+export interface ContextOverlapAuditDto {
+  scope?: 'run_snapshot' | 'static_config' | 'manual_sources' | string | null;
+  project_id?: string | null;
+  mode_id?: string | null;
+  agent_id?: string | null;
+  run_id?: string | null;
+  k_gram_size: number;
+  window_size: number;
+  source_count: number;
+  total_estimated_tokens: number;
+  duplicate_estimated_tokens: number;
+  overall_overlap_percent: number;
+  pairs: ContextOverlapPairSummaryDto[];
+  matches?: OverlapPassageMatchDto[];
+  sources: ContextOverlapSourceStatsDto[];
+  generated_at?: string | null;
+}
+
+export interface ContextWindowBucketDto {
+  index: number;
+  range_start: number;
+  range_end: number;
+  label: string;
+  sample_count: number;
+  error_count: number;
+  error_rate: number;
+  avg_latency_ms: number;
+  max_latency_ms: number;
+  avg_occupancy_pct: number;
+}
+
+export interface ContextWindowSamplePointDto {
+  id: string;
+  source_kind: 'invocation' | 'tool' | 'context_pack' | string;
+  occupancy_pct: number;
+  bucket_index: number;
+  is_error: boolean;
+  latency_ms: number;
+  tokens_used: number;
+  token_budget: number;
+  timestamp: string;
+}
+
+export interface ContextWindowBucketReportDto {
+  buckets: ContextWindowBucketDto[];
+  samples: ContextWindowSamplePointDto[];
+  total_samples: number;
+  total_errors: number;
+  overall_error_rate: number;
+  avg_latency_ms: number;
+  peak_occupancy_pct: number;
+  low_occupancy_error_rate: number;
+  high_occupancy_error_rate: number;
+  low_occupancy_avg_latency_ms: number;
+  high_occupancy_avg_latency_ms: number;
+  degradation_detected: boolean;
+  degradation_reason_codes?: string[];
+}
+
+export interface ContextEvidenceItemDto {
+  id: string;
+  source: string;
+  tokens: number;
+  bytes_estimate: number;
+  dropped: boolean;
+}
+
+export interface ContextCategoryNodeDto {
+  id: string;
+  label: string;
+  category: string;
+  source_key?: string | null;
+  depth: number;
+  retained_tokens: number;
+  dropped_tokens: number;
+  retained_bytes_estimate: number;
+  dropped_bytes_estimate: number;
+  share_percent: number;
+  budget_share_percent: number;
+  item_count: number;
+  dropped_item_count: number;
+  items: ContextEvidenceItemDto[];
+  children: ContextCategoryNodeDto[];
+}
+
+export interface CompactionReconciliationDto {
+  pack_id: string;
+  lane_key?: string | null;
+  created_at: string;
+  token_budget: number;
+  retained_tokens: number;
+  dropped_tokens: number;
+  pre_compaction_tokens: number;
+  retained_bytes_estimate: number;
+  dropped_bytes_estimate: number;
+  utilization_percent: number;
+  retained_ratio_percent: number;
+  dropped_ratio_percent: number;
+  has_pricing_data: boolean;
+  has_compaction_digest: boolean;
+  previous_pack_retained_delta?: number | null;
+  previous_pack_dropped_delta?: number | null;
+}
+
+export interface ContextCompactionDiagnosticsDto {
+  selected_pack_id?: string | null;
+  pack_count: number;
+  total_dropped_tokens_across_packs: number;
+  critical_dropped_sources: string[];
+  root: ContextCategoryNodeDto;
+  reconciliation: CompactionReconciliationDto;
+  packs: CompactionReconciliationDto[];
+}
+
+export interface RunGovernanceSignalDto {
+  code: string;
+  severity: 'danger' | 'warn' | 'neutral' | string;
+  count: number;
+  max_retry_streak?: number | null;
+  detail?: string | null;
+  subject_ids?: string[];
+}
+
+export interface RunRetryStreakDto {
+  execution_id: string;
+  tool_id: string;
+  scope_key: string;
+  streak_count: number;
+  arguments_summary?: string | null;
+}
+
+export interface RunFileEditDto {
+  execution_id: string;
+  tool_id: string;
+  file_path?: string | null;
+  added: number;
+  removed: number;
+}
+
+export interface DiagnosticCodeFrameLineDto {
+  line_number?: number | null;
+  text: string;
+  highlight?: boolean;
+}
+
+export interface DiagnosticCodeFrameDto {
+  id: string;
+  source_id?: string | null;
+  execution_id?: string | null;
+  title: string;
+  file_path?: string | null;
+  line?: number | null;
+  column?: number | null;
+  command?: string | null;
+  cwd?: string | null;
+  error_category?: string | null;
+  lines: DiagnosticCodeFrameLineDto[];
+}
+
+export interface RunGovernanceDiagnosticsDto {
+  signal_counts: Record<string, number>;
+  active_signals: string[];
+  signals: RunGovernanceSignalDto[];
+  max_same_args_retry_streak: number;
+  retry_streaks: RunRetryStreakDto[];
+  total_tool_calls: number;
+  total_model_calls: number;
+  error_count: number;
+  total_added_lines: number;
+  total_removed_lines: number;
+  file_edits: RunFileEditDto[];
+  error_frames: DiagnosticCodeFrameDto[];
+}
+
+export interface ExecutiveFindingDto {
+  code: string;
+  severity: 'danger' | 'warn' | 'info' | string;
+  summary: string;
+  evidence_refs: string[];
+  suggested_action?: string | null;
+}
+
+export interface RunContextDiagnosticsDto {
+  run_id: string;
+  session_id?: string | null;
+  status?: string;
+  mode_version_id?: string | null;
+  generated_at: string;
+  window_buckets: ContextWindowBucketReportDto;
+  compaction: ContextCompactionDiagnosticsDto;
+  governance: RunGovernanceDiagnosticsDto;
+  executive_findings: ExecutiveFindingDto[];
+}
+
+export interface ContextPolicyPatchDto {
+  context_strategy?: 'direct' | 'managed' | 'deep_curator' | string | null;
+  compaction_trigger_ratio?: number | null;
+  recent_message_limit?: number | null;
+  recall_fidelity?: 'summary_only' | 'balanced' | 'verbatim_first' | string | null;
+  allow_cross_session_recall?: boolean | null;
+  evolution_mode?: 'auto_evolve' | 'candidate_only' | string | null;
+  core_markdown_max_tokens?: number | null;
+}
+
+export interface ContextDedupProposalEvidenceDto {
+  source_a_id: string;
+  source_a_label: string;
+  source_a_kind: string;
+  source_a_path?: string | null;
+  source_a_start_line: number;
+  source_a_end_line: number;
+  source_b_id: string;
+  source_b_label: string;
+  source_b_kind: string;
+  source_b_path?: string | null;
+  source_b_start_line: number;
+  source_b_end_line: number;
+  line_range_label: string;
+  overlap_chars: number;
+  estimated_wasted_tokens: number;
+  remediation_code: string;
+  excerpt: string;
+  suggested_remediation: string;
+}
+
+export interface ContextEvolutionMetricsComparisonDto {
+  window_run_count: number;
+  degraded_run_count: number;
+  degradation_rate: number;
+  dropped_critical_run_count: number;
+  avg_peak_occupancy_pct: number;
+  high_occupancy_error_rate: number;
+  low_occupancy_error_rate: number;
+  high_occupancy_avg_latency_ms: number;
+  low_occupancy_avg_latency_ms: number;
+  dropped_sources: string[];
+  before_values: Record<string, string>;
+  after_values: Record<string, string>;
+  expected_benefit: string;
+}
+
+export interface ContextEvolutionProposalDto {
+  id: string;
+  kind: 'context_policy_proposal' | 'prompt_dedup_proposal' | string;
+  status: 'pending' | 'applied' | 'rejected' | string;
+  target_scope: 'global' | 'mode' | 'workspace' | string;
+  title: string;
+  summary: string;
+  rationale: string;
+  confidence: number;
+  risk_level: 'low' | 'medium' | 'high' | string;
+  requires_human_approval: boolean;
+  source_run_id?: string | null;
+  evidence_run_ids: string[];
+  project_id?: string | null;
+  target_mode_id?: string | null;
+  target_mode_slug?: string | null;
+  target_mode_name?: string | null;
+  remediation_code?: string | null;
+  policy_patch?: ContextPolicyPatchDto | null;
+  dedup_evidence?: ContextDedupProposalEvidenceDto | null;
+  metrics_comparison?: ContextEvolutionMetricsComparisonDto | null;
+  linked_agent_candidate_id?: string | null;
+  eval_run_id?: string | null;
+  eval_gate_status?: string | null;
+  decision_reason?: string | null;
+  applied_toml_path?: string | null;
+  applied_toml_content_hash?: string | null;
+  applied_mode_id?: string | null;
+  applied_mode_version?: number | null;
+  promoted_agent_id?: string | null;
+  composer_prompt?: string | null;
+  created_at: string;
+  updated_at: string;
+  decided_at?: string | null;
+}
+
+export interface ContextEvolutionProposalListDto {
+  items: ContextEvolutionProposalDto[];
+  total_count: number;
+  pending_count: number;
+  auto_tune_low_risk_context_policy: boolean;
+}
+
+export interface ContextEvolutionProposalQuery {
+  status?: string;
+  kind?: string;
+  target_scope?: string;
+  project_id?: string;
+  mode_id?: string;
+  limit?: number;
+}
+
+export interface ApplyContextEvolutionProposalInput {
+  reason?: string | null;
+  eval_run_id?: string | null;
+  require_eval_gate?: boolean | null;
+  expected_content_hash?: string | null;
+}
+
+export interface ContextEvolutionApplyResultDto {
+  proposal: ContextEvolutionProposalDto;
+  applied: boolean;
+  summary: string;
+  updated_toml_preview?: string | null;
+  applied_mode_id?: string | null;
+  applied_mode_version?: number | null;
+  promoted_agent_id?: string | null;
+  eval_run_id?: string | null;
+}
+
+export interface ContextEvolutionEvaluationDto {
+  proposal_id: string;
+  proposal: ContextEvolutionProposalDto;
+  eval_runs: Array<Record<string, unknown>>;
+  evidence_diagnostics: Array<{
+    run_id: string;
+    status: string;
+    peak_occupancy_pct: number;
+    degradation_detected: boolean;
+    degradation_reason_codes: string[];
+    critical_dropped_sources: string[];
+    total_dropped_tokens: number;
+    active_signals: string[];
+    max_same_args_retry_streak: number;
+  }>;
+}
+
 /**
  * One entry of the memory review queue, as Core's `ToMemoryCandidate` projects it.
  *
@@ -4052,6 +4461,89 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ reason })
   }),
+
+  // --- Context Diagnostics & Context Self-Evolution (P1 / P2) ---
+  getRunContextDiagnostics: (
+    runId: string,
+    params: { context_window_tokens?: number; selected_pack_id?: string | null } = {},
+    signal?: AbortSignal,
+  ) => {
+    const search = new URLSearchParams();
+    if (params.context_window_tokens !== undefined) search.set('context_window_tokens', String(params.context_window_tokens));
+    if (params.selected_pack_id) search.set('selected_pack_id', params.selected_pack_id);
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return request<RunContextDiagnosticsDto>(`/api/v1/runs/${encodeURIComponent(runId)}/context-diagnostics${suffix}`, {
+      signal,
+      cache: 'no-store',
+    });
+  },
+  auditContextOverlap: (body: ContextOverlapAuditRequestDto, signal?: AbortSignal) =>
+    request<ContextOverlapAuditDto>('/api/v1/context/audit-overlap', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+  listContextEvolutionProposals: async (
+    query: ContextEvolutionProposalQuery = {},
+    signal?: AbortSignal,
+  ): Promise<ContextEvolutionProposalListDto> => {
+    const search = new URLSearchParams();
+    if (query.status) search.set('status', query.status);
+    if (query.kind) search.set('kind', query.kind);
+    if (query.target_scope) search.set('target_scope', query.target_scope);
+    if (query.project_id) search.set('project_id', query.project_id);
+    if (query.mode_id) search.set('mode_id', query.mode_id);
+    if (query.limit !== undefined) search.set('limit', String(query.limit));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const raw = await request<ContextEvolutionProposalListDto | ContextEvolutionProposalDto[]>(
+      `/api/v1/context-evolution/proposals${suffix}`,
+      { signal, cache: 'no-store' },
+    );
+    if (Array.isArray(raw)) {
+      return {
+        items: raw,
+        total_count: raw.length,
+        pending_count: raw.filter((item) => item.status === 'pending').length,
+        auto_tune_low_risk_context_policy: false,
+      };
+    }
+    const items = Array.isArray(raw?.items) ? raw.items : [];
+    return {
+      items,
+      total_count: typeof raw?.total_count === 'number' ? raw.total_count : items.length,
+      pending_count:
+        typeof raw?.pending_count === 'number'
+          ? raw.pending_count
+          : items.filter((item) => item.status === 'pending').length,
+      auto_tune_low_risk_context_policy: Boolean(raw?.auto_tune_low_risk_context_policy),
+    };
+  },
+  getContextEvolutionProposal: (proposalId: string, signal?: AbortSignal) =>
+    request<ContextEvolutionProposalDto>(
+      `/api/v1/context-evolution/proposals/${encodeURIComponent(proposalId)}`,
+      { signal, cache: 'no-store' },
+    ),
+  getContextEvolutionProposalEvaluation: (proposalId: string, signal?: AbortSignal) =>
+    request<ContextEvolutionEvaluationDto>(
+      `/api/v1/context-evolution/proposals/${encodeURIComponent(proposalId)}/evaluation`,
+      { signal, cache: 'no-store' },
+    ),
+  applyContextEvolutionProposal: (proposalId: string, input: ApplyContextEvolutionProposalInput = {}) =>
+    request<ContextEvolutionApplyResultDto>(
+      `/api/v1/context-evolution/proposals/${encodeURIComponent(proposalId)}/apply`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ),
+  rejectContextEvolutionProposal: (proposalId: string, reason?: string | null) =>
+    request<ContextEvolutionProposalDto>(
+      `/api/v1/context-evolution/proposals/${encodeURIComponent(proposalId)}/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason ?? null }),
+      },
+    ),
 
   // --- Prompt Engineering: Versioning + A/B Testing + Effectiveness ---
   listPromptFragmentVersions: (fragmentId: string) => request<PromptFragmentVersionDto[]>(`/api/v1/prompt-fragments/${encodeURIComponent(fragmentId)}/versions`),

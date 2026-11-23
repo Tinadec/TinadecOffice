@@ -6,6 +6,10 @@
  * Composer (`homeController.updateDraft`) and never creates standalone debug routes.
  */
 
+import type {
+  ContextEvolutionProposalDto,
+  RunContextDiagnosticsDto,
+} from '@/api'
 import {
   formatLineRangePair,
   type ContextOverlapAuditResult,
@@ -18,6 +22,11 @@ import type {
   TrajectorySummary,
 } from '@/lib/trajectoryBuilder'
 
+export interface StaleSnapshotNotice {
+  cachedAt: string
+  reason?: string | null
+}
+
 export interface DiagnosticDraftInput {
   runId?: string | null
   sessionId?: string | null
@@ -28,6 +37,9 @@ export interface DiagnosticDraftInput {
   buckets?: ContextWindowBucketReport | null
   overlap?: ContextOverlapAuditResult | null
   selectedOverlapPair?: ContextOverlapPairSummary | null
+  diagnostics?: RunContextDiagnosticsDto | null
+  proposal?: ContextEvolutionProposalDto | null
+  staleSnapshot?: StaleSnapshotNotice | null
 }
 
 export interface DiagnoseInComposerOptions {
@@ -53,6 +65,8 @@ export interface OfflineReportInput {
   buckets?: ContextWindowBucketReport | null
   treemap?: ContextTreemapModel | null
   overlap?: ContextOverlapAuditResult | null
+  diagnostics?: RunContextDiagnosticsDto | null
+  staleSnapshot?: StaleSnapshotNotice | null
 }
 
 export interface ExportOfflineHtmlOptions {
@@ -85,8 +99,23 @@ export function escapeHtml(value: unknown): string {
  * evidence-based root-cause analysis.
  */
 export function buildDiagnosticDraft(input: DiagnosticDraftInput): string {
-  const runId = input.runId ?? input.trajectory?.runId ?? null
-  const sessionId = input.sessionId ?? input.trajectory?.sessionId ?? null
+  if (input.proposal?.composer_prompt && !input.selectedNode && !input.selectedTreemapSegment && !input.selectedOverlapPair) {
+    return input.proposal.composer_prompt
+  }
+
+  const proposalRunIds = input.proposal?.evidence_run_ids ?? []
+  const runId =
+    input.runId
+    ?? input.diagnostics?.run_id
+    ?? input.trajectory?.runId
+    ?? input.proposal?.source_run_id
+    ?? proposalRunIds[0]
+    ?? null
+  const sessionId =
+    input.sessionId
+    ?? input.diagnostics?.session_id
+    ?? input.trajectory?.sessionId
+    ?? null
   const node = input.selectedNode ?? null
   const segment = input.selectedTreemapSegment ?? null
   const rec = input.treemap?.reconciliation ?? null
@@ -99,6 +128,9 @@ export function buildDiagnosticDraft(input: DiagnosticDraftInput): string {
 
   if (runId) lines.push(`- **run_id**: \`${runId}\``)
   if (sessionId) lines.push(`- **session_id**: \`${sessionId}\``)
+  if (input.staleSnapshot?.cachedAt) {
+    lines.push(`- **snapshot_source**: cached local snapshot (${input.staleSnapshot.cachedAt})`)
+  }
 
   if (node) {
     lines.push(`- **selected_span**: \`${node.id}\` (${node.kind}) — ${node.label} [${node.status}]`)
@@ -156,10 +188,46 @@ export function buildDiagnosticDraft(input: DiagnosticDraftInput): string {
     }
   }
 
+  const coreFindings = input.diagnostics?.executive_findings ?? []
+  if (coreFindings.length > 0) {
+    lines.push('', '### Core Executive Findings')
+    for (const f of coreFindings.slice(0, 5)) {
+      lines.push(`- **[${f.severity.toUpperCase()}] \`${f.code}\`**: ${f.summary}${f.suggested_action ? ` -> _${f.suggested_action}_` : ''}`)
+    }
+  }
+
+  if (input.proposal) {
+    const p = input.proposal
+    const evRuns = p.evidence_run_ids?.length ? p.evidence_run_ids : (p.source_run_id ? [p.source_run_id] : [])
+    lines.push('', '### Context Evolution Proposal')
+    lines.push(`- **proposal_id**: \`${p.id}\` (${p.kind}, status: \`${p.status}\`)`)
+    if (p.target_scope) {
+      const modeRef = p.target_mode_name || p.target_mode_slug
+      lines.push(`- **target_scope**: \`${p.target_scope}\`${modeRef ? ` (${modeRef})` : ''}`)
+    }
+    lines.push(`- **summary**: ${p.title ? `${p.title} — ` : ''}${p.summary}`)
+    if (p.rationale) lines.push(`- **rationale**: ${p.rationale}`)
+    if (evRuns.length > 0) lines.push(`- **evidence_runs**: ${evRuns.map((r) => `\`${r}\``).join(', ')}`)
+    if (p.dedup_evidence) {
+      lines.push(
+        `- **dedup_overlap**: \`${p.dedup_evidence.source_a_label}\` <-> \`${p.dedup_evidence.source_b_label}\` (${p.dedup_evidence.line_range_label}, ~${p.dedup_evidence.estimated_wasted_tokens} wasted tokens)`,
+      )
+    }
+    if (p.remediation_code) lines.push(`- **remediation_code**: \`${p.remediation_code}\``)
+    if (p.metrics_comparison) {
+      if (Object.keys(p.metrics_comparison.before_values ?? {}).length > 0) {
+        lines.push(`- **before_values**: \`${JSON.stringify(p.metrics_comparison.before_values)}\``)
+      }
+      if (Object.keys(p.metrics_comparison.after_values ?? {}).length > 0) {
+        lines.push(`- **after_values**: \`${JSON.stringify(p.metrics_comparison.after_values)}\``)
+      }
+    }
+  }
+
   lines.push(
     '',
     '### Requested Analysis',
-    '1. Call `tinadec_inspect` (targets: `context_memory`, `agents`, `modes`, `skills`, or `tools` as relevant) to verify current live configuration and context budget.',
+    '1. Call `tinadec_inspect` (targets: `run_diagnostics`, `context_audit`, `context_memory`, `agents`, `modes`, `skills`, or `tools` as relevant) to verify current live configuration and context budget.',
     '2. Identify the concrete root cause from the trajectory evidence, governance signals, and context share above.',
     '3. Propose minimal, evidence-backed fixes (without guessing or bypassing governance gates).',
   )
@@ -218,6 +286,15 @@ export async function triggerDiagnoseInComposer(
 }
 
 function buildConclusions(input: OfflineReportInput): string[] {
+  const coreFindings = input.diagnostics?.executive_findings ?? []
+  if (coreFindings.length > 0) {
+    return coreFindings.map((f) =>
+      f.suggested_action
+        ? `[${f.code}] ${f.summary} — Action: ${f.suggested_action}`
+        : `[${f.code}] ${f.summary}`,
+    )
+  }
+
   const conclusions: string[] = []
   const traj = input.trajectory
   const buckets = input.buckets
@@ -324,13 +401,16 @@ function renderTrajectoryRowsHtml(node: TrajectoryNode, depth = 0): string {
  */
 export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
   const title = input.title || 'Tinadec Trajectory & Context Diagnostic Report'
-  const generatedAt = input.generatedAt || new Date().toISOString()
-  const runId = input.runId ?? input.trajectory?.runId ?? 'n/a'
-  const sessionId = input.sessionId ?? input.trajectory?.sessionId ?? 'n/a'
+  const generatedAt = input.generatedAt || input.diagnostics?.generated_at || new Date().toISOString()
+  const runId = input.runId ?? input.diagnostics?.run_id ?? input.trajectory?.runId ?? 'n/a'
+  const sessionId = input.sessionId ?? input.diagnostics?.session_id ?? input.trajectory?.sessionId ?? 'n/a'
   const traj = input.trajectory ?? null
   const buckets = input.buckets ?? null
   const treemap = input.treemap ?? null
   const overlap = input.overlap ?? null
+  const staleNote = input.staleSnapshot?.cachedAt
+    ? `<span>Snapshot: <code class="mono">cached (${escapeHtml(input.staleSnapshot.cachedAt)})</code></span>`
+    : ''
 
   const conclusions = buildConclusions(input)
   const conclusionListHtml = conclusions.map((c) => `<li>${escapeHtml(c)}</li>`).join('')
@@ -561,6 +641,7 @@ export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
         <span>Run: <code class="mono">${escapeHtml(runId)}</code></span>
         <span>Session: <code class="mono">${escapeHtml(sessionId)}</code></span>
         <span>Generated: <code class="mono">${escapeHtml(generatedAt)}</code></span>
+        ${staleNote}
       </div>
     </div>
     <span class="pill${traj?.errorCount ? ' pill-danger' : ''}">${escapeHtml(traj?.status ?? 'snapshot')}</span>
