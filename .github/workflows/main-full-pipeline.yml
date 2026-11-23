@@ -1,0 +1,72 @@
+name: Main Full Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_smoke:
+        description: 'Run headless packaged Electron GUI smoke tests after packaging'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-full-pipeline
+  cancel-in-progress: true
+
+jobs:
+  meta:
+    name: Resolve Pipeline Metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      artifact_label: ${{ steps.meta.outputs.artifact_label }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+    steps:
+      - name: Compute main build metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:7}"
+          {
+            echo "short_sha=${short_sha}"
+            echo "package_version=0.0.0-main.${short_sha}"
+            echo "artifact_label=main-${short_sha}"
+            echo "release_tag=main-${short_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+  ci-app:
+    name: App Layer
+    uses: ./.github/workflows/ci-app.yml
+
+  ci-gateway:
+    name: Gateway & Contracts
+    uses: ./.github/workflows/ci-gateway.yml
+
+  ci-core:
+    name: Core & Tools (.NET 11)
+    uses: ./.github/workflows/ci-core.yml
+    with:
+      full_suite: true
+
+  desktop-artifacts:
+    name: Desktop Verification Packages
+    needs: [meta, ci-app, ci-gateway, ci-core]
+    uses: ./.github/workflows/_desktop-build.yml
+    with:
+      package_version: ${{ needs.meta.outputs.package_version }}
+      artifact_label: ${{ needs.meta.outputs.artifact_label }}
+      release_tag: ${{ needs.meta.outputs.release_tag }}
+      release_channel: main
+      artifact_prefix: TinadecOffice
+      retention_days: 7
+      run_smoke: ${{ inputs.run_smoke || false }}
+      validate_stable_tag: false

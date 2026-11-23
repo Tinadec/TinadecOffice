@@ -1,0 +1,281 @@
+name: Reusable Desktop Build
+
+on:
+  workflow_call:
+    inputs:
+      package_version:
+        description: "Valid SemVer injected into apps/desktop/package.json (e.g. 0.5.0, 0.0.0-nightly.<sha>, 0.0.0-main.<sha>)"
+        type: string
+        required: true
+      artifact_label:
+        description: "External installer filename label (e.g. 0.5.0, nightly-<sha>, main-<sha>)"
+        type: string
+        required: true
+      release_tag:
+        description: "Release tag for Office channel download URLs (e.g. v0.5.0, nightly-<sha>, main-<sha>)"
+        type: string
+        required: true
+      release_channel:
+        description: "Office release channel identifier (stable, nightly, main)"
+        type: string
+        required: false
+        default: 'stable'
+      artifact_prefix:
+        description: "GitHub Actions uploaded artifact name prefix"
+        type: string
+        required: false
+        default: 'TinadecOffice'
+      retention_days:
+        description: "GitHub Actions artifact retention period in days"
+        type: number
+        required: false
+        default: 14
+      run_smoke:
+        description: "Run headless packaged Electron GUI smoke tests after packaging"
+        type: boolean
+        required: false
+        default: false
+      validate_stable_tag:
+        description: "Verify release_tag uses vX.Y.Z and matches package_version and committed apps/desktop/package.json"
+        type: boolean
+        required: false
+        default: false
+      checkout_ref:
+        description: "Optional explicit ref or commit SHA to check out (defaults to triggering ref/SHA)"
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            label: win-x64
+            packageScript: package:win
+          - os: ubuntu-24.04
+            label: linux-x64
+            packageScript: package:linux
+          - os: macos-15
+            label: osx-arm64
+            packageScript: package:mac
+            # Bundling Mermaid/KaTeX/Monaco exceeds Node's default 2 GB heap on macOS arm64.
+            nodeOptions: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', 'Directory.Build.props', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache Bun install cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache downloaded desktop runtimes
+        uses: actions/cache@v6
+        with:
+          path: apps/desktop/.runtime-cache/downloads
+          key: desktop-runtime-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/stage-runtime.mjs', 'scripts/ripgrep-pin.mjs') }}
+          restore-keys: |
+            desktop-runtime-${{ runner.os }}-
+
+      - name: Validate stable tag version
+        if: inputs.validate_stable_tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          node -e '
+            const tag = process.env.RELEASE_TAG || "";
+            const packageVersion = process.env.PACKAGE_VERSION || "";
+            if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+              throw new Error(`Release tags must use vX.Y.Z, received: ${tag}`);
+            }
+            if (packageVersion !== tag.slice(1)) {
+              throw new Error(`package_version (${packageVersion}) does not match tag ${tag}`);
+            }
+            const pkgVersion = require("./apps/desktop/package.json").version;
+            if (pkgVersion !== packageVersion) {
+              throw new Error(`apps/desktop/package.json (${pkgVersion}) does not match tag ${tag}`);
+            }
+            console.log(`Validated stable release version ${packageVersion} (${tag}).`);
+          '
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Inject ephemeral package version
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const pkgPath = "./apps/desktop/package.json";
+            const targetVersion = (process.env.PACKAGE_VERSION || "").trim();
+            if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(targetVersion)) {
+              throw new Error(`Invalid SemVer package_version: ${targetVersion}`);
+            }
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            if (pkg.version !== targetVersion) {
+              const previous = pkg.version;
+              pkg.version = targetVersion;
+              fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+              console.log(`Injected ephemeral desktop version: ${previous} -> ${targetVersion}`);
+            } else {
+              console.log(`Desktop package.json already matches ${targetVersion}.`);
+            }
+          '
+
+      - name: Cache reviewed Linux Bubblewrap
+        id: bwrap-cache
+        if: matrix.label == 'linux-x64'
+        uses: actions/cache@v6
+        with:
+          path: native/bwrap
+          key: bwrap-${{ runner.os }}-${{ hashFiles('scripts/bubblewrap-pin.mjs') }}
+
+      - name: Install Bubblewrap build dependencies (Linux cache miss)
+        if: matrix.label == 'linux-x64' && steps.bwrap-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config libcap-dev
+
+      - name: Stage reviewed Linux Bubblewrap
+        if: matrix.label == 'linux-x64'
+        run: bun run setup:bwrap
+
+      - name: Build and package the application
+        env:
+          NODE_OPTIONS: ${{ matrix.nodeOptions }}
+          OFFICE_RELEASE_VERSION: ${{ inputs.package_version }}
+          OFFICE_RELEASE_TAG: ${{ inputs.release_tag }}
+          OFFICE_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          OFFICE_ARTIFACT_LABEL: ${{ inputs.artifact_label }}
+        # Stages native Core/Gateway/Tools/rg (+ PortableGit on Windows / bwrap on Linux),
+        # checks binary formats & entrypoints, typechecks & builds Desktop, and runs electron-builder.
+        run: bun run --cwd apps/desktop ${{ matrix.packageScript }}
+
+      - name: Verify Windows package output
+        if: matrix.label == 'win-x64'
+        env:
+          OFFICE_RELEASE_VERSION: ${{ inputs.package_version }}
+          OFFICE_ARTIFACT_LABEL: ${{ inputs.artifact_label }}
+        run: bun run --cwd apps/desktop verify:package
+
+      - name: Check Linux .deb package contents
+        if: matrix.label == 'linux-x64'
+        run: bun run --cwd apps/desktop check:deb
+
+      - name: Install headless Electron libraries (optional smoke)
+        if: matrix.label == 'linux-x64' && inputs.run_smoke
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libgbm1 libasound2t64 libgtk-3-0t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Smoke test packaged Linux application (optional)
+        if: matrix.label == 'linux-x64' && inputs.run_smoke
+        run: >-
+          xvfb-run -a --server-args="-screen 0 1280x1024x24 -ac"
+          bun run --cwd apps/desktop smoke:packaged:posix
+
+      - name: Smoke test packaged macOS application (optional)
+        if: matrix.label == 'osx-arm64' && inputs.run_smoke
+        run: bun run --cwd apps/desktop smoke:packaged:posix
+
+      - name: Smoke test packaged Windows application (optional)
+        if: matrix.label == 'win-x64' && inputs.run_smoke
+        run: bun run --cwd apps/desktop smoke:packaged
+
+      - name: Package Office channel artifacts
+        env:
+          OFFICE_RELEASE_VERSION: ${{ inputs.package_version }}
+          OFFICE_RELEASE_TAG: ${{ inputs.release_tag }}
+          OFFICE_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          OFFICE_ARTIFACT_LABEL: ${{ inputs.artifact_label }}
+        run: node apps/desktop/scripts/package-office-channel.mjs
+
+      - name: Verify Office channel artifacts
+        env:
+          OFFICE_RELEASE_VERSION: ${{ inputs.package_version }}
+          OFFICE_RELEASE_TAG: ${{ inputs.release_tag }}
+          OFFICE_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          OFFICE_ARTIFACT_LABEL: ${{ inputs.artifact_label }}
+        run: node apps/desktop/scripts/verify-office-channel.mjs
+
+      - name: Upload Windows package
+        if: matrix.label == 'win-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.label }}
+          path: |
+            apps/desktop/release/*-win-x64-setup.exe
+            apps/desktop/release/*-win-x64-setup.exe.blockmap
+            apps/desktop/release/*-win-x64-portable.exe
+            apps/desktop/release/latest.yml
+            apps/desktop/release/office-channel/*.zip
+            apps/desktop/release/office-channel/catalog-win-x64.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+      - name: Upload Linux package
+        if: matrix.label == 'linux-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.label }}
+          path: |
+            apps/desktop/release/*-linux-x64.deb
+            apps/desktop/release/office-channel/*.tar.gz
+            apps/desktop/release/office-channel/catalog-linux-x64.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+      - name: Upload macOS package
+        if: matrix.label == 'osx-arm64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.label }}
+          path: |
+            apps/desktop/release/*-osx-arm64.dmg
+            apps/desktop/release/office-channel/*.tar.gz
+            apps/desktop/release/office-channel/catalog-osx-arm64.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

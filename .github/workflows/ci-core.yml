@@ -1,0 +1,292 @@
+name: CI — Core & Tools (.NET 11)
+
+on:
+  pull_request:
+    paths:
+      - 'TinadecCore/**'
+      - 'TinadecTools/**'
+      - 'TinadecTools.Generators/**'
+      - 'tests/**'
+      - 'TinadecOffice.slnx'
+      - 'global.json'
+      - 'Directory.Build.props'
+      - 'scripts/bubblewrap-pin.mjs'
+      - 'scripts/setup-bubblewrap.mjs'
+      - 'scripts/ripgrep-pin.mjs'
+      - 'scripts/setup-ripgrep.mjs'
+      - '.github/workflows/ci-core.yml'
+  workflow_dispatch:
+    inputs:
+      full_suite:
+        description: 'Run full suite including PostgreSQL and Docker'
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      full_suite:
+        description: 'Run full suite including PostgreSQL and Docker'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect Backend Scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_postgres: ${{ steps.filter.outputs.run_postgres }}
+      run_docker: ${{ steps.filter.outputs.run_docker }}
+    steps:
+      - name: Checkout repository for PR diff
+        if: ${{ !inputs.full_suite && github.event_name == 'pull_request' }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Evaluate changed paths
+        id: filter
+        shell: bash
+        env:
+          FULL_SUITE: ${{ inputs.full_suite }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$FULL_SUITE" == "true" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "run_postgres=true" >> "$GITHUB_OUTPUT"
+            echo "run_docker=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_SHA" ]]; then
+            echo "run_postgres=false" >> "$GITHUB_OUTPUT"
+            echo "run_docker=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
+            changed_files="$(git diff --name-only "$merge_base" "$HEAD_SHA")"
+          else
+            changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          fi
+
+          run_postgres=false
+          run_docker=false
+
+          if grep -Eq '^(TinadecCore/.*(Persistence|Storage\.Migrations|PostgreSql)|\.github/workflows/ci-core\.yml)' <<< "$changed_files"; then
+            run_postgres=true
+          fi
+
+          if grep -Eq '^(TinadecCore/|Directory\.Build\.props|global\.json|\.github/workflows/ci-core\.yml)' <<< "$changed_files"; then
+            run_docker=true
+          fi
+
+          echo "run_postgres=$run_postgres" >> "$GITHUB_OUTPUT"
+          echo "run_docker=$run_docker" >> "$GITHUB_OUTPUT"
+
+  dotnet-linux:
+    name: .NET 11 Linux Full Suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', 'Directory.Build.props', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache reviewed Bubblewrap
+        id: bwrap-cache
+        uses: actions/cache@v6
+        with:
+          path: native/bwrap
+          key: bwrap-${{ runner.os }}-${{ hashFiles('scripts/bubblewrap-pin.mjs') }}
+
+      - name: Install Bubblewrap build dependencies (cache miss)
+        if: steps.bwrap-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config libcap-dev
+
+      - name: Stage reviewed Bubblewrap
+        run: |
+          node scripts/setup-bubblewrap.mjs
+          echo "TINADEC_TOOLS_BWRAP_PATH=$GITHUB_WORKSPACE/native/bwrap/bwrap" >> "$GITHUB_ENV"
+
+      - name: Cache pinned ripgrep
+        uses: actions/cache@v6
+        with:
+          path: native/rg
+          key: ripgrep-${{ runner.os }}-${{ hashFiles('scripts/ripgrep-pin.mjs') }}
+
+      - name: Stage pinned ripgrep
+        run: node scripts/setup-ripgrep.mjs
+
+      - name: Restore
+        run: dotnet restore TinadecOffice.slnx
+
+      - name: Build
+        run: dotnet build TinadecOffice.slnx --no-restore
+
+      - name: Allow Bubblewrap unprivileged user namespaces (Ubuntu 24.04)
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Test
+        run: dotnet test TinadecOffice.slnx --no-build --verbosity minimal
+
+  dotnet-windows:
+    name: .NET 11 Windows Verification
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', 'Directory.Build.props', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache pinned ripgrep
+        uses: actions/cache@v6
+        with:
+          path: native/rg
+          key: ripgrep-${{ runner.os }}-${{ hashFiles('scripts/ripgrep-pin.mjs') }}
+
+      - name: Stage pinned ripgrep
+        run: node scripts/setup-ripgrep.mjs
+
+      - name: Restore
+        run: dotnet restore TinadecOffice.slnx
+
+      - name: Build
+        run: dotnet build TinadecOffice.slnx --no-restore
+
+      - name: Test Windows Tools & Sandbox suites
+        shell: pwsh
+        run: >-
+          dotnet test tests/TinadecTools.Tests/TinadecTools.Tests.csproj
+          --no-build
+          --verbosity minimal
+          --filter "FullyQualifiedName~ConPty|FullyQualifiedName~Win32CommandLine|FullyQualifiedName~CommandRunnerTests|FullyQualifiedName~ShellToolTests|FullyQualifiedName~GitHook|FullyQualifiedName~GitMetadataSandboxDenialTests|FullyQualifiedName~WorkspacePath|FullyQualifiedName~StorageBoundaryTests|FullyQualifiedName~MultiFolderToolTests"
+
+      - name: Test Core Architecture suite
+        shell: pwsh
+        run: dotnet test TinadecCore/tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj --no-build --verbosity minimal
+
+      - name: Test Core Governance suite
+        shell: pwsh
+        run: dotnet test TinadecCore/tests/TinadecCore.Governance.Tests/TinadecCore.Governance.Tests.csproj --no-build --verbosity minimal
+
+      - name: Test Core API Host & Storage Guard suites
+        shell: pwsh
+        run: >-
+          dotnet test TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj
+          --no-build
+          --verbosity minimal
+          --filter "FullyQualifiedName~WebAuthAndBrowseTests|FullyQualifiedName~StorageScopePathsTests|FullyQualifiedName~AuthHostGateTests|FullyQualifiedName~ControlPlaneConfigGuardTests|FullyQualifiedName~SafeLoggingTests"
+
+  postgres-storage:
+    name: PostgreSQL Storage
+    needs: changes
+    if: needs.changes.outputs.run_postgres == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: tinadec_core_test
+          POSTGRES_USER: tinadec
+          POSTGRES_PASSWORD: tinadec
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tinadec -d tinadec_core_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TINADEC_TEST_POSTGRES: '1'
+      TINADEC_TEST_POSTGRES_CONNECTION: Host=127.0.0.1;Port=5432;Database=tinadec_core_test;Username=tinadec;Password=tinadec
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.fsproj', 'Directory.Build.props', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore TinadecCore/TinadecCore.slnx
+
+      - name: Test PostgreSQL storage suites
+        run: >-
+          dotnet test TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj
+          --no-restore
+          --filter "FullyQualifiedName~PostgreSqlStorageTests|FullyQualifiedName~PostgreSqlScopeValidationTests|FullyQualifiedName~PostgreSqlMultiFolderWorkspaceTests"
+          -m:1
+
+  docker:
+    name: Core API Docker Image
+    needs: changes
+    if: needs.changes.outputs.run_docker == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build Core API image (.NET 11)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: TinadecCore/Api/Dockerfile
+          push: false
+          load: true
+          tags: tinadec-core-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

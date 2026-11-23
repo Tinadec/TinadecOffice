@@ -1,0 +1,67 @@
+name: CI — App Layer
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/ci-app.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-app-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  app:
+    name: App Layer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun install
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify lockfile dependency parity
+        run: bun scripts/check-dependencies.mjs
+
+      - name: Test root scripts
+        run: bun run test:scripts
+
+      - name: Test TinadecUI
+        run: bun run --cwd apps/TinadecUI test
+
+      - name: Test Desktop
+        run: bun run --cwd apps/desktop test
+
+      - name: Typecheck Desktop
+        run: bun run --cwd apps/desktop typecheck
+
+      - name: Build Desktop
+        run: bun run --cwd apps/desktop build
+
+      - name: Build Web
+        run: bun run --cwd apps/web build

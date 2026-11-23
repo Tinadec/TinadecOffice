@@ -83,7 +83,7 @@ jobs:
           git config user.name "$GIT_AUTHOR_NAME"
           git config user.email "$GIT_AUTHOR_EMAIL"
           git tag --annotate "v${RELEASE_VERSION}" "$SOURCE_SHA" --message "TinadecOffice v${RELEASE_VERSION}"
-          git push origin "v${RELEASE_VERSION}"
+          git push origin "refs/tags/v${RELEASE_VERSION}"
           echo "Created and pushed v${RELEASE_VERSION}."
 
       # Tags pushed with the default GITHUB_TOKEN do not trigger `on: push: tags` workflows

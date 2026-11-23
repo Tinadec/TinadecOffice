@@ -1,0 +1,55 @@
+name: CI — Gateway & Contracts
+
+on:
+  pull_request:
+    paths:
+      - 'TinadecGateway/**'
+      - 'apps/desktop/src/generated/**'
+      - 'apps/desktop/package.json'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/ci-gateway.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-gateway-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gateway:
+    name: Gateway & Contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun install
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Gateway
+        run: bun run --cwd TinadecGateway build
+
+      - name: Test Gateway
+        run: bun run --cwd TinadecGateway test
+
+      - name: Verify OpenAPI snapshots unchanged
+        run: git diff --exit-code -- TinadecGateway/tests/__snapshots__/
+
+      - name: Check Desktop client contract drift
+        run: bun run --cwd apps/desktop check:drift

@@ -1,0 +1,272 @@
+name: Nightly release
+
+on:
+  schedule:
+    # 02:00 UTC+8 (18:00 UTC) daily Nightly check on main.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Publish Nightly even if main HEAD matches the latest nightly-* release"
+        required: false
+        default: false
+        type: boolean
+      run_smoke:
+        description: "Run headless packaged Electron GUI smoke tests after packaging"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Nightly metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      should_release: ${{ steps.meta.outputs.should_release }}
+      full_sha: ${{ steps.meta.outputs.full_sha }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      artifact_label: ${{ steps.meta.outputs.artifact_label }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      previous_tag: ${{ steps.meta.outputs.previous_tag }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve Nightly release state
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_RELEASE: ${{ inputs.force_release || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+
+          full_sha="$(git rev-parse HEAD)"
+          short_sha="${full_sha:0:7}"
+          release_tag="nightly-${short_sha}"
+          artifact_label="nightly-${short_sha}"
+          package_version="0.0.0-nightly.${short_sha}"
+
+          nightly_tags_json="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              | jq -cs '
+                  [.[][] | select((.draft | not) and (.tag_name | startswith("nightly-")))]
+                  | sort_by(.created_at)
+                  | reverse
+                  | [.[].tag_name]
+                '
+          )"
+
+          latest_tag="$(jq -r '.[0] // empty' <<< "$nightly_tags_json")"
+          latest_sha=""
+          if [[ -n "$latest_tag" ]]; then
+            latest_sha="$(git rev-parse "${latest_tag}^{commit}" 2>/dev/null || true)"
+          fi
+
+          if [[ "$FORCE_RELEASE" != "true" && ( "$latest_sha" == "$full_sha" || "$latest_tag" == "$release_tag" ) ]]; then
+            echo "Nightly ${release_tag} (${full_sha}) is already published (latest_tag=${latest_tag}); skipping."
+            {
+              echo "should_release=false"
+              echo "full_sha=${full_sha}"
+              echo "short_sha=${short_sha}"
+              echo "release_tag=${release_tag}"
+              echo "artifact_label=${artifact_label}"
+              echo "package_version=${package_version}"
+              echo "previous_tag="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous_tag="$(
+            jq -r --arg current "$release_tag" '[.[] | select(. != $current)][0] // empty' <<< "$nightly_tags_json"
+          )"
+
+          {
+            echo "should_release=true"
+            echo "full_sha=${full_sha}"
+            echo "short_sha=${short_sha}"
+            echo "release_tag=${release_tag}"
+            echo "artifact_label=${artifact_label}"
+            echo "package_version=${package_version}"
+            echo "previous_tag=${previous_tag}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Prepared Nightly ${release_tag} (${full_sha}), previous_tag=${previous_tag:-<none>}."
+
+  build:
+    if: needs.prepare.outputs.should_release == 'true'
+    needs: prepare
+    uses: ./.github/workflows/_desktop-build.yml
+    with:
+      package_version: ${{ needs.prepare.outputs.package_version }}
+      artifact_label: ${{ needs.prepare.outputs.artifact_label }}
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+      release_channel: nightly
+      artifact_prefix: TinadecOffice
+      retention_days: 7
+      run_smoke: ${{ inputs.run_smoke || false }}
+      validate_stable_tag: false
+      checkout_ref: ${{ needs.prepare.outputs.full_sha }}
+
+  release:
+    name: Publish Nightly Release
+    if: needs.prepare.outputs.should_release == 'true'
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Download verified Windows package
+        uses: actions/download-artifact@v8
+        with:
+          name: TinadecOffice-win-x64
+          path: release-artifacts
+
+      - name: Download verified Linux package
+        uses: actions/download-artifact@v8
+        with:
+          name: TinadecOffice-linux-x64
+          path: release-artifacts
+
+      - name: Download verified macOS package
+        uses: actions/download-artifact@v8
+        with:
+          name: TinadecOffice-osx-arm64
+          path: release-artifacts
+
+      - name: Merge the Office channel catalogs
+        env:
+          OFFICE_RELEASE_VERSION: ${{ needs.prepare.outputs.package_version }}
+          OFFICE_RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          OFFICE_RELEASE_CHANNEL: nightly
+        run: node apps/desktop/scripts/merge-office-channel-catalog.mjs release-artifacts/office-channel
+
+      - name: Generate SHA256SUMS
+        working-directory: release-artifacts
+        run: find . -type f ! -name 'SHA256SUMS' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+
+      - name: Validate Office channel catalog
+        working-directory: release-artifacts
+        run: |
+          test -s office-channel/catalog.json
+          test "$(find office-channel -maxdepth 1 -name '*.zip' | wc -l)" -eq 4
+          test "$(find office-channel -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 8
+          test "$(find office-channel -maxdepth 1 -name 'catalog-*.json' | wc -l)" -eq 3
+          jq -e '.schemaVersion == 1
+            and (.products | length >= 5)
+            and (([.products[].releases[0].channel] | unique) == ["nightly"])
+            and (([.products[].releases[0].artifacts | length] | min) >= 3)
+            and ((([.products[].releases[0].artifacts[].platform] | unique)) | contains(["linux", "macos", "windows"]))' office-channel/catalog.json >/dev/null
+
+      - name: Create annotated Nightly tag
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          FULL_SHA: ${{ needs.prepare.outputs.full_sha }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --cleanup-tag --yes
+          fi
+          git push origin ":refs/tags/$RELEASE_TAG" 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force --annotate "$RELEASE_TAG" "$FULL_SHA" --message "TinadecOffice Nightly ($SHORT_SHA)"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Compose Nightly release notes
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          FULL_SHA: ${{ needs.prepare.outputs.full_sha }}
+          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact_label }}
+          PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            "$RELEASE_TAG"
+            --nightly
+            --commit "$FULL_SHA"
+            --display-version "$ARTIFACT_LABEL"
+          )
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            args+=(--previous-tag "$PREVIOUS_TAG")
+          fi
+          args+=(--out "$RUNNER_TEMP/release-body.md")
+          node scripts/release-body.mjs "${args[@]}"
+
+      - name: Create GitHub Nightly Prerelease
+        working-directory: release-artifacts
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+        shell: bash
+        run: >-
+          gh release create "$RELEASE_TAG" SHA256SUMS
+          $(find . -type f ! -name 'SHA256SUMS' -print | sort)
+          --verify-tag
+          --prerelease
+          --latest=false
+          --notes-file "$RUNNER_TEMP/release-body.md"
+          --title "TinadecOffice Nightly ($SHORT_SHA)"
+
+      - name: Prune old Nightly releases (retain newest 7)
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_tags="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              | jq -rs '
+                  [.[][] | select(.prerelease == true and (.tag_name | startswith("nightly-")))]
+                  | sort_by(.created_at)
+                  | reverse
+                  | .[7:][]
+                  | .tag_name
+                '
+          )"
+          if [[ -z "$old_tags" ]]; then
+            echo "7 or fewer Nightly releases present; nothing to prune."
+            exit 0
+          fi
+          while IFS= read -r old_tag; do
+            [[ -z "$old_tag" ]] && continue
+            if [[ "$old_tag" == "$RELEASE_TAG" || "$old_tag" != nightly-* ]]; then
+              continue
+            fi
+            echo "Deleting expired Nightly release: $old_tag"
+            gh release delete "$old_tag" --cleanup-tag --yes
+          done <<< "$old_tags"
