@@ -1677,11 +1677,7 @@ internal sealed partial class FullDuplexRunEngine
             SpaceRunOptions? spaceOptions = null;
             if (root.TryGetProperty("space_options", out var optionsValue) && optionsValue.ValueKind != JsonValueKind.Null)
             {
-                spaceOptions = optionsValue.Deserialize<SpaceRunOptions>(new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
-                });
+                spaceOptions = SpaceRunOptionsJson.Parse(optionsValue);
             }
             return new QueuedInteractionPayload(
                 content,
@@ -2075,39 +2071,91 @@ internal sealed partial class FullDuplexRunEngine
         return [];
     }
 
-    private async Task DispatchEvolutionAsync(
+    internal async Task DispatchEvolutionAsync(
         OperationalTriggerMatch match,
         RunState run,
         FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
-        var candidateOnly = configuration.Memory.EffectiveCandidateOnly;
-        if (candidateOnly && _longTermMemory is null)
+        var effectiveStrategy = ResolveEffectiveContextStrategy(configuration);
+        var effectiveEvolutionMode = ResolveEffectiveEvolutionMode(configuration);
+        var candidateOnly = string.Equals(effectiveStrategy, "direct", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(effectiveEvolutionMode, "candidate_only", StringComparison.OrdinalIgnoreCase);
+
+        var runId = Guid.Parse(run.RunId);
+        var hasMemoryCuratorTarget = candidateOnly
+            ? _longTermMemory is not null
+            : (_contextMemory is not null || _longTermMemory is not null);
+
+        ContextPack? context = null;
+        if (hasMemoryCuratorTarget)
         {
-            _logger.LogDebug("Long-term memory service is not registered; skipping experience curation for run {RunId}.", run.RunId);
-            return;
+            context = await BuildContextAsync(run, SpacePromptConfiguration(configuration, checkpoint), match.Agent, WithSpaceContext(checkpoint, checkpoint.UserGoal), checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         }
-        if (!candidateOnly && _contextMemory is null && _longTermMemory is null)
+
+        // P2 Track 3: Gather bounded P1 diagnostics + Top-3 Winnowing overlap evidence,
+        // feed the multi-run degradation & prompt-dedup proposal queue (conservative pending posture),
+        // and build character-capped "Context & Trajectory Evidence" for experience_curator.
+        var observation = await GatherRunContextEvolutionObservationAsync(
+            run,
+            runId,
+            configuration,
+            checkpoint,
+            context,
+            effectiveStrategy,
+            effectiveEvolutionMode,
+            cancellationToken).ConfigureAwait(false);
+
+        var proposalService = ContextPolicyProposalServiceRegistry.Resolve(_services);
+        if (proposalService is not null)
         {
-            _logger.LogDebug("No memory service is registered; skipping experience curation for run {RunId}.", run.RunId);
+            try
+            {
+                var queuedProposals = await proposalService.RecordRunAndGenerateProposalsAsync(observation, cancellationToken).ConfigureAwait(false);
+                foreach (var queued in queuedProposals)
+                {
+                    await AppendEventAsync(runId, "context.evolution.proposal_queued", "Context self-evolution proposal queued for review.", new
+                    {
+                        run_id = run.RunId,
+                        proposal_id = queued.Id,
+                        kind = queued.Kind,
+                        status = queued.Status,
+                        target_scope = queued.TargetScope,
+                        remediation_code = queued.RemediationCode,
+                        evidence_run_ids = queued.EvidenceRunIds
+                    }, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.TryLogDebug(ex, "Context policy proposal evaluation skipped for run {RunId}.", run.RunId);
+            }
+        }
+
+        if (!hasMemoryCuratorTarget || context is null)
+        {
+            _logger.LogDebug("Memory curation target is not registered; skipping experience curator model turn for run {RunId}.", run.RunId);
             return;
         }
 
-        var runId = Guid.Parse(run.RunId);
-        var context = await BuildContextAsync(run, SpacePromptConfiguration(configuration, checkpoint), match.Agent, WithSpaceContext(checkpoint, checkpoint.UserGoal), checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, AnswerStreaming.None, observeOutput: false, interruptible: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(SpacePromptConfiguration(configuration, checkpoint), match.Agent, context, cancellationToken).ConfigureAwait(false);
         var evidence = string.Join("\n", checkpoint.Tasks.Select(item =>
             $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
+        var contextTrajectoryEvidence = proposalService is not null
+            ? proposalService.BuildBoundedCuratorEvidence(observation, 2000)
+            : FormatFallbackCuratorEvidence(observation, 2000);
         var instructions = assembly.Instructions
-            + "\n\nYou are the experience curator. Review the finished run and extract reusable experience. Respond with strict JSON only: "
+            + "\n\nYou are the experience curator. Review the finished run, execution outcomes, and Context & Trajectory Evidence to extract reusable experience. "
+            + "When repeated tool failures or governance redlines occurred (e.g. SAME_ARGS_RETRY, FS_STALE_VERSION, WORKTREE_GUARD, TIMEOUT), extract concrete failure_pattern or supervision_rule items with explicit applicability and expiry_condition. "
+            + "Respond with strict JSON only: "
             + "{\"memory_candidates\":[{\"scope\":\"workspace\",\"kind\":\"success_pattern|failure_pattern|fact|preference|decision|task_template|supervision_rule\",\"content\":\"...\",\"confidence\":0.8,\"applicability\":\"...\",\"expiry_condition\":\"...\"}],"
             + "\"agent_candidates\":[{\"name\":\"...\",\"layer\":\"execution\",\"agent_type\":\"task_executor\",\"confidence\":0.7,\"proposal\":{\"slug\":\"...\",\"display_name\":\"...\",\"layer\":\"execution\",\"role\":\"task_executor\",\"system_prompt\":\"...\",\"description\":\"...\",\"capabilities\":[]}}]}. "
             + "Only propose items backed by concrete evidence from this run; an empty object means nothing was worth keeping.";
-        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}\n\nSupervision decision: {checkpoint.SupervisionDecision ?? "none"}\n\nSession context evidence:\n{string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"))}";
+        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}\n\nSupervision decision: {checkpoint.SupervisionDecision ?? "none"}\n\nContext & Trajectory Evidence:\n{contextTrajectoryEvidence}\n\nSession context evidence:\n{string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"))}";
         var turn = await Maf18RuntimeAdapter.RunGovernanceTurnAsync(
             await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
             $"operation.{match.Agent.Id}",
@@ -2130,9 +2178,12 @@ internal sealed partial class FullDuplexRunEngine
 
         foreach (var (scope, kind, content, confidence, applicability, expiryCondition) in memoryCandidates)
         {
-            // Phase 11.5 Closure #1: when EffectiveCandidateOnly == false ("auto_evolve") and
-            // IContextMemoryService is available, persist curated facts directly into active memory
-            // with run/session provenance and refresh project-core.md / user-profile.md.
+            var effectiveApplicability = ResolveCuratedApplicability(kind, applicability, configuration);
+            var effectiveExpiryCondition = ResolveCuratedExpiryCondition(kind, expiryCondition);
+
+            // Phase 11.5 Closure #1 + P2: when candidateOnly == false ("auto_evolve") and
+            // IContextMemoryService is available, persist curated facts/failure_pattern/supervision_rule
+            // directly into active memory with run/session provenance and refresh projected Markdown.
             if (!candidateOnly && _contextMemory is not null)
             {
                 var mappedScope = MapAutoEvolveMemoryScope(scope, configuration.Workspace);
@@ -2145,8 +2196,8 @@ internal sealed partial class FullDuplexRunEngine
                     WorkspaceRoot = configuration.Workspace?.RootPath,
                     SourceSessionId = checkpoint.SessionId,
                     SourceRunId = runId,
-                    Applicability = applicability,
-                    ExpiryCondition = expiryCondition,
+                    Applicability = effectiveApplicability,
+                    ExpiryCondition = effectiveExpiryCondition,
                     Reason = $"Auto-evolved by {match.Agent.Id} from run {runId:N} (confidence {confidence:0.00})."
                 }, cancellationToken).ConfigureAwait(false);
                 refreshedScopes.Add(mappedScope);
@@ -2158,6 +2209,8 @@ internal sealed partial class FullDuplexRunEngine
                     item_id = upserted.Id,
                     scope = upserted.Scope,
                     kind = upserted.Kind,
+                    applicability = upserted.Applicability,
+                    expiry_condition = upserted.ExpiryCondition,
                     version = upserted.CurrentVersion,
                     confidence
                 }, cancellationToken).ConfigureAwait(false);
@@ -2173,8 +2226,8 @@ internal sealed partial class FullDuplexRunEngine
                     kind,
                     content,
                     confidence,
-                    Applicability: applicability,
-                    ExpiryCondition: expiryCondition), cancellationToken).ConfigureAwait(false);
+                    Applicability: effectiveApplicability,
+                    ExpiryCondition: effectiveExpiryCondition), cancellationToken).ConfigureAwait(false);
                 await AppendEventAsync(runId, "memory.candidate_created", "Experience curator proposed a memory candidate.", new
                 {
                     run_id = run.RunId,
@@ -2182,6 +2235,8 @@ internal sealed partial class FullDuplexRunEngine
                     candidate_id = candidate.Id,
                     scope = candidate.Scope,
                     kind = candidate.Kind,
+                    applicability = effectiveApplicability,
+                    expiry_condition = effectiveExpiryCondition,
                     confidence = candidate.Confidence
                 }, cancellationToken).ConfigureAwait(false);
             }
@@ -2227,6 +2282,264 @@ internal sealed partial class FullDuplexRunEngine
                 confidence = candidate.ConfidenceScore
             }, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task<RunContextEvolutionObservation> GatherRunContextEvolutionObservationAsync(
+        RunState run,
+        Guid runId,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        ContextPack? context,
+        string effectiveStrategy,
+        string effectiveEvolutionMode,
+        CancellationToken cancellationToken)
+    {
+        var tenantGuid = Guid.TryParse(run.TenantId, out var tId) ? tId : (Guid?)null;
+        var workspaceGuid = Guid.TryParse(run.WorkspaceId, out var wId) ? wId : (Guid?)null;
+        var modeId = TryParseModeIdFromRuntimeProfile(configuration.RuntimeProfileId);
+
+        RunContextDiagnosticsDto? diagnostics = null;
+        if (_services.GetService(typeof(IRunContextDiagnosticsService)) is IRunContextDiagnosticsService diagnosticsService)
+        {
+            try
+            {
+                diagnostics = await diagnosticsService.DiagnoseRunAsync(
+                    runId,
+                    tenantGuid,
+                    workspaceGuid,
+                    configuration.Context.DefaultTokenBudget,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.TryLogDebug(ex, "RunContextDiagnosticsService failed during closeout evolution for run {RunId}.", run.RunId);
+            }
+        }
+
+        var overlapPairs = new List<ContextOverlapPairEvidenceInput>();
+        if (_services.GetService(typeof(IContextOverlapAuditor)) is IContextOverlapAuditor overlapAuditor)
+        {
+            try
+            {
+                var scope = new ContextAuditExecutionScope(
+                    tenantGuid ?? Guid.Empty,
+                    workspaceGuid ?? Guid.Empty,
+                    checkpoint.SessionId,
+                    configuration.Workspace?.ProjectId,
+                    configuration.Workspace?.RootPath);
+                var audit = await overlapAuditor.AuditAsync(new ContextOverlapAuditRequestDto
+                {
+                    RunId = runId,
+                    ProjectId = configuration.Workspace?.ProjectId,
+                    ModeId = modeId?.ToString("D") ?? configuration.ModeSlug,
+                    WorkspaceRoot = configuration.Workspace?.RootPath,
+                    MaxExcerptLength = 160,
+                    MaxMatchesPerPair = 3
+                }, scope, cancellationToken).ConfigureAwait(false);
+
+                var pathBySourceId = audit.Sources.ToDictionary(s => s.Id, s => s.Path, StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in audit.Pairs.OrderByDescending(p => p.EstimatedDuplicateTokens).Take(5))
+                {
+                    var topMatch = pair.Matches.OrderByDescending(m => m.EstimatedDuplicateTokens).FirstOrDefault();
+                    pathBySourceId.TryGetValue(pair.SourceAId, out var pathA);
+                    pathBySourceId.TryGetValue(pair.SourceBId, out var pathB);
+                    overlapPairs.Add(new ContextOverlapPairEvidenceInput(
+                        SourceAId: pair.SourceAId,
+                        SourceALabel: pair.SourceALabel,
+                        SourceAKind: pair.SourceAKind,
+                        SourceAPath: pathA,
+                        SourceAStartLine: topMatch?.SourceALines.Start ?? 1,
+                        SourceAEndLine: topMatch?.SourceALines.End ?? 1,
+                        SourceBId: pair.SourceBId,
+                        SourceBLabel: pair.SourceBLabel,
+                        SourceBKind: pair.SourceBKind,
+                        SourceBPath: pathB,
+                        SourceBStartLine: topMatch?.SourceBLines.Start ?? 1,
+                        SourceBEndLine: topMatch?.SourceBLines.End ?? 1,
+                        OverlapChars: pair.SharedChars,
+                        EstimatedWastedTokens: pair.EstimatedDuplicateTokens,
+                        RemediationCode: pair.RemediationCode,
+                        Excerpt: topMatch?.Excerpt ?? string.Empty,
+                        SuggestedRemediation: pair.RemediationSummary));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.TryLogDebug(ex, "ContextOverlapAuditor failed during closeout evolution for run {RunId}.", run.RunId);
+            }
+        }
+
+        var (fallbackSignals, fallbackRetryStreak) = ExtractCheckpointTrajectorySignals(checkpoint);
+        var fallbackPeakOccupancy = context is { TokenBudget: > 0 }
+            ? Math.Round(Math.Clamp((double)context.EstimatedTokens / context.TokenBudget * 100.0, 0.0, 100.0), 2)
+            : 0.0;
+        var fallbackDroppedSources = context?.Dropped
+            .Select(d => d.Source)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        var fallbackDroppedTokens = context?.Dropped.Sum(d => Math.Max(0, d.EstimatedTokens)) ?? 0;
+
+        var mergedSignals = new Dictionary<string, int>(fallbackSignals, StringComparer.OrdinalIgnoreCase);
+        if (diagnostics is not null)
+        {
+            foreach (var (sigKey, sigCount) in diagnostics.Governance.SignalCounts)
+            {
+                if (!mergedSignals.TryGetValue(sigKey, out var cur) || sigCount > cur)
+                {
+                    mergedSignals[sigKey] = sigCount;
+                }
+            }
+        }
+
+        var mergedDropped = diagnostics is not null && diagnostics.Compaction.CriticalDroppedSources.Count > 0
+            ? diagnostics.Compaction.CriticalDroppedSources
+                .Concat(fallbackDroppedSources)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()
+            : fallbackDroppedSources;
+
+        return new RunContextEvolutionObservation
+        {
+            RunId = run.RunId,
+            SessionId = checkpoint.SessionId,
+            ProjectId = configuration.Workspace?.ProjectId is { } pid && pid != Guid.Empty ? pid : null,
+            ModeId = modeId,
+            ModeSlug = configuration.ModeSlug,
+            ModeName = configuration.ModeDisplayName ?? configuration.ModeSlug,
+            PeakOccupancyPct = diagnostics is not null && diagnostics.WindowBuckets.PeakOccupancyPct > 0
+                ? diagnostics.WindowBuckets.PeakOccupancyPct
+                : fallbackPeakOccupancy,
+            DegradationDetected = diagnostics?.WindowBuckets.DegradationDetected ?? false,
+            DegradationReasons = diagnostics?.WindowBuckets.DegradationReasonCodes ?? [],
+            HighOccupancyErrorRate = diagnostics?.WindowBuckets.HighOccupancyErrorRate ?? 0.0,
+            LowOccupancyErrorRate = diagnostics?.WindowBuckets.LowOccupancyErrorRate ?? 0.0,
+            HighOccupancyAvgLatencyMs = diagnostics?.WindowBuckets.HighOccupancyAvgLatencyMs ?? 0.0,
+            LowOccupancyAvgLatencyMs = diagnostics?.WindowBuckets.LowOccupancyAvgLatencyMs ?? 0.0,
+            DroppedSources = mergedDropped,
+            DroppedTokens = diagnostics is not null && diagnostics.Compaction.TotalDroppedTokensAcrossPacks > 0
+                ? diagnostics.Compaction.TotalDroppedTokensAcrossPacks
+                : fallbackDroppedTokens,
+            RedlineCounts = mergedSignals,
+            MaxSameArgsRetryStreak = Math.Max(diagnostics?.Governance.MaxSameArgsRetryStreak ?? 0, fallbackRetryStreak),
+            EffectiveStrategy = effectiveStrategy,
+            EffectiveCompactionTriggerRatio = ResolveEffectiveCompactionRatio(configuration),
+            EffectiveRecentMessageLimit = ResolveEffectiveRecentMessageLimit(configuration),
+            EffectiveRecallFidelity = ResolveEffectiveRecallPolicy(configuration),
+            EffectiveAllowCrossSessionRecall = ResolveEffectiveAllowCrossSessionRecall(configuration),
+            EffectiveEvolutionMode = effectiveEvolutionMode,
+            EffectiveCoreMarkdownMaxTokens = ResolveEffectiveCoreMarkdownMaxTokens(configuration),
+            OverlapPairs = overlapPairs
+        };
+    }
+
+    internal static (Dictionary<string, int> SignalCounts, int MaxSameArgsStreak) ExtractCheckpointTrajectorySignals(
+        FullDuplexCheckpointV1? checkpoint)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var maxStreak = 0;
+        if (checkpoint is null) return (counts, 0);
+
+        void Increment(string code) => counts[code] = counts.TryGetValue(code, out var c) ? c + 1 : 1;
+
+        foreach (var task in checkpoint.Tasks)
+        {
+            string? prevFingerprint = null;
+            var streak = 0;
+            foreach (var turn in task.ToolTurns)
+            {
+                var fp = $"{turn.ToolId.Trim().ToLowerInvariant()}|{NormalizeJsonArgsKey(turn.ArgumentsJson)}";
+                if (string.Equals(fp, prevFingerprint, StringComparison.Ordinal))
+                {
+                    streak++;
+                    if (streak >= 2)
+                    {
+                        Increment(UnifiedGovernanceSignalCodes.SameArgsRetry);
+                        if (streak > maxStreak) maxStreak = streak;
+                    }
+                }
+                else
+                {
+                    prevFingerprint = fp;
+                    streak = 1;
+                }
+
+                var err = $"{turn.ErrorCategory} {turn.DispatchStatus}".ToLowerInvariant();
+                if (err.Contains("rejected", StringComparison.Ordinal) || err.Contains("approval_denied", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.ApprovalRejected);
+                if (err.Contains("not_observed", StringComparison.Ordinal) || err.Contains("read_before_write", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.FsNotObserved);
+                if (err.Contains("stale", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.FsStaleVersion);
+                if (err.Contains("worktree", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.WorktreeGuard);
+                if (err.Contains("write_scope", StringComparison.Ordinal) || err.Contains("scope_locked", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.WriteScopeLocked);
+                if (err.Contains("timeout", StringComparison.Ordinal) || err.Contains("timed_out", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.Timeout);
+                if (err.Contains("loop", StringComparison.Ordinal))
+                    Increment(UnifiedGovernanceSignalCodes.LoopDetected);
+            }
+        }
+
+        return (counts, maxStreak);
+    }
+
+    private static string NormalizeJsonArgsKey(string? rawJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson)) return "{}";
+        return string.Concat(rawJson.Where(ch => !char.IsWhiteSpace(ch)));
+    }
+
+    private static Guid? TryParseModeIdFromRuntimeProfile(string? runtimeProfileId)
+    {
+        if (string.IsNullOrWhiteSpace(runtimeProfileId)) return null;
+        var parts = runtimeProfileId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && string.Equals(parts[0], "mode", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var parsed) && parsed != Guid.Empty)
+        {
+            return parsed;
+        }
+        return null;
+    }
+
+    private static string? ResolveCuratedApplicability(string kind, string? applicability, FrozenRunConfigurationV1 configuration)
+    {
+        if (!string.IsNullOrWhiteSpace(applicability)) return applicability;
+        if (!string.Equals(kind, "failure_pattern", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(kind, "supervision_rule", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return !string.IsNullOrWhiteSpace(configuration.ModeSlug)
+            ? $"mode:{configuration.ModeSlug}"
+            : "workspace";
+    }
+
+    private static string? ResolveCuratedExpiryCondition(string kind, string? expiryCondition)
+    {
+        if (!string.IsNullOrWhiteSpace(expiryCondition)) return expiryCondition;
+        if (!string.Equals(kind, "failure_pattern", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(kind, "supervision_rule", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return "until underlying tool contract or workspace workflow changes";
+    }
+
+    private static string FormatFallbackCuratorEvidence(RunContextEvolutionObservation observation, int maxChars)
+    {
+        var dropped = observation.DroppedSources.Count > 0 ? string.Join(", ", observation.DroppedSources.Take(6)) : "none";
+        var redlines = observation.RedlineCounts.Count > 0
+            ? string.Join(", ", observation.RedlineCounts.Select(kv => $"{kv.Key}={kv.Value}"))
+            : "none";
+        var overlaps = observation.OverlapPairs.Count > 0
+            ? string.Join("; ", observation.OverlapPairs.Take(3).Select(p => $"{p.SourceALabel}<->{p.SourceBLabel} [L{p.SourceAStartLine}-L{p.SourceAEndLine} <-> L{p.SourceBStartLine}-L{p.SourceBEndLine}] ~{p.EstimatedWastedTokens}t ({p.RemediationCode})"))
+            : "none";
+        var raw = $"- Peak occupancy: {observation.PeakOccupancyPct:0.0}% | Degradation: {(observation.DegradationDetected ? "YES" : "no")}\n"
+            + $"- Dropped sources ({observation.DroppedTokens}t): {dropped}\n"
+            + $"- Redline signals (max retry streak={observation.MaxSameArgsRetryStreak}): {redlines}\n"
+            + $"- Top overlaps: {overlaps}";
+        return raw.Length <= maxChars ? raw : raw[..maxChars];
     }
 
     private static string MapAutoEvolveMemoryScope(string rawScope, FrozenWorkspaceBinding? workspace)

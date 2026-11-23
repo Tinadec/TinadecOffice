@@ -925,53 +925,219 @@ internal sealed partial class FullDuplexRunEngine
 
     internal static string ResolveEffectiveContextStrategy(FrozenRunConfigurationV1 config)
     {
+        // Priority 1: Session overlay (SpaceOptions)
+        if (NormalizeSupportedStrategy(config.SpaceOptions?.ContextStrategy) is { } overlayStrategy)
+            return overlayStrategy;
+
+        // Priority 2: Selected mode static defaults (DefaultOptions -> RuntimePolicy.Settings)
+        if (NormalizeSupportedStrategy(config.DefaultOptions?.ContextStrategy) is { } modeDefaultStrategy)
+            return modeDefaultStrategy;
+
         if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings
             && settings.TryGetProperty("context_strategy", out var prop)
             && prop.ValueKind == JsonValueKind.String
-            && !string.IsNullOrWhiteSpace(prop.GetString()))
+            && NormalizeSupportedStrategy(prop.GetString()) is { } policyStrategy)
         {
-            return prop.GetString()!.Trim().ToLowerInvariant();
+            return policyStrategy;
         }
-        return string.IsNullOrWhiteSpace(config.Context.Strategy)
-            ? ContextPolicy.DefaultStrategy
-            : config.Context.Strategy.Trim().ToLowerInvariant();
+
+        // Priority 3: Workspace baseline
+        return NormalizeSupportedStrategy(config.Context.Strategy) ?? ContextPolicy.DefaultStrategy;
     }
 
     internal static double ResolveEffectiveCompactionRatio(FrozenRunConfigurationV1 config)
     {
+        // Priority 1: Session overlay
+        if (config.SpaceOptions?.ContextAdvanced?.CompactionTriggerRatio is { } overlayRatio
+            && !double.IsNaN(overlayRatio) && !double.IsInfinity(overlayRatio)
+            && overlayRatio is >= 0.40 and <= 0.95)
+        {
+            return overlayRatio;
+        }
+
+        // Priority 2: Selected mode static defaults
+        if (config.DefaultOptions?.ContextAdvanced?.CompactionTriggerRatio is { } modeRatio
+            && !double.IsNaN(modeRatio) && !double.IsInfinity(modeRatio)
+            && modeRatio is >= 0.40 and <= 0.95)
+        {
+            return modeRatio;
+        }
+
         if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings
             && settings.TryGetProperty("compaction_trigger_ratio", out var prop)
+            && prop.ValueKind == JsonValueKind.Number
             && prop.TryGetDouble(out var ratio)
+            && !double.IsNaN(ratio) && !double.IsInfinity(ratio)
             && ratio is >= 0.40 and <= 0.95)
         {
             return ratio;
         }
+
+        // Priority 3: Workspace baseline
         return config.Context.CompactionTriggerRatio;
     }
 
     internal static string ResolveEffectiveRecallPolicy(FrozenRunConfigurationV1 config)
     {
+        // Priority 1: Session overlay
+        if (NormalizeNonEmptyLower(config.SpaceOptions?.ContextAdvanced?.RecallFidelity) is { } overlayRecall)
+            return overlayRecall;
+
+        // Priority 2: Selected mode static defaults
+        if (NormalizeNonEmptyLower(config.DefaultOptions?.ContextAdvanced?.RecallFidelity) is { } modeRecall)
+            return modeRecall;
+
         if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings)
         {
             if (settings.TryGetProperty("recall_fidelity", out var rf)
                 && rf.ValueKind == JsonValueKind.String
-                && !string.IsNullOrWhiteSpace(rf.GetString()))
+                && NormalizeNonEmptyLower(rf.GetString()) is { } fidelity)
             {
-                return rf.GetString()!.Trim().ToLowerInvariant();
+                return fidelity;
             }
             if (settings.TryGetProperty("recall_policy", out var rp)
                 && rp.ValueKind == JsonValueKind.String
-                && !string.IsNullOrWhiteSpace(rp.GetString()))
+                && NormalizeNonEmptyLower(rp.GetString()) is { } policy)
             {
-                return rp.GetString()!.Trim().ToLowerInvariant();
+                return policy;
             }
         }
-        return string.IsNullOrWhiteSpace(config.Context.RecallFidelity)
-            ? ContextPolicy.DefaultRecallFidelity
-            : config.Context.RecallFidelity.Trim().ToLowerInvariant();
+
+        // Priority 3: Workspace baseline
+        return NormalizeNonEmptyLower(config.Context.RecallFidelity) ?? ContextPolicy.DefaultRecallFidelity;
     }
 
-    private async Task<ContextPack> BuildContextAsync(
+    internal static int ResolveEffectiveRecentMessageLimit(FrozenRunConfigurationV1 config)
+    {
+        // Priority 1: Session overlay
+        if (config.SpaceOptions?.ContextAdvanced?.RecentMessageLimit is { } overlayLimit
+            && overlayLimit is >= ContextPolicy.MinRecentMessageLimit and <= ContextPolicy.MaxRecentMessageLimit)
+        {
+            return overlayLimit;
+        }
+
+        // Priority 2: Selected mode static defaults
+        if (config.DefaultOptions?.ContextAdvanced?.RecentMessageLimit is { } modeLimit
+            && modeLimit is >= ContextPolicy.MinRecentMessageLimit and <= ContextPolicy.MaxRecentMessageLimit)
+        {
+            return modeLimit;
+        }
+
+        if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings
+            && settings.TryGetProperty("recent_message_limit", out var prop)
+            && prop.ValueKind == JsonValueKind.Number
+            && prop.TryGetInt32(out var limit)
+            && limit is >= ContextPolicy.MinRecentMessageLimit and <= ContextPolicy.MaxRecentMessageLimit)
+        {
+            return limit;
+        }
+
+        // Priority 3: Workspace baseline
+        return config.Context.RecentMessageLimit;
+    }
+
+    internal static bool ResolveEffectiveAllowCrossSessionRecall(FrozenRunConfigurationV1 config)
+    {
+        // Priority 1: Session overlay
+        if (config.SpaceOptions?.ContextAdvanced?.AllowCrossSessionRecall is { } overlayCross)
+            return overlayCross;
+
+        // Priority 2: Selected mode static defaults
+        if (config.DefaultOptions?.ContextAdvanced?.AllowCrossSessionRecall is { } modeCross)
+            return modeCross;
+
+        if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings
+            && settings.TryGetProperty("allow_cross_session_recall", out var prop)
+            && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return prop.GetBoolean();
+        }
+
+        // Priority 3: Workspace baseline
+        return config.Context.AllowCrossSessionRecall;
+    }
+
+    internal static string ResolveEffectiveEvolutionMode(FrozenRunConfigurationV1 config)
+    {
+        // Priority 1: Session overlay
+        if (NormalizeSupportedEvolutionMode(config.SpaceOptions?.ContextAdvanced?.EvolutionMode) is { } overlayEvolution)
+            return overlayEvolution;
+
+        // Priority 2: Selected mode static defaults
+        if (NormalizeSupportedEvolutionMode(config.DefaultOptions?.ContextAdvanced?.EvolutionMode) is { } modeEvolution)
+            return modeEvolution;
+
+        if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings)
+        {
+            if (settings.TryGetProperty("evolution_mode", out var em)
+                && em.ValueKind == JsonValueKind.String
+                && NormalizeSupportedEvolutionMode(em.GetString()) is { } evolutionMode)
+            {
+                return evolutionMode;
+            }
+            if (settings.TryGetProperty("memory_evolution_mode", out var mem)
+                && mem.ValueKind == JsonValueKind.String
+                && NormalizeSupportedEvolutionMode(mem.GetString()) is { } memoryEvolutionMode)
+            {
+                return memoryEvolutionMode;
+            }
+        }
+
+        // Priority 3: Workspace baseline
+        if (config.Memory.CandidateOnly)
+            return "candidate_only";
+        return NormalizeSupportedEvolutionMode(config.Memory.EvolutionMode) ?? MemoryPolicy.DefaultEvolutionMode;
+    }
+
+    internal static int ResolveEffectiveCoreMarkdownMaxTokens(FrozenRunConfigurationV1 config)
+    {
+        // Priority 1: Session overlay
+        if (config.SpaceOptions?.ContextAdvanced?.CoreMarkdownMaxTokens is { } overlayTokens
+            && overlayTokens is >= MemoryPolicy.MinCoreMarkdownMaxTokens and <= MemoryPolicy.MaxCoreMarkdownMaxTokens)
+        {
+            return overlayTokens;
+        }
+
+        // Priority 2: Selected mode static defaults
+        if (config.DefaultOptions?.ContextAdvanced?.CoreMarkdownMaxTokens is { } modeTokens
+            && modeTokens is >= MemoryPolicy.MinCoreMarkdownMaxTokens and <= MemoryPolicy.MaxCoreMarkdownMaxTokens)
+        {
+            return modeTokens;
+        }
+
+        if (config.RuntimePolicy?.Settings is { ValueKind: JsonValueKind.Object } settings
+            && settings.TryGetProperty("core_markdown_max_tokens", out var prop)
+            && prop.ValueKind == JsonValueKind.Number
+            && prop.TryGetInt32(out var tokens)
+            && tokens is >= MemoryPolicy.MinCoreMarkdownMaxTokens and <= MemoryPolicy.MaxCoreMarkdownMaxTokens)
+        {
+            return tokens;
+        }
+
+        // Priority 3: Workspace baseline
+        return config.Memory.CoreMarkdownMaxTokens;
+    }
+
+    private static string? NormalizeSupportedStrategy(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var normalized = raw.Trim().ToLowerInvariant();
+        return normalized is "direct" or "managed" or "deep_curator" ? normalized : null;
+    }
+
+    private static string? NormalizeSupportedEvolutionMode(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var normalized = raw.Trim().ToLowerInvariant();
+        return normalized is "auto_evolve" or "candidate_only" ? normalized : null;
+    }
+
+    private static string? NormalizeNonEmptyLower(string? raw) =>
+        string.IsNullOrWhiteSpace(raw) ? null : raw.Trim().ToLowerInvariant();
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, long> _contextPressureEmittedRevisions = new();
+
+    internal async Task<ContextPack> BuildContextAsync(
         RunState run,
         FrozenRunConfigurationV1 config,
         RuntimeAgentDefinition agentDefinition,
@@ -994,7 +1160,7 @@ internal sealed partial class FullDuplexRunEngine
             agentId,
             taskContext,
             config.Context.DefaultTokenBudget,
-            config.Context.RecentMessageLimit,
+            ResolveEffectiveRecentMessageLimit(config),
             config.Memory.RetrievalLimit,
             config.TinaChatInput)
         {
@@ -1004,7 +1170,16 @@ internal sealed partial class FullDuplexRunEngine
             ContextStrategyOverride = effectiveStrategy,
             CompactionTriggerRatioOverride = ResolveEffectiveCompactionRatio(config),
             RecallPolicyOverride = ResolveEffectiveRecallPolicy(config),
+            AllowCrossSessionRecallOverride = ResolveEffectiveAllowCrossSessionRecall(config),
+            EvolutionModeOverride = ResolveEffectiveEvolutionMode(config),
+            CoreMarkdownMaxTokensOverride = ResolveEffectiveCoreMarkdownMaxTokens(config),
         }, cancellationToken).ConfigureAwait(false);
+
+        // P2 Track 3 (Runtime Bleeding Control): when occupancy >= 70% accompanied by
+        // SAME_ARGS_RETRY / tool error streaks OR when critical high-value sources
+        // (workspace_instructions, mode_pipeline, reviewed_memory) were dropped by budget,
+        // emit CONTEXT_PRESSURE and promote compaction_recommended = "true" early.
+        pack = await EvaluateAndApplyRuntimeContextPressureAsync(run, pack, cancellationToken).ConfigureAwait(false);
 
         // Phase 11.5 Closure #1: honor ContextPack.Metadata["compaction_recommended"] == "true"
         // by scheduling non-blocking structural session compaction (skipping when strategy is "direct").
@@ -1023,6 +1198,153 @@ internal sealed partial class FullDuplexRunEngine
         var withReports = await WithOpenReportsAsync(run, config, agentId, pack, cancellationToken).ConfigureAwait(false);
         var withLedger = await WithPlanLedgerAsync(run, config, agentDefinition, withReports, cancellationToken).ConfigureAwait(false);
         return await WithExplorationDigestAsync(run, config, goal, withLedger, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ContextPack> EvaluateAndApplyRuntimeContextPressureAsync(
+        RunState run,
+        ContextPack pack,
+        CancellationToken cancellationToken)
+    {
+        var occupancyRatio = pack.TokenBudget > 0
+            ? (double)pack.EstimatedTokens / pack.TokenBudget
+            : 0.0;
+
+        var droppedCritical = pack.Dropped
+            .Select(d => d.Source)
+            .Where(IsRuntimeCriticalContextSource)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (droppedCritical.Count == 0 && occupancyRatio < 0.70)
+        {
+            return pack;
+        }
+
+        var sameArgsStreak = 0;
+        var toolErrorStreak = 0;
+        Guid? parsedRunId = Guid.TryParse(run.RunId, out var rGuid) ? rGuid : null;
+
+        if (occupancyRatio >= 0.70 && parsedRunId is { } checkRunId)
+        {
+            try
+            {
+                var checkpoint = await TryReadCheckpointAsync(checkRunId).ConfigureAwait(false);
+                if (checkpoint is not null)
+                {
+                    (_, sameArgsStreak) = ExtractCheckpointTrajectorySignals(checkpoint);
+                    toolErrorStreak = ComputeMaxToolErrorStreak(checkpoint);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+            }
+        }
+
+        var triggeredByHighOccupancyFaults = occupancyRatio >= 0.70 && (sameArgsStreak >= 2 || toolErrorStreak >= 2);
+        var triggeredByCriticalDrops = droppedCritical.Count > 0;
+        if (!triggeredByHighOccupancyFaults && !triggeredByCriticalDrops)
+        {
+            return pack;
+        }
+
+        var reason = triggeredByCriticalDrops && triggeredByHighOccupancyFaults
+            ? "critical_sources_dropped_and_high_occupancy_retries"
+            : triggeredByCriticalDrops
+                ? "critical_sources_dropped"
+                : sameArgsStreak >= 2
+                    ? "high_occupancy_same_args_retry"
+                    : "high_occupancy_tool_error_streak";
+
+        var enrichedMetadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (k, v) in pack.Metadata)
+        {
+            enrichedMetadata[k] = v;
+        }
+        enrichedMetadata["compaction_recommended"] = "true";
+        enrichedMetadata["context_pressure"] = "true";
+        enrichedMetadata["context_pressure_signal"] = UnifiedGovernanceSignalCodes.ContextPressure;
+        enrichedMetadata["context_pressure_reason"] = reason;
+
+        if (parsedRunId is { } emitRunId)
+        {
+            var currentRevision = run.ContextRevision;
+            if (!_contextPressureEmittedRevisions.TryGetValue(emitRunId, out var lastEmitted) || lastEmitted < currentRevision || lastEmitted == 0 && !_contextPressureEmittedRevisions.ContainsKey(emitRunId))
+            {
+                var shouldEmit = !_contextPressureEmittedRevisions.TryGetValue(emitRunId, out var prevRev) || prevRev < currentRevision;
+                if (shouldEmit)
+                {
+                    _contextPressureEmittedRevisions[emitRunId] = currentRevision;
+                    try
+                    {
+                        await AppendEventAsync(emitRunId, "context.pressure", "Runtime context pressure detected; waking early structural compaction.", new
+                        {
+                            run_id = run.RunId,
+                            signal = UnifiedGovernanceSignalCodes.ContextPressure,
+                            reason,
+                            occupancy_pct = Math.Round(occupancyRatio * 100.0, 2),
+                            dropped_critical_sources = droppedCritical,
+                            same_args_retry_streak = sameArgsStreak,
+                            tool_error_streak = toolErrorStreak,
+                            compaction_recommended = true
+                        }, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                    }
+                }
+            }
+        }
+
+        return new ContextPack
+        {
+            SessionId = pack.SessionId,
+            RunId = pack.RunId,
+            TokenBudget = pack.TokenBudget,
+            EstimatedTokens = pack.EstimatedTokens,
+            Evidence = pack.Evidence,
+            Dropped = pack.Dropped,
+            Metadata = enrichedMetadata
+        };
+    }
+
+    internal static bool IsRuntimeCriticalContextSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        var s = source.Trim();
+        return s.Equals("workspace_instructions", StringComparison.OrdinalIgnoreCase)
+            || s.Equals("project_instructions", StringComparison.OrdinalIgnoreCase)
+            || s.Equals("mode_pipeline", StringComparison.OrdinalIgnoreCase)
+            || s.Equals("reviewed_memory", StringComparison.OrdinalIgnoreCase)
+            || s.Equals("project_memory", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("workspace_instructions", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("mode_pipeline", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("reviewed_memory", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ComputeMaxToolErrorStreak(FullDuplexCheckpointV1 checkpoint)
+    {
+        var maxStreak = 0;
+        foreach (var task in checkpoint.Tasks)
+        {
+            var current = 0;
+            foreach (var turn in task.ToolTurns)
+            {
+                var failed = turn.ToolSuccess == false
+                    || !string.IsNullOrWhiteSpace(turn.ErrorCategory)
+                    || string.Equals(turn.DispatchStatus, "failed", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(turn.DispatchStatus, "rejected", StringComparison.OrdinalIgnoreCase);
+                if (failed)
+                {
+                    current++;
+                    if (current > maxStreak) maxStreak = current;
+                }
+                else
+                {
+                    current = 0;
+                }
+            }
+        }
+        return maxStreak;
     }
 
     private void TryScheduleAsyncStructuralCompaction(
