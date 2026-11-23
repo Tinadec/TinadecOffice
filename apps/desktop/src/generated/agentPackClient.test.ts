@@ -34,11 +34,16 @@ describe('generated agent pack client', () => {
   })
   it('blocks ETag reads and installation requests before fetch in preview', async () => {
     Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: async () => ({ state: 'preview', managed: false }) } })
-    const fetchMock = vi.fn()
+    // A preview bridge deliberately probes the Gateway's own web-auth status before admission
+    // (hostConnection.readHostStatus -> probeWebAuthStatus; hostAccess.ts allowlists that path).
+    // Answer with a non-ok status so the probe stays inert and admission stays 'preview'.
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response('', { status: 503 }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(generatedApi.getAgentPack('pack')).rejects.toMatchObject({ code: 'desktop_host_required' })
     await expect(generatedApi.installAgentPack('pack', { preview_id: 'preview', envelope: graphSeedPackEnvelope }, { idempotency_key: 'preview-test' })).rejects.toMatchObject({ code: 'desktop_host_required' })
-    expect(fetchMock).not.toHaveBeenCalled()
+    // The invariant is that no pack request (ETag read or install) leaves the client before admission.
+    const businessUrls = fetchMock.mock.calls.map(([input]) => String(input)).filter(url => url.includes('/api/v1/agent-packs'))
+    expect(businessUrls).toEqual([])
   })
   it('keeps public problem diagnostics for both ETag and ordinary requests', async () => {
     const diagnostic = { code: 'configuration_unique', message: 'Duplicate draft slug.', severity: 'error' }

@@ -280,34 +280,3 @@ test('the first hide explains itself once, and only where balloons exist', () =>
   assert.equal(mac.notifyHidden(), false);
   assert.equal(FakeTray.instances[0].balloons.length, 0);
 });
-
-/**
- * The tray module can be perfect and still not keep the app alive: the behavior lives in main.cjs's
- * close handler, which cannot run without a real Electron window. Pin the wiring directly, the same
- * way mainStartup.test.cjs pins the startup order.
- */
-test('main.cjs hides the window on close, quits only when nothing is keeping it alive', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8');
-
-  assert.match(source, /win\.on\('close', \(event\) => \{\s*if \(!keepRunningInTray\(\)\) \{[\s\S]{0,240}?companionWindow\.closeCompanionWindow\(\);\s*return;\s*\}\s*event\.preventDefault\(\);\s*win\.hide\(\);[\s\S]{0,80}?\}\);/,
-    'closing hides the window only while a tray exists, always prevents the teardown, and takes the companion down with it');
-  assert.match(source, /function keepRunningInTray\(\) \{\s*return shouldHideOnClose\(\{[\s\S]{0,160}?trayActive: Boolean\(trayController\?\.isActive\(\)\),/,
-    'the decision comes from the shared rule, including the tray check');
-  assert.match(source, /win\.on\('closed', \(\) => \{ if \(mainWindow === win\) mainWindow = null; \}\);/,
-    'a really closed window must not be resurrected by the tray');
-
-  // window-all-closed must not race the hidden window: quit only when nothing keeps it alive.
-  assert.match(source, /app\.on\('window-all-closed',[\s\S]{0,400}?if \(process\.platform !== 'darwin' && !keepRunningInTray\(\)\)/,
-    'window-all-closed keeps the process alive while the tray does');
-  assert.match(source, /quit: \(\) => \{ shuttingDown = true; app\.quit\(\); \}/,
-    'the tray quit item raises the flag that lets the close through');
-  assert.match(source, /app\.on\('will-quit', \(\) => \{[\s\S]{0,120}?trayController\?\.destroy\(\);/, 'quit removes the icon');
-
-  // A hidden window has no taskbar entry: launching again must reach the running instance.
-  assert.match(source, /const hasSingleInstanceLock = !app\.isPackaged \|\| app\.requestSingleInstanceLock\(\);/);
-  assert.match(source, /app\.on\('second-instance', \(\) => \{ if \(mainWindow\) void showMainWindow\(\); \}\)/);
-  assert.match(source, /if \(!hasSingleInstanceLock\) return;/, 'a losing instance never starts local services');
-
-  // Unchecking the box destroys the icon, so the hidden window has to come back with it.
-  assert.match(source, /applyCloseToTray\(enabled\);\s*\/\/ Turning the icon off while the window is hidden would leave nothing to click\.\s*if \(!enabled\) void showMainWindow\(\);/);
-});

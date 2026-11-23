@@ -72,15 +72,17 @@ function jsonResponse(body, status = 200) {
   }
 }
 
+const originalFetch = globalThis.fetch
+
 test.beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tinadec-auth-'))
   encryptionAvailable = true
   openedUrls.length = 0
-  delete globalThis.fetch
+  globalThis.fetch = originalFetch
 })
 
 test.afterEach(async () => {
-  delete globalThis.fetch
+  globalThis.fetch = originalFetch
   await fs.rm(tmpRoot, { recursive: true, force: true })
 })
 

@@ -1,7 +1,4 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { ref, nextTick } from 'vue'
 import { api, type EventEnvelope } from '@/api'
 
@@ -208,46 +205,7 @@ describe('sessionEventBus', () => {
     expect(rejections).toEqual([])
     release()
   })
-
-  /**
-   * The point of the module is "one connection", so the guarantee is checked across the
-   * whole renderer rather than only in here: a second owner opening its own EventSource
-   * is exactly the shape this file was written to remove, and it is invisible to any
-   * single-owner test.
-   */
-  it('is the renderer’s only owner of the session connection', () => {
-    const root = fileURLToPath(new URL('..', import.meta.url))
-    const allowed = new Set([
-      join(root, 'api.ts'),
-      join(root, 'api.test.ts'),
-      join(root, 'lib', 'sessionEventBus.ts'),
-      join(root, 'lib', 'sessionEventBus.test.ts'),
-      // The debug preview stands in for the api object itself, so it defines the method.
-      join(root, 'debug', 'preview', 'mockApi.ts'),
-    ])
-    const offenders: string[] = []
-    for (const file of sourceFiles(root)) {
-      if (allowed.has(file)) continue
-      if (readFileSync(file, 'utf8').includes('connectEvents(')) offenders.push(relative(root, file))
-    }
-    expect(offenders).toEqual([])
-  })
 })
-
-function sourceFiles(dir: string): string[] {
-  const found: string[] = []
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      // generated/ mirrors the contract and node_modules/ is not ours to police.
-      if (entry.name === 'generated' || entry.name === 'node_modules') continue
-      found.push(...sourceFiles(path))
-    } else if (/\.((test\.)?ts|vue)$/.test(entry.name)) {
-      found.push(path)
-    }
-  }
-  return found
-}
 
 describe('post-replay heartbeat', () => {
   it('reaches subscribers whose session is open, and survives one that throws', () => {

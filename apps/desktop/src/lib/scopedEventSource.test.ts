@@ -9,6 +9,7 @@ const ready = { state: 'ready' as const, managed: true }
 const RUN_A = 'a'.repeat(32)
 const RUN_B = 'b'.repeat(32)
 afterEach(() => {
+  vi.unstubAllGlobals()
   vi.useRealTimers()
   Object.defineProperty(window, 'tinadec', { configurable: true, value: originalHost })
   setHostAccessStatus(ready)
@@ -39,6 +40,11 @@ it('checks admission before the first fetch and refuses preview retries', async 
   vi.useFakeTimers()
   const getHostStatus = vi.fn(async () => ({ state: 'preview' as const, managed: false }))
   Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus } })
+  // A preview bridge probes the Gateway's own web-auth status before admission
+  // (hostConnection.readHostStatus -> probeWebAuthStatus). Stub it: an unstubbed probe is real
+  // network I/O that never settles under fake timers, which hides the retry this test is about.
+  const probeFetch = vi.fn<typeof fetch>(async () => new Response('', { status: 503 }))
+  vi.stubGlobal('fetch', probeFetch)
   const fakeFetch = vi.fn<typeof fetch>()
   const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
   const errors = vi.fn(); source.onerror = errors
@@ -48,6 +54,8 @@ it('checks admission before the first fetch and refuses preview retries', async 
   expect(getHostStatus).toHaveBeenCalledTimes(2)
   expect(fakeFetch).not.toHaveBeenCalled()
   expect(errors).toHaveBeenCalledTimes(2)
+  // Only the pre-admission web-auth probe may reach the network; the event stream must not.
+  for (const [input] of probeFetch.mock.calls) expect(String(input)).toContain('/api/v1/web-auth/status')
 })
 it('rechecks revoked host access on reconnect and preserves the cursor for recovery', async () => {
   vi.useFakeTimers()
