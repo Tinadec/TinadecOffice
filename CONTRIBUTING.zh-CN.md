@@ -72,36 +72,16 @@ TinadecOffice 是一个**多许可证仓库**。各许可证的精确范围见
 2. **保持 Pull Request 小且聚焦**，一个逻辑变更对应一个 PR。
 3. **遵循项目约定**（见[项目约定](#项目约定)）。
 4. 推送前**在本地运行相关检查**（见[构建与测试](#构建与测试)）。
-5. 在
-   [CLA v1 签署台账](https://github.com/Tinadec/TinadecOffice/discussions/67)
-   中发布页面写明的确切中文授权语句，即可完成一次仓库级签署。按 PR 评论签署
-   的旧流程仍保留：
-
-   > I have read the CLA Document and I hereby sign the CLA
-
-   [CLA Assistant 工作流](.github/workflows/cla.yml)会自动记录您的签名；
-   未签署的 PR 将无法通过必需检查。
+5. 通过 CLA Assistant **签署 CLA**（见[签署 CLA](#签署-cla)）。
 
 ### 签署 CLA
 
-正式的仓库级签署台账是
-[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67)。请阅读
-页面钉住的 CLA v1 文档，并以新建评论发布 Discussion 中写明的确切中文授权语句。
-[CLA Discussion Signature 工作流](.github/workflows/cla-discussion.yml)会校验评论
-的 GitHub 账号、固定语句、Discussion 身份与 CLA commit，再把您的用户 ID 追加到
-签名库。
+请先阅读 [CLA.zh-CN.md](CLA.zh-CN.md) 或 [CLA.md](CLA.md)，再按 Pull Request
+上 CLA Assistant 提供的签署链接完成签署，并在合并前确认 PR 的 CLA 状态。
 
-也可以继续按 PR 签署：CLA Assistant 机器人会在 Pull Request 上发布邀请评论，
-请回复以下确切语句：
-
-> I have read the CLA Document and I hereby sign the CLA
-
-您的 GitHub 用户 ID、评论 URL 与钉住的 CLA commit 将被记录在
-`cla-signatures` 分支的 `signatures/version1/cla.json` 中作为证据。签署后
-工作流会重跑您已开启 PR 的 `CLAAssistant` 检查；`main` 要求该检查通过后才能
-合并 Pull Request。
-
-若签署后需要重新检查，请评论 `recheck`。
+签署与检查由 CLA Assistant 处理，不再通过仓库 GitHub Actions 执行。
+旧 Discussion 和 PR 评论签署流程已退役；[历史签名记录](signatures/README.md)
+保留用于审计。
 
 ## 开发工作流
 
@@ -128,8 +108,8 @@ npm run check:drift   # 重新生成桌面 OpenAPI 客户端，有差异即失�
 ```
 
 改动 `TinadecCore/`、`TinadecTools/`、`TinadecGateway/src/` 或生成的客户端的
-Pull Request，应通过 `main` 分支上相应的 CI 工作流（POSIX core、契约漂移、
-CLA）。
+Pull Request，应通过 `main` 分支上相应的 CI 工作流（POSIX core、契约漂移）
+及独立的 CLA Assistant 检查。
 
 ## 项目约定
 

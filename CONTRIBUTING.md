@@ -83,37 +83,17 @@ observed behavior. For bugs, include the version you are using.
 3. **Match the project's conventions** (see [Project conventions](#project-conventions)).
 4. **Run the relevant checks locally** before pushing (see
    [Build & test](#build--test)).
-5. **Sign the CLA** once in the
-   [CLA v1 signature register](https://github.com/Tinadec/TinadecOffice/discussions/67).
-   Post the exact Chinese statement shown in that Discussion. The per-PR option
-   below remains supported:
-
-   > I have read the CLA Document and I hereby sign the CLA
-
-   The [CLA Assistant workflow](.github/workflows/cla.yml) records your
-   signature automatically. Skipping this means a PR will fail the required check.
+5. **Sign the CLA** through CLA Assistant (see [Signing the CLA](#signing-the-cla)).
 
 ### Signing the CLA
 
-The canonical, repo-wide signature is recorded in
-[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67).
-Read the pinned CLA v1 documents and post the exact Chinese statement shown in
-the Discussion as a new comment. The
-[CLA Discussion Signature workflow](.github/workflows/cla-discussion.yml)
-verifies the comment's GitHub account, fixed statement, Discussion identity and
-CLA commit before appending your user ID to the signature store.
+Read [CLA.md](CLA.md) or [CLA.zh-CN.md](CLA.zh-CN.md), then follow the signing
+link provided by CLA Assistant on your pull request. Complete signing there
+and check the CLA status on your pull request before merging.
 
-Alternatively, the CLA Assistant bot will post a comment on your pull request
-asking you to sign. Reply with the exact sentence:
-
-> I have read the CLA Document and I hereby sign the CLA
-
-Your GitHub user ID, comment URL and the pinned CLA commit are recorded in
-`signatures/version1/cla.json` on the `cla-signatures` branch as evidence.
-After you sign, the workflows re-run the `CLAAssistant` check for your open PRs;
-that check is required on `main` before a pull request can be merged.
-
-If you need to re-check after signing, comment `recheck`.
+Signing and checks are handled by CLA Assistant, not repository GitHub Actions.
+The former Discussion and pull-request comment signing flows are retired;
+[historical signature records](signatures/README.md) are preserved for audit.
 
 ## Development workflow
 
@@ -141,7 +121,8 @@ npm run check:drift   # regenerates the desktop OpenAPI client and fails on diff
 
 A pull request that changes `TinadecCore/`, `TinadecTools/`,
 `TinadecGateway/src/` or the generated client should pass the relevant CI
-workflows (POSIX core, contract drift, CLA) on the `main` branch.
+workflows (POSIX core, contract drift) on the `main` branch and the separate
+CLA Assistant check.
 
 ## Project conventions
 
