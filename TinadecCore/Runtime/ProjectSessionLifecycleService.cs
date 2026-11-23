@@ -97,7 +97,7 @@ public sealed class ProjectSessionLifecycleService
         // already removed the session row or its relationships.
         var pending = PurgeJournal(sessionId);
         if (_services is not null && File.Exists(pending))
-        { await CompletePurgeAsync(await ScopeSessionDataGraph.ReadSnapshotAsync(_services, pending, ct).ConfigureAwait(false), pending, ct).ConfigureAwait(false); return; }
+        { await CompleteOrAbandonAsync(await ScopeSessionDataGraph.ReadSnapshotAsync(_services, pending, ct).ConfigureAwait(false), pending, ct).ConfigureAwait(false); return; }
         var session = await _store.GetSessionAnyStatusAsync(sessionId, ct).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
         if (session.LifecycleStatus != LifecycleStatuses.Trashed)
@@ -134,7 +134,7 @@ public sealed class ProjectSessionLifecycleService
             StorageScopePaths.RejectLinks(_paths.Locations.Root, journal);
             Directory.CreateDirectory(Path.GetDirectoryName(journal)!);
             await ScopeSessionDataGraph.WriteSnapshotAsync(journal, graph, ct).ConfigureAwait(false);
-            await CompletePurgeAsync(graph, journal, ct).ConfigureAwait(false);
+            await CompleteOrAbandonAsync(graph, journal, ct).ConfigureAwait(false);
             return;
         }
         var runIds = new List<Guid>();
@@ -153,20 +153,65 @@ public sealed class ProjectSessionLifecycleService
         }
     }
 
-    public async Task RecoverPendingPurgesAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Finishes purges that were interrupted by a crash. Returns the journals that had to be abandoned
+    /// because a configuration document broke midway, so the host can report "last cleanup did not
+    /// finish" instead of retrying the same failure on every start.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RecoverPendingPurgesAsync(CancellationToken ct = default)
     {
-        if (_services is null) return;
+        if (_services is null) return [];
         var root = Path.Combine(_paths.Locations.State, "session-purges");
         StorageScopePaths.RejectLinks(_paths.Locations.Root, root);
-        if (!Directory.Exists(root)) return;
+        if (!Directory.Exists(root)) return [];
+        var abandoned = new List<string>();
         foreach (var journal in Directory.EnumerateFiles(root, "*.toml"))
         {
             StorageScopePaths.RejectLinks(root, journal);
-            var graph = await ScopeSessionDataGraph.ReadSnapshotAsync(_services, journal, ct).ConfigureAwait(false);
-            if (Path.GetFileNameWithoutExtension(journal) != graph.SessionId.ToString("N"))
-                throw new InvalidDataException("Session purge journal identity does not match its filename: " + journal);
+            try
+            {
+                var graph = await ScopeSessionDataGraph.ReadSnapshotAsync(_services, journal, ct).ConfigureAwait(false);
+                if (Path.GetFileNameWithoutExtension(journal) != graph.SessionId.ToString("N"))
+                    throw new InvalidDataException("Session purge journal identity does not match its filename: " + journal);
+                await CompletePurgeAsync(graph, journal, ct).ConfigureAwait(false);
+            }
+            catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
+            {
+                abandoned.Add(MarkJournalAbandoned(journal));
+            }
+        }
+        return abandoned;
+    }
+
+    /// <summary>
+    /// A configuration document broke while purging. Retrying on every start would loop on the same
+    /// failure and look like "nothing happens", so the journal is renamed out of the way: the state says
+    /// "last cleanup did not finish" and the data stays on disk until someone repairs the document.
+    /// </summary>
+    private async Task CompleteOrAbandonAsync(SessionDataGraph graph, string journal, CancellationToken ct)
+    {
+        try
+        {
             await CompletePurgeAsync(graph, journal, ct).ConfigureAwait(false);
         }
+        catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
+        {
+            MarkJournalAbandoned(journal);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Renames a journal so <c>RecoverPendingPurgesAsync</c> (which reads only "*.toml") no longer retries
+    /// it. The session id survives in the name and a repeat abandonment appends a counter instead of
+    /// overwriting the earlier evidence.
+    /// </summary>
+    internal static string MarkJournalAbandoned(string journal)
+    {
+        var target = journal + ".abandoned";
+        for (var attempt = 2; File.Exists(target); attempt++) target = journal + ".abandoned" + attempt;
+        File.Move(journal, target);
+        return target;
     }
 
     private string PurgeJournal(Guid sessionId) => Path.Combine(_paths.Locations.State, "session-purges", sessionId.ToString("N") + ".toml");
