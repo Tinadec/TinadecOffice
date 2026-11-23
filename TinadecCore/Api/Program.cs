@@ -13,9 +13,9 @@ var initialConfiguration = scopesEnabled && !File.Exists(Path.Combine(StorageSco
 // guessing a default path could point the app at the wrong data. What changed is where the reason
 // goes — this stage runs before the HTTP host exists, so /readiness cannot report it. The receipt is
 // the only channel left for the desktop host to name the broken file.
-var userRootForBootstrap = scopesEnabled
-    ? StorageScopePaths.UserRoot(builder.Configuration["TinadecStorage:UserRoot"])
-    : null;
+// Computed even when scopes are disabled: a receipt from an earlier failed start has to be cleared
+// on every successful bootstrap, including the path that never opens a scope.
+var userRootForBootstrap = StorageScopePaths.UserRoot(builder.Configuration["TinadecStorage:UserRoot"]);
 IScopeStorageLocations? userScope = null;
 if (scopesEnabled)
 {
@@ -23,9 +23,9 @@ if (scopesEnabled)
     {
         userScope = StorageHostBootstrap.Configure(builder.Configuration);
     }
-    catch (Exception error) when (error is ConfigurationDocumentException or InvalidDataException)
+    catch (Exception error) when (BootstrapFailure.IsConfigurationFailure(error))
     {
-        StartupFailureReceipt.Write(userRootForBootstrap!, DocumentFailureCode(error), "storage", error.Message);
+        StartupFailureReceipt.Write(userRootForBootstrap, BootstrapFailure.DocumentCode(error), "storage", error.Message);
         throw;
     }
 }
@@ -43,15 +43,17 @@ if (userScope is not null)
     {
         builder.Logging.AddProvider(new ScopeDiagnosticLoggerProvider(userScope));
     }
-    catch (Exception error) when (error is ConfigurationDocumentException or InvalidDataException)
+    catch (Exception error) when (BootstrapFailure.IsConfigurationFailure(error))
     {
         // logging.toml is read by the scope logger provider, also before the host exists.
-        StartupFailureReceipt.Write(userRootForBootstrap!, DocumentFailureCode(error), "logging", error.Message);
+        StartupFailureReceipt.Write(userRootForBootstrap, BootstrapFailure.DocumentCode(error), "logging", error.Message);
         throw;
     }
-    // Bootstrap completed: a receipt from an earlier failed start must not survive as current advice.
-    StartupFailureReceipt.Clear(userRootForBootstrap!);
 }
+// Bootstrap completed: a receipt from an earlier failed start must not survive as current advice.
+// This sits outside the scope block on purpose — a start with scopes disabled never opens one, and
+// leaving the old receipt in place would make the desktop name a file that is no longer broken.
+StartupFailureReceipt.Clear(userRootForBootstrap);
 if (OperatingSystem.IsWindows() && builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
 {
     builder.Logging.AddEventLog();
@@ -109,7 +111,6 @@ using (var scope = app.Services.CreateScope())
         {
             await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
             await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
-            if (scopesEnabled) abandonedPurges = (await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync()).Count;
         }
         catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
         {
@@ -117,6 +118,22 @@ using (var scope = app.Services.CreateScope())
             app.Logger.LogError(error,
                 "Storage startup continued with {Count} configuration diagnostic(s); see /api/v1/readiness.",
                 startupConfiguration.Diagnostics.Count);
+        }
+        // Purge recovery is deliberately outside that try: a document that stopped migration must not
+        // also silence the journals waiting for cleanup. Otherwise every later start skips recovery,
+        // retries nothing, and the abandoned data is never reported either.
+        if (scopesEnabled)
+        {
+            try
+            {
+                abandonedPurges = (await scope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>()
+                    .RecoverPendingPurgesAsync()).Count;
+            }
+            catch (Exception error) when (StartupConfigurationState.IsRecoverable(error))
+            {
+                startupConfiguration.Record("purge-recovery", error);
+                app.Logger.LogError(error, "Session purge recovery was skipped after a configuration diagnostic.");
+            }
         }
         if (abandonedPurges > 0)
         {
@@ -151,9 +168,6 @@ using (var seedScope = app.Services.CreateScope())
 app.MapTinadecCore();
 
 app.Run();
-
-static string DocumentFailureCode(Exception error)
-    => error is ConfigurationDocumentException document ? document.Code : "configuration_invalid";
 
 /// <summary>
 /// Exposed for integration test hosting (WebApplicationFactory).
