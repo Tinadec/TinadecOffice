@@ -275,6 +275,9 @@ test('saving a capsule style rewrites one quoted string and keeps the rest of th
     './hostControl.cjs': { createHostControl: () => ({ serviceToken: 'unused-fixture-credential' }) },
     './hostIdentity.cjs': {},
     './hostConnection.cjs': {},
+    // Bootstrap receipt reader (this branch's main.cjs loads it): the fixture never writes a receipt,
+    // so the stub only satisfies the destructuring at load time.
+    './startupFailure.cjs': { readStartupFailure: () => null },
     './trustedHostRequests.cjs': {
       initializeTrustedHostRequests() {},
       isTrustedHostDocumentSender: (event) => event.mainFrame === true,
