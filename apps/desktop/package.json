@@ -36,6 +36,7 @@
       "output": "release"
     },
     "asar": true,
+    "afterPack": "scripts/sign-mac-adhoc.mjs",
     "files": [
       "package.json",
       "electron/**/*",

@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostRuntimeTarget } from "./runtimeTargets.mjs";
+import { signStagedRuntime } from "./sign-mac-adhoc.mjs";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = join(desktopDir, ".runtime-cache", "tmp");
@@ -31,13 +32,18 @@ if (isDirectRun) {
 	const target = hostRuntimeTarget();
 	const passthrough = process.argv.slice(2);
 	mkdirSync(tempDir, { recursive: true });
+	// Seal the staged runtime before electron-builder copies it into the bundle. The Office channel
+	// archives are built from this directory and compared byte-for-byte with the bundle copy, so
+	// signing the bundle copies afterwards would silently break every macOS release.
+	if (process.platform === "darwin") signStagedRuntime(join(desktopDir, "runtime"));
 	const command = process.platform === "win32" ? "bunx.cmd" : "bunx";
 	const result = spawnSync(command, ["electron-builder", ...builderArgs(target.key, passthrough)], {
 		cwd: desktopDir,
 		env: {
 			...process.env,
-			// macOS signing stays off until there is a Developer ID to use; without this,
-			// electron-builder spends minutes looking for an identity and then fails the build.
+			// No Developer ID yet, so electron-builder must not look for one. It still has to skip
+			// signing here instead of failing: the afterPack hook below seals the bundle ad hoc.
+			// Without this, electron-builder spends minutes hunting an identity and then fails.
 			CSC_IDENTITY_AUTO_DISCOVERY: "false",
 			TEMP: tempDir,
 			TMP: tempDir,
