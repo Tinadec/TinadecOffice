@@ -175,18 +175,8 @@ TinadecOffice/
 
 签署 CLA 即向项目方授予**永久、不可撤销、全球范围内**的权利，可对您的贡献
 进行使用、修改、再许可与商业化开发——包括在本项目于开源与闭源之间切换时
-继续使用。贡献者在自己的 Pull Request 上评论以下语句即可签署：
-
-> I have read the CLA Document and I hereby sign the CLA
-
-正式的 CLA v1 签署台账是
-[Discussion #67](https://github.com/Tinadec/TinadecOffice/discussions/67)。
-在该 Discussion 中发布页面写明的确切中文授权语句，即可把您的 GitHub 账号与
-CLA v1 绑定，之后本仓库的所有贡献均受该协议覆盖。按 PR 评论签署的旧流程仍
-保留。
-
-[CLA Assistant 工作流](.github/workflows/cla.yml)会在每个 Pull Request 上
-强制执行此要求。
+继续使用。签署与检查由 CLA Assistant 处理，请按 Pull Request 上 CLA Assistant
+提供的签署链接完成操作；仓库 GitHub Actions 不再收集签名或执行 CLA 检查。
 
 ## 团队
 
