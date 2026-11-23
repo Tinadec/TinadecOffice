@@ -28,17 +28,29 @@ function sha256(buffer) {
 
 function extract(archivePath, destDir, isZip) {
 	if (isZip) {
-		// Windows ships Expand-Archive everywhere; POSIX staging targets use tar.gz.
+		if (process.platform === "win32") {
+			// Prefer Windows System32 bsdtar to avoid legacy Windows PowerShell Expand-Archive /
+			// 3-arg ExtractToDirectory issues on newer .NET / Windows runners.
+			const systemTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+			if (existsSync(systemTar)) {
+				const r = spawnSync(systemTar, ["-xf", archivePath, "-C", destDir], { stdio: "inherit" });
+				if (r.error) throw r.error;
+				if (r.status !== 0) throw new Error(`tar exited with code ${r.status}`);
+				return;
+			}
+		}
 		const quote = (value) => `'${value.replaceAll("'", "''")}'`;
 		const r = spawnSync(
-			"powershell.exe",
+			"pwsh",
 			["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${quote(archivePath)} -DestinationPath ${quote(destDir)} -Force`],
 			{ stdio: "inherit" },
 		);
+		if (r.error) throw r.error;
 		if (r.status !== 0) throw new Error(`Expand-Archive exited with code ${r.status}`);
 		return;
 	}
 	const r = spawnSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "inherit" });
+	if (r.error) throw r.error;
 	if (r.status !== 0) throw new Error(`tar exited with code ${r.status}`);
 }
 

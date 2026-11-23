@@ -176,12 +176,18 @@ async function downloadPinned(label, url, asset, expectedSha256) {
 
 /// Archives come in two shapes: ripgrep's Windows asset is a zip, its Linux assets are tar.gz
 /// (the musl builds, so the packaged binary does not care about the host glibc), and the macOS
-/// assets are zip again. Expand-Archive only exists on Windows and GNU tar from Git Bash cannot
-/// read zips, so the extractor is chosen by the asset, never by the host.
+/// assets are zip again. On Windows, prefer System32's bsdtar (GNU tar from Git Bash cannot read
+/// zips, and legacy Windows PowerShell 5.1 Expand-Archive can crash on ExtractToDirectory overloads
+/// on windows-2022 runners); fall back to pwsh only if System32 tar.exe is absent.
 function extractArchive(archive, destination, asset) {
 	if (asset.endsWith(".zip")) {
 		if (process.platform === "win32") {
-			run("powershell.exe", [
+			const systemTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+			if (existsSync(systemTar)) {
+				run(systemTar, ["-xf", archive, "-C", destination]);
+				return;
+			}
+			run("pwsh", [
 				"-NoProfile",
 				"-NonInteractive",
 				"-Command",
