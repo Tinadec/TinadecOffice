@@ -486,7 +486,18 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
             // Opening imported data does not authorize a recovered mutation. Recovery retains the existing approval gates.
             await provider.GetRequiredService<StorageLifecycleService>().ReconcileAsync().ConfigureAwait(false);
             await using (var recoveryScope = provider.CreateAsyncScope())
-                await recoveryScope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>().RecoverPendingPurgesAsync().ConfigureAwait(false);
+            {
+                var abandoned = await recoveryScope.ServiceProvider.GetRequiredService<ProjectSessionLifecycleService>()
+                    .RecoverPendingPurgesAsync().ConfigureAwait(false);
+                // A journal is abandoned when a configuration document broke the delete midway. The data
+                // stays on disk, so a successful mount has to say so instead of reading as "cleaned up".
+                if (abandoned.Count > 0)
+                {
+                    _host.GetService<ILoggerFactory>()?.CreateLogger(typeof(StorageScopeRegistry)).LogWarning(
+                        "Scope {StorageId} mounted with {Count} abandoned session purge journal(s) after a configuration error: {Journals}",
+                        scope.StorageId, abandoned.Count, string.Join(", ", abandoned));
+                }
+            }
             await provider.GetRequiredService<RecoveryCoordinator>().RunStartupPassesAsync().ConfigureAwait(false);
             foreach (var worker in provider.GetServices<IHostedService>())
             {
