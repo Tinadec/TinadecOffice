@@ -101,9 +101,11 @@ test("Package metadata the installer and the archive must agree on is checked", 
 });
 
 test("The checker is wired into the Linux leg and reads the archive, not a guess", () => {
-	assert.match(pkg.scripts["check:deb"] ?? "", /node scripts\/check-deb-package\.mjs/);
+	// The Bun migration made every script `bun scripts/...`; the assertion names the entry, not Node.
+	assert.match(pkg.scripts["check:deb"] ?? "", /bun scripts\/check-deb-package\.mjs/);
 	const workflow = readFileSync(resolve(desktopDir, "..", "..", ".github", "workflows", "desktop-release.yml"), "utf8");
-	assert.match(workflow, /npm run check:deb -w @tinadec\/desktop/);
+	// The Bun migration rewrote the workflow step to `bun run --cwd apps/desktop check:deb`.
+	assert.match(workflow, /bun run --cwd apps\/desktop check:deb/);
 	const source = readFileSync(join(desktopDir, "scripts", "check-deb-package.mjs"), "utf8");
 	assert.match(source, /\["xOf", dataTar, desktopName\]/, "the .desktop file must come out of data.tar");
 	assert.equal(existsSync(join(desktopDir, "scripts", "check-deb-package.mjs")), true);

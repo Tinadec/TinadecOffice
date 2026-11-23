@@ -117,7 +117,7 @@ test("Both smokes read the contract from one module, and it covers every service
 });
 
 test("The POSIX smoke is wired for both legs and refuses Windows", () => {
-	assert.match(pkg.scripts["smoke:packaged:posix"] ?? "", /node scripts\/smoke-packaged-posix\.mjs/);
+	assert.match(pkg.scripts["smoke:packaged:posix"] ?? "", /bun scripts\/smoke-packaged-posix\.mjs/);
 	assert.match(posixScript, /The POSIX smoke does not run on Windows/);
 	assert.equal(existsSync(join(desktopDir, "scripts", "smokeAssertions.mjs")), true);
 
