@@ -438,7 +438,8 @@ public static class FilesystemBrowseEndpoints
             isGitRepo = Directory.Exists(Path.Combine(dir.FullName, ".git"));
             hasChildren = dir.EnumerateFileSystemInfos("*", new EnumerationOptions
             {
-                IgnoreInaccessible = true
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.System
             }).Any();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

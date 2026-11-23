@@ -113,7 +113,7 @@ public sealed class PtyBackendContractTests
         Assert.Contains("pipes", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Start_RejectsAScreenTooSmallToHoldAPrompt()
     {
         var failure = Assert.Throws<ArgumentOutOfRangeException>(() => PtyBackend.Start(

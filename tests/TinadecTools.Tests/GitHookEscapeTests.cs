@@ -28,7 +28,16 @@ public sealed class GitHookEscapeTests
     {
         var hooks = Path.Combine(repo.Path, ".git", "hooks");
         Directory.CreateDirectory(hooks);
-        File.WriteAllText(Path.Combine(hooks, "pre-commit"), FailingHook);
+        var hookPath = Path.Combine(hooks, "pre-commit");
+        File.WriteAllText(hookPath, FailingHook);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                hookPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
         // Repository-level hooksPath, so the test also proves -c outranks it rather
         // than only working on a repository that never configured one.
         repo.RunGit("config", "core.hooksPath", ".git/hooks");
