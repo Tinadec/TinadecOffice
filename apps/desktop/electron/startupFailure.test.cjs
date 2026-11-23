@@ -53,3 +53,13 @@ test('receipt fields are bounded and document ids become file names', () => with
   assert.equal(documentFile(''), null);
   assert.equal(documentFile(42), null);
 }));
+test('an oversized receipt is rejected instead of being read into the main process', () => withRoot((root) => {
+  mkdirSync(path.join(root, 'state'), { recursive: true });
+  writeFileSync(path.join(root, 'state', 'startup-failure.json'), JSON.stringify({
+    code: 'configuration_invalid',
+    document: 'storage',
+    message: 'x'.repeat(20000),
+  }));
+  // A receipt is a few hundred bytes; anything larger is not one of ours and must not be parsed.
+  assert.equal(readStartupFailure(root), null);
+}));

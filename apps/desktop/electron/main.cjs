@@ -1054,7 +1054,10 @@ app.whenReady().then(async () => {
           console.error('[tinadec] local service startup failed:',
             startupFailure?.code ?? error?.code ?? 'unknown',
             startupFailure?.document ?? '',
-            startupFailure?.message ?? error?.message ?? error);
+            startupFailure?.message ?? error?.message ?? error,
+            // A timeout carries its cause in diagnostic, not message; without it the log says only
+            // "did not become ready" and the one line that explains it is lost.
+            error?.diagnostic ? 'diagnostic: ' + error.diagnostic : '');
           throw error;
         }
         signal.throwIfAborted();

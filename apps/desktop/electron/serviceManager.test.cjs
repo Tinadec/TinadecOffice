@@ -616,3 +616,55 @@ test('Linux starts services detached and terminates the process group, not just 
   await assert.rejects(pending, /host shutting down/);
   assert.equal(starts, 0);
 });
+test('a startup timeout keeps the unmatched final stderr line and reports process status', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-timeout-'));
+  const runtime = createRuntime(root);
+  const ready = new Set();
+  let nextPid = 900;
+  const manager = createServiceManager({
+    platform: 'win32',
+    environment: { TINADEC_HOME: path.join(root, '.tinadec') },
+    homedirImpl: () => root,
+    startupTimeoutMs: 60,
+    pollIntervalMs: 1,
+    fetchImpl: async (url) => {
+      if (!ready.has(url)) throw new Error('not listening');
+      return healthResponse(url.startsWith(CORE_URL) ? coreHealth : gatewayHealth);
+    },
+    spawnImpl: (command) => {
+      const child = new FakeChild(nextPid++);
+      child.stderr = new EventEmitter();
+      child.kill = () => {
+        child.exitCode = 0;
+        queueMicrotask(() => child.emit('close'));
+      };
+      if (command === runtime.paths.core) {
+        ready.add(`${CORE_URL}/api/v1/health`);
+      } else {
+        // A crash line without its newline is still the cause: the timeout branch has to flush it.
+        setTimeout(() => child.stderr.emit('data', 'fatal: sqlite database is locked'), 5);
+      }
+      return child;
+    },
+    spawnSyncImpl: () => ({ status: 0 }),
+  });
+
+  try {
+    const failure = await manager.ensureLocalServices({
+      isPackaged: true,
+      gatewayUrl: DEFAULT_GATEWAY_URL,
+      resourcesPath: runtime.resourcesPath,
+      localAppDataPath: runtime.localAppDataPath,
+    }).then(() => null, error => error);
+    assert.ok(failure, 'startup must time out');
+    assert.equal(failure.code, 'service_start_failed');
+    assert.match(failure.diagnostic, /database is locked/);
+    assert.match(failure.message, /did not become ready/);
+    // The contract promises process status on timeouts too; a live child reports nulls.
+    assert.equal(failure.exitCode, null);
+    assert.equal(failure.signal, null);
+  } finally {
+    await manager.stopLocalServices();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

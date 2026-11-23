@@ -28,7 +28,9 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
     // and "temporarily unavailable" hides the one thing a user can act on.
     const startupFailure = error?.startupFailure;
     if (startupFailure?.code) {
-      return { state: 'unavailable', error: {
+      // retryable:false is what stops the automatic relaunch loop: the document stays broken until
+      // someone repairs it, so retrying only hides the file name the user needs.
+      return { state: 'unavailable', retryable: false, error: {
         code: 'host_startup_configuration_invalid',
         message: 'A configuration file cannot be read, so the local services did not start. Repair or restore it, then retry.',
         document: typeof startupFailure.document === 'string' ? startupFailure.document : null,
@@ -66,8 +68,9 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
       return snapshot();
     }).catch(error => {
       if (stopped || epoch !== generation) return snapshot();
-      publish({ ...classify(error), managed, checked_at: now() });
-      if (status.state === 'unavailable' && retryIndex < retryDelaysMs.length) schedule(retryDelaysMs[retryIndex++]);
+      const classified = classify(error);
+      publish({ ...classified, managed, checked_at: now() });
+      if (classified.retryable !== false && status.state === 'unavailable' && retryIndex < retryDelaysMs.length) schedule(retryDelaysMs[retryIndex++]);
       return snapshot();
     }).finally(() => {
       clearTimer(timeout);

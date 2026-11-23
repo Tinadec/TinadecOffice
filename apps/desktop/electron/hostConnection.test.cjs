@@ -81,3 +81,18 @@ test('verification timeout is recoverable even when a dependency never settles',
 test('a false proof cannot authorize the host', async () => {
   const f = fixture(async () => false); assert.equal((await f.host.start()).state, 'rejected'); f.host.stop();
 });
+test('a receipt-backed configuration failure is not retried automatically', async () => {
+  const f = fixture(async () => {
+    throw Object.assign(new Error('core did not start'), {
+      startupFailure: { code: 'configuration_invalid', document: 'storage.toml', message: 'bad document' },
+    });
+  });
+  const result = await f.host.start();
+  assert.equal(result.state, 'unavailable');
+  assert.equal(result.error.code, 'host_startup_configuration_invalid');
+  assert.equal(result.error.document, 'storage.toml');
+  // The document stays broken until someone repairs it; retrying would only hide the file name.
+  assert.equal(f.timers.size, 0, 'no automatic retry while a document is broken');
+  assert.equal(f.host.snapshot().retryable, false);
+  f.host.stop();
+});

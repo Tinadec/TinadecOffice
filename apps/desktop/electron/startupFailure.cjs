@@ -1,4 +1,4 @@
-const { readFileSync } = require('node:fs');
+const { readFileSync, statSync } = require('node:fs');
 const path = require('node:path');
 
 /**
@@ -13,6 +13,13 @@ const path = require('node:path');
  */
 const MAX_MESSAGE = 400;
 
+/**
+ * A receipt is a few hundred bytes of codes and ids. Anything larger is not one of ours, and reading
+ * it whole from the main process would let a planted file stall or kill startup before it is even
+ * classified. Reject by size before parsing.
+ */
+const MAX_RECEIPT_BYTES = 16 * 1024;
+
 /** Core ids are "storage" and "logging"; the window should name the file a person can open. */
 function documentFile(document) {
   if (typeof document !== 'string' || document.trim() === '') return null;
@@ -23,11 +30,19 @@ function readStartupFailure(userRoot, options = {}) {
   const read = options.readFileSync ?? readFileSync;
   if (typeof userRoot !== 'string' || userRoot.trim() === '') return null;
   const file = path.join(userRoot, 'state', 'startup-failure.json');
+  const stat = options.statSync ?? statSync;
+  let size;
+  try {
+    size = stat(file).size;
+  } catch {
+    return null; // no receipt: ordinary startup failure, say nothing extra
+  }
+  if (!Number.isFinite(size) || size > MAX_RECEIPT_BYTES) return null;
   let text;
   try {
     text = read(file, 'utf8');
   } catch {
-    return null; // no receipt: ordinary startup failure, say nothing extra
+    return null;
   }
   let parsed;
   try {
