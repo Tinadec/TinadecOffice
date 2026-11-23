@@ -1,5 +1,20 @@
 # DESKTOP APP KNOWLEDGE
 
+## 2026-11-23 macOS 产物重新做 ad-hoc 封印（「已损坏」的真因）
+
+`build.mac.identity` 是 `null`，打包时又设了 `CSC_IDENTITY_AUTO_DISCOVERY=false`，于是 electron-builder **完全跳过签名**：`.app` 留下的是预编译 Electron 的 linker-signed 空壳（`Identifier=Electron`、`flags=adhoc,linker-signed`、`Sealed Resources=none`、`Info.plist=not bound`，内嵌 5 个 Mach-O 同样无 `TeamIdentifier`）。带 `com.apple.quarantine` 的下载因此被判「已损坏，无法打开」——**这不是"未签名所以提示开发者不明"，而是没有任何放行入口**。原来的 macOS 冒烟（`smoke-packaged-posix.mjs`）从挂载点直接 spawn 二进制，不经 LaunchServices、DMG 又是 CI 现场构建，所以 CI 从来看不见这条。
+
+现在的形状是两层，别合并：
+
+- **先签暂存 runtime**（`package.mjs` 里的 `signStagedRuntime(join(desktopDir, "runtime"))`）再让 electron-builder 复制。Office channel 的归档是从这个目录做出来的，`verify-office-channel.mjs` 要求它与包内副本**逐字节一致**；若只签包内副本，每次 macOS 发布都会以"字节不同"红掉。
+- **`afterPack` 钩子**（`scripts/sign-mac-adhoc.mjs`）按 codesign 的要求**由内向外**签：Helper `.app` → Framework 内 Helpers → Framework → `.app`，签完再断言包内 runtime 与暂存目录仍逐字节相同（失败时点名文件，而不是留到 channel 校验时再说）。非 darwin 目标直接 return，Windows/Linux 产物零变化。
+
+名单只此一份：`RUNTIME_EXECUTABLES = core/TinadecCore.Api, gateway/TinadecGateway, tools/TinadecTools, tools/rg, native/rg/rg`。**改 `stage-runtime.mjs` 的目录布局就要同步改这里**，否则某个二进制会悄悄不被签。将来接 Developer ID + 公证时，同一份清单加 `--options runtime` 与时间戳即可复用。
+
+**"封印完整"不等于"双击即开"**：完整封印下的提示是「无法验证开发者」，用户走「系统设置 → 隐私与安全性 → 仍要打开」；macOS 15 Sequoia 起右键 → 打开不再是放行路径，文档别再写它。
+
+**门禁**：`node --test scripts/signMacAdhoc.test.mjs`（签名顺序、暂存签名跳过缺失文件、非 darwin 空转、参数形状、字节一致性）、`scripts/packageTargets.test.mjs`（`afterPack` 与 `package.mjs` 的接线）、CI mac 腿的 `codesign --verify --deep --strict` + `Identifier=com.tinadec.office` 断言。**未验证**：本机没有证书链，真实 Developer ID/公证路径没走；`afterPack` 在真实 electron-builder 里只由单元断言守着，完整 `package:mac` 未在本机跑通（需要 vite build + runtime staging）。
+
 ## 2026-11-14 原生测试发现改为目录展开
 
 桌面 `node --test` 曾用手写文件清单，`electron/companionAvatars.test.cjs`（信任发送方校验，与 issue #33 同类安全边界）不在其中，因此本地与 CI 都没有跑过它。现改为 `vitest run && node ../../scripts/run-node-tests.mjs electron scripts ../../scripts/check-dependencies.test.mjs`：`run-node-tests.mjs`（仓库根 `scripts/`）把目录展开为其内部的 `*.test.js|cjs|mjs`，所以新增测试文件自动被发现（`mainStartup.test.cjs` 那条“已加入 `package.json` 的 `node --test` 清单”的历史记录自此不再需要手工登记）。跨包的 `../../scripts/check-dependencies.test.mjs` 仍显式列出，因为 `desktop-release.yml` 只跑本包的 test，而 root 的 `test:scripts` 不在那条链上。**未验证**：本轮终端不可用，未运行 vitest / `node --test`。

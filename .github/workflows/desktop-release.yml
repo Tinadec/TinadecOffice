@@ -216,6 +216,20 @@ jobs:
         if: matrix.label == 'osx-arm64'
         run: bun run --cwd apps/desktop smoke:packaged:posix
 
+      # electron-builder skips signing (no Developer ID yet), so the afterPack hook seals the bundle
+      # ad hoc. Without that seal macOS calls a quarantined download "damaged" and the user has no
+      # way through; the smoke above spawns the binary straight from the mount point, so it can never
+      # notice. This step is the only thing that watches the seal.
+      - name: Verify the macOS bundle carries a complete ad-hoc seal
+        if: matrix.label == 'osx-arm64'
+        run: |
+          set -e
+          app=$(ls -d apps/desktop/release/mac-arm64/*.app)
+          codesign --verify --deep --strict "$app"
+          identifier=$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')
+          test "$identifier" = "com.tinadec.office" || { echo "unexpected code identity: $identifier"; exit 1; }
+          echo "seal verified: $identifier"
+
       - name: Smoke test unpacked application
         if: matrix.label == 'win-x64'
         run: bun run --cwd apps/desktop smoke:packaged
