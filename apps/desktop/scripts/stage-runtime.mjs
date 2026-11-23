@@ -36,7 +36,6 @@ const rootDir = resolve(desktopDir, "..", "..");
 const runtimeDir = join(desktopDir, "runtime");
 const cacheDir = join(desktopDir, ".runtime-cache");
 const stagingDir = join(cacheDir, "runtime.staging");
-const npmCli = process.env.npm_execpath;
 
 // `--target` selects the shipping matrix entry; the default is whatever this machine can honestly
 // build. Cross-staging was never possible anyway: the Bun standalone and electron-builder both run
@@ -56,9 +55,6 @@ if (target.platform !== process.platform || target.arch !== process.arch) {
 		`stage:runtime target '${target.key}' needs a ${target.platform}/${target.arch} host, ` +
 			`this machine is ${process.platform}/${process.arch}.`,
 	);
-}
-if (!npmCli) {
-	throw new Error("stage:runtime must be launched through npm.");
 }
 
 const PORTABLE_GIT_VERSION = "2.55.0.windows.3";

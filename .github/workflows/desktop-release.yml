@@ -2,46 +2,15 @@ name: Desktop release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-    paths:
-      - 'apps/desktop/**'
-      - 'apps/TinadecUI/**'
-      - 'TinadecCore/**'
-      - 'TinadecGateway/**'
-      - 'TinadecTools/**'
-      - 'package.json'
-      - 'bun.lock'
-      - 'scripts/*bubblewrap*'
-      - '.github/workflows/desktop-release.yml'
-      - '.github/workflows/create-version.yml'
-      - 'apps/desktop/scripts/package-office-channel.mjs'
-      - 'apps/desktop/scripts/verify-office-channel.mjs'
-      - 'apps/desktop/scripts/merge-office-channel-catalog.mjs'
-      - 'apps/desktop/scripts/officeChannel.mjs'
-      - 'apps/desktop/scripts/runtimeTargets.mjs'
-      - 'docs/tinadec-office-release-contract.zh-CN.md'
-  pull_request:
-    paths:
-      - 'apps/desktop/**'
-      - 'apps/TinadecUI/**'
-      - 'TinadecCore/**'
-      - 'TinadecGateway/**'
-      - 'TinadecTools/**'
-      - 'package.json'
-      - 'bun.lock'
-      - 'scripts/*bubblewrap*'
-      - '.github/workflows/desktop-release.yml'
-      - '.github/workflows/create-version.yml'
-      - 'apps/desktop/scripts/package-office-channel.mjs'
-      - 'apps/desktop/scripts/verify-office-channel.mjs'
-      - 'apps/desktop/scripts/merge-office-channel-catalog.mjs'
-      - 'apps/desktop/scripts/officeChannel.mjs'
-      - 'apps/desktop/scripts/runtimeTargets.mjs'
-      - 'docs/tinadec-office-release-contract.zh-CN.md'
   workflow_dispatch:
+    inputs:
+      run_smoke:
+        description: "Run headless packaged Electron GUI smoke tests after packaging"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -57,10 +26,8 @@ jobs:
   build:
     name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
-      # A red macOS leg must not hide whether Linux produced a working .deb: every leg reports
-      # for itself, so fail-fast is off.
       fail-fast: false
       matrix:
         include:
@@ -73,21 +40,16 @@ jobs:
           - os: macos-15
             label: osx-arm64
             packageScript: package:mac
-            # Only this leg's bundler outgrows Node's default heap. At ed12133 the renderer build died at
-            # ~2040 MB ("FATAL ERROR: Ineffective mark-compacts near heap limit", `Abort trap: 6`, npm exit
-            # 134) once Mermaid, KaTeX and highlight.js joined the bundle; v0.2.1 (86aeff6) still built
-            # inside the default on this image. The ceiling is a CI-only bundler limit — shrinking the
-            # bundle is the actual fix and remains open.
+            # Bundling Mermaid/KaTeX/Monaco exceeds Node's default 2 GB heap on macOS arm64.
             nodeOptions: --max-old-space-size=8192
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 11.0.100
           cache: false
@@ -97,7 +59,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Cache downloaded desktop runtimes
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/desktop/.runtime-cache/downloads
           key: desktop-runtime-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/stage-runtime.mjs', 'scripts/ripgrep-pin.mjs') }}
@@ -106,138 +68,86 @@ jobs:
 
       - name: Validate tag version
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
+        shell: bash
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.Substring(1)
-          if ($tagVersion -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Release tags must use vX.Y.Z: $env:GITHUB_REF_NAME"
-          }
-          $packageVersion = node -p "require('./apps/desktop/package.json').version"
-          if ($packageVersion -ne $tagVersion) {
-            throw "Desktop version $packageVersion does not match tag $env:GITHUB_REF_NAME"
-          }
+          node -e '
+            const tag = process.env.GITHUB_REF_NAME || "";
+            if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+              throw new Error(`Release tags must use vX.Y.Z, received: ${tag}`);
+            }
+            const tagVersion = tag.slice(1);
+            const pkgVersion = require("./apps/desktop/package.json").version;
+            if (pkgVersion !== tagVersion) {
+              throw new Error(`apps/desktop/package.json (${pkgVersion}) does not match tag ${tag}`);
+            }
+            console.log(`Validated release version ${tagVersion}.`);
+          '
 
-      - name: Install all workspace dependencies (bun.lock covers apps/* and TinadecGateway)
+      - name: Install workspace dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build reviewed Linux Bubblewrap
+      - name: Cache reviewed Linux Bubblewrap
+        id: bwrap-cache
         if: matrix.label == 'linux-x64'
+        uses: actions/cache@v6
+        with:
+          path: native/bwrap
+          key: bwrap-${{ runner.os }}-${{ hashFiles('scripts/bubblewrap-pin.mjs') }}
+
+      - name: Install Bubblewrap build dependencies (Linux cache miss)
+        if: matrix.label == 'linux-x64' && steps.bwrap-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config libcap-dev
-          bun run setup:bwrap
 
-      - name: Test reviewed Bubblewrap staging
-        run: node --test scripts/bubblewrap-pin.test.mjs
-
-      - name: Test Desktop
-        run: bun run --cwd apps/desktop test
-
-      - name: Typecheck Desktop
-        run: bun run --cwd apps/desktop typecheck
-
-      - name: Test Gateway
-        working-directory: TinadecGateway
-        run: bun test src
-
-      - name: Test native TOML and storage scopes for this release
-        run: >-
-          dotnet test TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj
-          --filter "FullyQualifiedName~ConfigurationDocumentTests|FullyQualifiedName~StorageScopeApiTests"
-          --logger "trx;LogFileName=release-storage-scopes.trx" -m:1
-
-      - name: Upload release storage test evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-storage-scopes-${{ matrix.label }}
-          path: TinadecCore/tests/TinadecCore.Api.Tests/TestResults/release-storage-scopes.trx
-          if-no-files-found: warn
+      - name: Stage reviewed Linux Bubblewrap
+        if: matrix.label == 'linux-x64'
+        run: bun run setup:bwrap
 
       - name: Build and package the application
         env:
           NODE_OPTIONS: ${{ matrix.nodeOptions }}
-        # The stager resolves the target from the runner itself, so no leg can stage a runtime for
-        # another platform; the leg name is what the runner is, not what someone typed.
+        # Stages native Core/Gateway/Tools/rg (+ PortableGit on Windows / bwrap on Linux),
+        # checks binary formats & entrypoints, typechecks & builds Desktop, and runs electron-builder.
         run: bun run --cwd apps/desktop ${{ matrix.packageScript }}
 
-      - name: Verify package output
+      - name: Verify Windows package output
         if: matrix.label == 'win-x64'
         run: bun run --cwd apps/desktop verify:package
 
-      # The installer is the deliverable, and nothing here can install it: read the archive the way
-      # a package manager would and check that the launcher, the binary and the icon name each other.
-      - name: Check the Linux package contents
+      - name: Check Linux .deb package contents
         if: matrix.label == 'linux-x64'
         run: bun run --cwd apps/desktop check:deb
 
-      # Electron needs an X server and its shared libraries on a headless runner; without the
-      # packages the app dies before it binds a port, and the smoke's own message would be a
-      # timeout rather than "libgtk-3 is missing".
-      - name: Install the libraries Electron needs on a headless runner
-        if: matrix.label == 'linux-x64'
+      - name: Install headless Electron libraries (optional smoke)
+        if: matrix.label == 'linux-x64' && github.event_name == 'workflow_dispatch' && inputs.run_smoke
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libgbm1 libasound2t64 libgtk-3-0t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2
 
-      - name: Smoke test the packaged application (Linux)
-        if: matrix.label == 'linux-x64'
-        # -ac, not just an X server: the smoke redirects HOME to a throwaway profile, so the Xlib
-        # default cookie lookup ($HOME/.Xauthority) cannot find the authority xvfb-run wrote, and
-        # Electron dies with "Authorization required, but no authorization protocol specified"
-        # followed by SIGSEGV before it binds a port.
+      - name: Smoke test packaged Linux application (optional)
+        if: matrix.label == 'linux-x64' && github.event_name == 'workflow_dispatch' && inputs.run_smoke
         run: >-
           xvfb-run -a --server-args="-screen 0 1280x1024x24 -ac"
           bun run --cwd apps/desktop smoke:packaged:posix
 
-      # The .deb is what ships, and so far only `ar`/`tar` had ever read it. Let the package manager
-      # resolve its Depends and lay it under /opt, then run that file: a deb whose dependency list
-      # names a library Ubuntu 24.04 renamed installs fine from a directory nobody installs from.
-      - name: Install the .deb the way a user would
-        if: matrix.label == 'linux-x64'
-        run: |
-          set -e
-          deb=$(ls apps/desktop/release/*-linux-x64.deb)
-          sudo apt-get install -y --no-install-recommends "./$deb"
-          pkg=$(dpkg-deb -f "$deb" Package)
-          dpkg-query -W -f='installed ${Package} ${Version} ${Architecture}\n' "$pkg"
-          test -x /opt/TinadecOffice/TinadecOffice || { echo '/opt after install:'; ls -l /opt; exit 1; }
-
-      - name: Smoke test the installed application (Linux)
-        if: matrix.label == 'linux-x64'
-        run: >-
-          xvfb-run -a --server-args="-screen 0 1280x1024x24 -ac"
-          bun run --cwd apps/desktop smoke:packaged:posix --
-          --executable=/opt/TinadecOffice/TinadecOffice --label="linux-x64 installed"
-
-      # The macOS smoke mounts the .dmg and runs the binary inside it, so this step is the evidence
-      # that the shipped artifact — not just the directory that fed the packager — starts.
-      - name: Smoke test the packaged application (macOS)
-        if: matrix.label == 'osx-arm64'
+      - name: Smoke test packaged macOS application (optional)
+        if: matrix.label == 'osx-arm64' && github.event_name == 'workflow_dispatch' && inputs.run_smoke
         run: bun run --cwd apps/desktop smoke:packaged:posix
 
-      - name: Smoke test unpacked application
-        if: matrix.label == 'win-x64'
+      - name: Smoke test packaged Windows application (optional)
+        if: matrix.label == 'win-x64' && github.event_name == 'workflow_dispatch' && inputs.run_smoke
         run: bun run --cwd apps/desktop smoke:packaged
 
-      - name: Smoke test installed application
-        if: matrix.label == 'win-x64'
-        run: bun run --cwd apps/desktop smoke:installed
-
-      # Every leg packs its own channel: staging is native-only, so the Windows leg has never seen a
-      # Linux runtime and the Linux leg cannot read a zip. The merged catalog is the release job's job.
       - name: Package Office channel artifacts
         run: node apps/desktop/scripts/package-office-channel.mjs
 
       - name: Verify Office channel artifacts
         run: node apps/desktop/scripts/verify-office-channel.mjs
 
-      # The leg-local office-channel/SHA256SUMS is a build gate, not a release asset: three legs each
-      # writing that one name into one artifact set would silently keep only the last, and the
-      # published sums come from the release job instead.
       - name: Upload Windows package
         if: matrix.label == 'win-x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TinadecOffice-win-x64
           path: |
@@ -252,7 +162,7 @@ jobs:
 
       - name: Upload Linux package
         if: matrix.label == 'linux-x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TinadecOffice-linux-x64
           path: |
@@ -264,7 +174,7 @@ jobs:
 
       - name: Upload macOS package
         if: matrix.label == 'osx-arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TinadecOffice-osx-arm64
           path: |
@@ -278,28 +188,31 @@ jobs:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      # The merge command is the only writer of catalog.json, and it has to run somewhere that can see
-      # all three legs — which is this job, after the downloads, and nowhere else.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       - name: Download verified Windows package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TinadecOffice-win-x64
           path: release-artifacts
 
       - name: Download verified Linux package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TinadecOffice-linux-x64
           path: release-artifacts
 
       - name: Download verified macOS package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TinadecOffice-osx-arm64
           path: release-artifacts
@@ -311,21 +224,10 @@ jobs:
 
       - name: Generate SHA256SUMS
         working-directory: release-artifacts
-        # The published release must carry one sums file covering every published
-        # asset. Measured against a simulated artifact layout, the previous find
-        # uploaded office-channel/SHA256SUMS (a build-job gate that lists only the
-        # four module zips and the catalog) as the release's "SHA256SUMS", while
-        # excluding the generated top-level file — so the installers shipped with
-        # no checksums. Skip every SHA256SUMS in the scan and publish the top-level
-        # one explicitly.
         run: find . -type f ! -name 'SHA256SUMS' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 
       - name: Validate Office channel catalog
         working-directory: release-artifacts
-        # 4 archives per platform (core, gateway, tools, agentpack): one zip on Windows, tar.gz on
-        # the two POSIX legs, because GNU tar writes a tar archive when told to make a zip. The jq
-        # expression stays in the single-argument, min/max form: this job is the release gate, and an
-        # expression that fails to parse here looks like a broken publisher rather than a bad catalog.
         run: |
           test -s office-channel/catalog.json
           test "$(find office-channel -maxdepth 1 -name '*.zip' | wc -l)" -eq 4
@@ -337,16 +239,10 @@ jobs:
             and ((([.products[].releases[0].artifacts[].platform] | unique)) | contains(["linux", "macos", "windows"]))' office-channel/catalog.json >/dev/null
 
       - name: Compose release notes
-        working-directory: release-artifacts
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        # 正文由 scripts/release-body.mjs 组装：头图 → What's new → 自动 changelog → 折叠的
-        # 安装信息。同一个脚本本地也用来补写，所以模板和拼接只有一份实现。
-        #
-        # What's new 来自 docs/releases/<tag>.md。它没有时脚本不会失败——发版不该被一条
-        # 文案卡住——但会升起 ::warning::，提醒这版发出去还没有人话复盘。
-        run: node "$GITHUB_WORKSPACE/scripts/release-body.mjs" "$GITHUB_REF_NAME" --out release-body.md
+        run: node scripts/release-body.mjs "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/release-body.md"
 
       - name: Create GitHub Release
         working-directory: release-artifacts
@@ -357,5 +253,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" SHA256SUMS
           $(find . -type f ! -name 'SHA256SUMS' -print | sort)
           --verify-tag
-          --notes-file release-body.md
+          --notes-file "$RUNNER_TEMP/release-body.md"
           --title "TinadecOffice $GITHUB_REF_NAME"

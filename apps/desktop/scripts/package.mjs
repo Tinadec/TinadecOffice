@@ -31,8 +31,7 @@ if (isDirectRun) {
 	const target = hostRuntimeTarget();
 	const passthrough = process.argv.slice(2);
 	mkdirSync(tempDir, { recursive: true });
-	const command = process.platform === "win32" ? "bunx.cmd" : "bunx";
-	const result = spawnSync(command, ["electron-builder", ...builderArgs(target.key, passthrough)], {
+	const result = spawnSync("bun", ["x", "electron-builder", ...builderArgs(target.key, passthrough)], {
 		cwd: desktopDir,
 		env: {
 			...process.env,
@@ -45,7 +44,6 @@ if (isDirectRun) {
 		},
 		stdio: "inherit",
 		windowsHide: true,
-		shell: process.platform === "win32",
 	});
 	if (result.error) throw result.error;
 	process.exit(result.status ?? 1);

@@ -45,10 +45,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   }
 
-  // process.execPath is whichever runtime invoked us: under `bun run` that is bun.exe and
-  // `--test` is not a flag it accepts (the files would run as plain scripts and `node:test`
-  // throws "Cannot use test outside of the test runner"). `bun test` understands the same
-  // file list under both invocations.
-  const result = spawnSync("bun", ["test", ...files], { stdio: "inherit", shell: process.platform === "win32" });
+  // Always delegate to `node --test`: all electron/script tests target `node:test`
+  // (including CJS `Module._load` hooks and AbortSignal semantics that `bun test`
+  // does not implement identically).
+  const result = spawnSync("node", ["--test", ...files], { stdio: "inherit", windowsHide: true });
+  if (result.error) {
+    console.error(`[run-node-tests] failed to launch node: ${result.error.message}`);
+    process.exit(1);
+  }
   process.exit(result.status ?? 1);
 }

@@ -120,14 +120,14 @@ Manager 只负责机器级运行时和 Pack 的获取、完整性校验、版本
 6. 安装包资产与 catalog 的字节数、SHA-256 对得上；catalog 里不得出现别的平台的 artifact（每条腿只准写自己）。
 7. 归档器必须显式解析：Windows 用 `System32/tar.exe`，POSIX 用系统 `tar`。读取单个条目时要用 `tar -tf` 列出的**原始**条目名（两个归档器都写成 `./x`）——GNU tar 对 `tar -xOf a.tar.gz x` 回的是 `Not found in archive`，实测 exit 2，Windows 腿上的 bsdtar 却两种写法都接受，所以这条差异只在 POSIX 腿上暴露。
 
-发布前（`release` job，仅 tag）另有两道：合并命令自身的结构校验与磁盘核对，以及 `jq` 对最终 `catalog.json` 的形状断言（产品数、每个 release 至少 3 个 artifact、三平台齐备）。归档数量门禁写成"Windows 4 个 zip、POSIX 8 个 tar.gz、3 份 fragment"，这些数字由 `officeChannel.test.mjs` 从 target 表反推校验，不靠人记。
+发布前（`release` job，仅 tag）另有两道：合并命令自身的结构校验与磁盘核对，以及 `jq` 对最终 `catalog.json` 的形状断言（产品数、每个 release 至少 3 个 artifact、三平台齐备）。归档数量门禁按 target 表统计为 Windows 4 个 zip、POSIX 8 个 tar.gz、3 份 fragment。
 
-非 tag 构建可以生成临时归档和 fragment 作为 CI 工件，但只有 tag 构建发布 GitHub Release。Release 只发布一份顶层 `SHA256SUMS`，其内容覆盖全部已发布资产（含三个平台的安装包、模块包与 catalog）；`office-channel/SHA256SUMS` 是 build 任务的验证门禁产物，既不进入 Release，也不再上传——三条腿各写一份同名文件会在 artifact 下载时互相覆盖。实测过旧写法会把这份只列四个模块包与 catalog 的内层清单当作发布校验和上传，安装包因此没有校验和。
+非 tag 构建（例如通过 `workflow_dispatch` 手动触发）可以生成临时归档和 fragment 作为 CI 工件，但只有 tag 构建发布 GitHub Release。Release 只发布一份顶层 `SHA256SUMS`，其内容覆盖全部已发布资产（含三个平台的安装包、模块包与 catalog）；`office-channel/SHA256SUMS` 是 build 任务的验证门禁产物，既不进入 Release，也不再上传——三条腿各写一份同名文件会在 artifact 下载时互相覆盖。实测过旧写法会把这份只列四个模块包与 catalog 的内层清单当作发布校验和上传，安装包因此没有校验和。
 
-## 发布记录与残余边界（2026-10-04）
+## 发布记录与残余边界（2026-10-04 / 2026-11-23 更新）
 
 - **v0.2.0 是本契约三平台形状的第一次真实发布**：Release 资产 23 个（三平台安装器 + 12 个模块归档 + 3 份 fragment + 合并 catalog + `SHA256SUMS` + `latest.yml` + blockmap），release job 的 8 个步骤全绿（三份下载 → 合并 → sums → `jq` 门禁 → `gh release create`）。合并读数：`5 products, 16 artifacts verified on disk across linux/x64, macos/arm64, windows/x64`。发布后用只读命令复核过：**catalog 里 16 个 artifact URL 全部 200**，抽下的两份 AgentPack 归档大小与 SHA-256 与 catalog 一致，Manager 自己的 `validateManifest()` 对**线上那份 catalog** 得 0 条。
-- **tag 不会自己触发发布**：`desktop-release.yml` 的 push 触发带 `paths:`，而指向当前 tip 的 tag 没有变更文件列表可匹配，事件被静默丢弃（v0.2.0 当场遇到：tag 推上去，`gh run list` 里什么都没有）。现在由 `create-version.yml` 在推 tag 之后显式 `gh workflow run desktop-release.yml --ref v<版本>` 发起（该 job 因此需要 `actions: write`）。
+- **双路径触发发布**：`desktop-release.yml` 已从日常 PR 拆离为纯发版工作流，去掉 `paths:` 过滤，只监听 `push: tags: ['v*']` 与 `workflow_dispatch`。本地直接 `git push origin vX.Y.Z` 可直接触发发版；通过 `create-version.yml` 使用内置 `GITHUB_TOKEN` 推送 tag 时（受 GitHub 防递归机制限制不会自动触发 `push: tags`），由 `create-version.yml` 显式执行 `gh workflow run desktop-release.yml --ref v<版本>` 发起（该 job 需要 `actions: write`）。打包后 headless Electron GUI 冒烟默认关闭以免在无头 runner 上卡死，需要时可通过 `workflow_dispatch` 传入 `run_smoke: true` 按需开启。
 - `SHA256SUMS` 的键按发布布局写相对路径（安装器 `./<文件>`、渠道包 `./office-channel/<文件>`），所以 `sha256sum -c` 需要在同样的目录结构下跑；把资产全下成扁平一份目录再校验会对不上路径，这是格式约定，不是校验和错误。
 
 - `expectedArtifact` 在线上的 catalog 里是通配形式（实测：`TinadecTools*`、`TinadecCore.Api*`、`TinadecGateway*`；AgentPack 保持精确的 `manifest.json`，完整安装包为 `""`）。要收紧到本平台的 entrypoint，需要 Manager 改读 `artifact.packageMetadata.entrypoint`（`install-flow.ts:266-276` 一处回退即可），而它的 `Artifact` 类型还没有这个字段——值本身已经在 catalog 里。

@@ -4,13 +4,13 @@
 # Registry push is intentionally not part of the workflow yet (no container
 # repository has been chosen); CI builds the image to keep the slice green.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 COPY TinadecCore/ ./TinadecCore/
 RUN dotnet restore TinadecCore/Api/TinadecCore.Api.csproj
 RUN dotnet publish TinadecCore/Api/TinadecCore.Api.csproj -c Release -o /app/publish --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 

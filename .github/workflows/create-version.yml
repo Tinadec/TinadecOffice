@@ -15,7 +15,7 @@ on:
 
 permissions:
   contents: write
-  # Needed to start desktop-release.yml for the tag this job just pushed.
+  # Needed to dispatch desktop-release.yml for the tag pushed by GITHUB_TOKEN.
   actions: write
 
 concurrency:
@@ -35,10 +35,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out release source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_branch }}
           fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       - name: Validate release version
         id: validate
@@ -82,11 +86,8 @@ jobs:
           git push origin "v${RELEASE_VERSION}"
           echo "Created and pushed v${RELEASE_VERSION}."
 
-      # Pushing the tag does not start the release on its own. desktop-release.yml filters push events
-      # with `paths:`, and a tag created at the current tip has no changed-file list for that filter to
-      # match, so GitHub drops the event without a trace — measured with v0.2.0: the tag landed, no run
-      # appeared, and only an explicit dispatch on the tag ref built and published it. Dispatch it here
-      # by name, so "tagged it, nothing happened" is not the release procedure.
+      # Tags pushed with the default GITHUB_TOKEN do not trigger `on: push: tags` workflows
+      # (GitHub's loop-prevention rule). Dispatch desktop-release.yml explicitly on the new tag ref.
       - name: Start the release build for this tag
         env:
           GH_TOKEN: ${{ github.token }}

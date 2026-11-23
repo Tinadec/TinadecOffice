@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend & Scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify lockfile dependency parity
+        run: bun scripts/check-dependencies.mjs
+
+      - name: Test root scripts
+        run: bun run test:scripts
+
+      - name: Test TinadecUI
+        run: bun run --cwd apps/TinadecUI test
+
+      - name: Test Desktop
+        run: bun run --cwd apps/desktop test
+
+      - name: Typecheck & Build Desktop (Vite 8)
+        run: bun run --cwd apps/desktop build
+
+      - name: Build Web (Vite 8)
+        run: bun run --cwd apps/web build
+
+  gateway:
+    name: Gateway
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Gateway
+        run: bun run --cwd TinadecGateway build
+
+      - name: Test Gateway
+        run: bun run --cwd TinadecGateway test
+
+  dotnet:
+    name: .NET 11 Core & Tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+          cache: false
+
+      - name: Cache reviewed Bubblewrap
+        id: bwrap-cache
+        uses: actions/cache@v6
+        with:
+          path: native/bwrap
+          key: bwrap-${{ runner.os }}-${{ hashFiles('scripts/bubblewrap-pin.mjs') }}
+
+      - name: Install Bubblewrap build dependencies (cache miss)
+        if: steps.bwrap-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config libcap-dev
+
+      - name: Stage reviewed Bubblewrap
+        run: |
+          node scripts/setup-bubblewrap.mjs
+          echo "TINADEC_TOOLS_BWRAP_PATH=$GITHUB_WORKSPACE/native/bwrap/bwrap" >> "$GITHUB_ENV"
+
+      - name: Cache pinned ripgrep
+        uses: actions/cache@v6
+        with:
+          path: native/rg
+          key: ripgrep-${{ runner.os }}-${{ hashFiles('scripts/ripgrep-pin.mjs') }}
+
+      - name: Stage pinned ripgrep
+        run: node scripts/setup-ripgrep.mjs
+
+      - name: Restore
+        run: dotnet restore TinadecOffice.slnx
+
+      - name: Build
+        run: dotnet build TinadecOffice.slnx --no-restore
+
+      - name: Test
+        run: dotnet test TinadecOffice.slnx --no-build --verbosity minimal
+
+  postgres-storage:
+    name: PostgreSQL Storage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: tinadec_core_test
+          POSTGRES_USER: tinadec
+          POSTGRES_PASSWORD: tinadec
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tinadec -d tinadec_core_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TINADEC_TEST_POSTGRES: '1'
+      TINADEC_TEST_POSTGRES_CONNECTION: Host=127.0.0.1;Port=5432;Database=tinadec_core_test;Username=tinadec;Password=tinadec
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+          cache: false
+
+      - name: Restore
+        run: dotnet restore TinadecCore/TinadecCore.slnx
+
+      - name: Test PostgreSQL storage suites
+        run: >-
+          dotnet test TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj
+          --no-restore
+          --filter "FullyQualifiedName~PostgreSqlStorageTests|FullyQualifiedName~PostgreSqlScopeValidationTests|FullyQualifiedName~PostgreSqlMultiFolderWorkspaceTests"
+          -m:1
+
+  docker:
+    name: Core API Docker Image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Core API image (.NET 11)
+        run: docker build -f TinadecCore/Api/Dockerfile -t tinadec-core-api:${{ github.sha }} .
