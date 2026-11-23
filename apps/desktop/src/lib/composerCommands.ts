@@ -3,11 +3,11 @@ import type { SpaceOptionsDto } from '@/api'
 import type { Component } from 'vue'
 import { Eye, Shield, ShieldAlert, ShieldCheck, UserCheck, Users } from '@lucide/vue'
 
-export type ComposerPage = 'root' | 'model' | 'model-agents' | 'model-agent' | 'mode' | 'permission' | 'workflow'
+export type ComposerPage = 'root' | 'model' | 'model-agents' | 'model-agent' | 'mode' | 'permission' | 'context-strategy' | 'workflow'
 /** Pages one level below another; every other page sits right under the command list. */
 export const parentPage: Partial<Record<ComposerPage, ComposerPage>> = { 'model-agents': 'model', 'model-agent': 'model-agents' }
 export const pageDepth = (page: ComposerPage): number => page === 'root' ? 0 : 1 + (parentPage[page] ? pageDepth(parentPage[page]!) : 0)
-export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_id'>
+export type SpaceToggle = Exclude<keyof SpaceOptionsDto, 'workflow_mode_version_id' | 'context_strategy' | 'context_advanced'>
 
 export interface ComposerSettingEntry {
   readonly id: string
@@ -28,6 +28,7 @@ export const composerSettings = [
   { id: 'model', label: 'commandPanel.model', hint: 'commandPanel.modelHint', keywords: 'commandPanel.kw.model', page: 'model' },
   { id: 'mode', label: 'commandPanel.mode', hint: 'commandPanel.modeHint', keywords: 'commandPanel.kw.mode', page: 'mode' },
   { id: 'permission', label: 'commandPanel.permission', hint: 'permission.nextRunHint', keywords: 'commandPanel.kw.permission', page: 'permission' },
+  { id: 'context-strategy', label: 'commandPanel.contextStrategy', hint: 'commandPanel.contextStrategyHint', keywords: 'commandPanel.kw.contextStrategy', page: 'context-strategy' },
   { id: 'plan', label: 'commandPanel.plan', hint: 'commandPanel.planHint', keywords: 'commandPanel.kw.plan', toggle: 'plan_first' },
   { id: 'spec', label: 'commandPanel.spec', hint: 'commandPanel.specHint', keywords: 'commandPanel.kw.spec', toggle: 'spec_enabled' },
   { id: 'agents', label: 'commandPanel.agents', hint: 'commandPanel.agentsHint', keywords: 'commandPanel.kw.agents', toggle: 'multi_agent' },

@@ -15,12 +15,19 @@ import {
   type ModeVersionDto,
   type ModelProviderInstanceDto,
   type ModelRouteDto,
+  type SpaceOptionsDto,
 } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 import { useNotifications } from '@/composables/useNotifications'
 import { pickLocalized } from '@/lib/packI18n'
 import type { ModeDraftState } from '@/composables/useAgentModesStore'
 import type { ContextPolicyParams, ContextStrategyTier } from '@/lib/contextMemoryApi'
+import {
+  copyContextAdvanced,
+  normalizeContextAdvanced,
+  normalizeContextStrategy,
+  type ContextPolicyParamsOverride,
+} from '@/lib/composerSettings'
 import {
   isExternalHarnessChannel,
   providerRuntimeChannel,
@@ -125,56 +132,103 @@ function isDefaultOptionEnabled(key: DefaultOptionKey): boolean {
   return Boolean(props.draft.defaultOptions?.[key])
 }
 
+const modeContextStrategy = computed<ContextStrategyTier | null>(() => {
+  const fromDefaults = normalizeContextStrategy(props.draft.defaultOptions?.context_strategy)
+  if (fromDefaults) return fromDefaults
+  if (props.draft.defaultOptions && props.draft.defaultOptions.context_strategy !== undefined) {
+    return null
+  }
+  return normalizeContextStrategy(props.draft.canvasLayout?.context_strategy)
+})
+
+const modeContextAdvanced = computed<ContextPolicyParamsOverride | null>(() => {
+  const fromDefaults = normalizeContextAdvanced(props.draft.defaultOptions?.context_advanced)
+  if (fromDefaults) return fromDefaults
+  if (props.draft.defaultOptions && props.draft.defaultOptions.context_advanced !== undefined) {
+    return null
+  }
+  return normalizeContextAdvanced(props.draft.canvasLayout?.context_advanced)
+})
+
+function cleanLegacyContextFromCanvasLayout(layout: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!layout || typeof layout !== 'object') return layout
+  if (!('context_strategy' in layout) && !('context_advanced' in layout)) return layout
+  const { context_strategy: _cs, context_advanced: _ca, ...rest } = layout
+  return rest
+}
+
+function baseModeDefaultOptions(): SpaceOptionsDto {
+  const current = props.draft.defaultOptions
+  return {
+    plan_first: Boolean(current?.plan_first),
+    spec_enabled: Boolean(current?.spec_enabled),
+    multi_agent: Boolean(current?.multi_agent),
+    bulletin_board: Boolean(current?.bulletin_board),
+    worktree: Boolean(current?.worktree),
+    workflow_mode_version_id: current?.workflow_mode_version_id ?? null,
+    context_strategy: modeContextStrategy.value,
+    context_advanced: copyContextAdvanced(modeContextAdvanced.value),
+  }
+}
+
 function toggleDefaultOption(key: DefaultOptionKey, checked: boolean): void {
   if (props.readonly) return
-  const base = props.draft.defaultOptions ?? {
-    plan_first: false,
-    spec_enabled: false,
-    multi_agent: false,
-    bulletin_board: false,
-    worktree: false,
-    workflow_mode_version_id: null,
-  }
+  const cleanedLayout = cleanLegacyContextFromCanvasLayout(props.draft.canvasLayout)
   emit(
     'update-overview',
-    { defaultOptions: { ...base, [key]: Boolean(checked) } },
+    {
+      defaultOptions: { ...baseModeDefaultOptions(), [key]: Boolean(checked) },
+      ...(cleanedLayout !== props.draft.canvasLayout ? { canvasLayout: cleanedLayout } : {}),
+    },
     `mode-default-opt:${key}`,
   )
 }
 
-const modeContextStrategy = computed<ContextStrategyTier | null>(() => {
-  const raw = props.draft.canvasLayout?.context_strategy
-  return raw === 'direct' || raw === 'managed' || raw === 'deep_curator' ? raw : null
-})
-
-const modeContextAdvanced = computed<Partial<ContextPolicyParams> | null>(() => {
-  const raw = props.draft.canvasLayout?.context_advanced
-  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<ContextPolicyParams>) : null
-})
-
 function updateModeContextStrategy(next: ContextStrategyTier | null): void {
   if (props.readonly) return
+  const cleanedLayout = cleanLegacyContextFromCanvasLayout(props.draft.canvasLayout)
   emit(
     'update-overview',
-    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_strategy: next } },
+    {
+      defaultOptions: {
+        ...baseModeDefaultOptions(),
+        context_strategy: normalizeContextStrategy(next),
+      },
+      ...(cleanedLayout !== props.draft.canvasLayout ? { canvasLayout: cleanedLayout } : {}),
+    },
     'mode-ctx-strategy',
   )
 }
 
 function updateModeContextAdvanced(next: Partial<ContextPolicyParams>): void {
   if (props.readonly) return
+  const cleanedLayout = cleanLegacyContextFromCanvasLayout(props.draft.canvasLayout)
   emit(
     'update-overview',
-    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_advanced: next } },
+    {
+      defaultOptions: {
+        ...baseModeDefaultOptions(),
+        context_advanced: normalizeContextAdvanced(next),
+      },
+      ...(cleanedLayout !== props.draft.canvasLayout ? { canvasLayout: cleanedLayout } : {}),
+    },
     'mode-ctx-adv',
   )
 }
 
 function resetModeContextStrategy(): void {
   if (props.readonly) return
+  const cleanedLayout = cleanLegacyContextFromCanvasLayout(props.draft.canvasLayout)
   emit(
     'update-overview',
-    { canvasLayout: { ...(props.draft.canvasLayout ?? {}), context_strategy: null, context_advanced: {} } },
+    {
+      defaultOptions: {
+        ...baseModeDefaultOptions(),
+        context_strategy: null,
+        context_advanced: null,
+      },
+      ...(cleanedLayout !== props.draft.canvasLayout ? { canvasLayout: cleanedLayout } : {}),
+    },
     'mode-ctx-reset',
   )
 }

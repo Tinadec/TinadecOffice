@@ -26,6 +26,7 @@ import { pendingModeId } from '@/lib/pageRequests'
 import { pickLocalized } from '@/lib/packI18n'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { scopedApi } from '@/lib/storageScope'
+import { copySpaceOptions, normalizeContextAdvanced, normalizeContextStrategy } from '@/lib/composerSettings'
 import { dagreLayoutMode, snapPosition } from '@/components/modeEditor/modeDagreLayout'
 import {
   buildTeamTopology,
@@ -91,11 +92,27 @@ export function emptySpaceOptions(): SpaceOptionsDto {
     bulletin_board: false,
     worktree: false,
     workflow_mode_version_id: null,
+    context_strategy: null,
+    context_advanced: null,
   }
 }
 
-export function normalizeDefaultOptions(raw?: SpaceOptionsDto | null): SpaceOptionsDto | null {
-  if (!raw || typeof raw !== 'object') return null
+export function normalizeDefaultOptions(
+  raw?: SpaceOptionsDto | null,
+  legacyCanvasLayout?: Record<string, unknown> | null,
+): SpaceOptionsDto | null {
+  const legacyStrategy = normalizeContextStrategy(legacyCanvasLayout?.context_strategy)
+  const legacyAdvanced = normalizeContextAdvanced(legacyCanvasLayout?.context_advanced)
+  if (!raw || typeof raw !== 'object') {
+    if (!legacyStrategy && !legacyAdvanced) return null
+    return {
+      ...emptySpaceOptions(),
+      context_strategy: legacyStrategy,
+      context_advanced: legacyAdvanced,
+    }
+  }
+  const hasExplicitStrategy = raw.context_strategy !== undefined
+  const hasExplicitAdvanced = raw.context_advanced !== undefined
   return {
     plan_first: Boolean(raw.plan_first),
     spec_enabled: Boolean(raw.spec_enabled),
@@ -105,7 +122,16 @@ export function normalizeDefaultOptions(raw?: SpaceOptionsDto | null): SpaceOpti
     workflow_mode_version_id: typeof raw.workflow_mode_version_id === 'string' && raw.workflow_mode_version_id.trim()
       ? raw.workflow_mode_version_id
       : null,
+    context_strategy: hasExplicitStrategy ? normalizeContextStrategy(raw.context_strategy) : legacyStrategy,
+    context_advanced: hasExplicitAdvanced ? normalizeContextAdvanced(raw.context_advanced) : legacyAdvanced,
   }
+}
+
+function stripLegacyContextFromCanvasLayout(layout: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!layout || typeof layout !== 'object') return layout
+  if (!('context_strategy' in layout) && !('context_advanced' in layout)) return layout
+  const { context_strategy: _cs, context_advanced: _ca, ...rest } = layout
+  return rest
 }
 
 function createEmptyModeDraft(): ModeDraftState {
@@ -143,7 +169,7 @@ function cloneModeDraft(state: ModeDraftState): ModeDraftState {
     description: state.description,
     instructions: state.instructions,
     orchestrationTier: state.orchestrationTier,
-    defaultOptions: state.defaultOptions ? { ...state.defaultOptions } : null,
+    defaultOptions: state.defaultOptions ? copySpaceOptions(state.defaultOptions) : null,
     runtimePolicyKind: state.runtimePolicyKind,
     runtimePolicyFeatures: [...state.runtimePolicyFeatures],
     runtimePolicySettingsJson: state.runtimePolicySettingsJson,
@@ -330,6 +356,8 @@ const teamBaselineSignal = ref('')
 
 const modeVersions = ref<ModeVersionDto[]>([])
 const modeVersionsLoading = ref(false)
+/** Bumps whenever Mode Editor saves, publishes, clones, restores, or deletes a mode so Command Panel stays in sync. */
+export const modeCatalogRevision = ref(0)
 const activeWorkspaceView = ref<ModeWorkspaceView>('team')
 let workspaceViewPinnedByUser = false
 
@@ -523,19 +551,20 @@ function mapTopologyToModeDraft(m: AgentModeTopologyDto): ModeDraftState {
     policySettingsJson = m.runtime_policy.settings ? JSON.stringify(m.runtime_policy.settings, null, 2) : ''
   }
 
+  const rawCanvasLayout = (m.canvas_layout as Record<string, unknown> | null | undefined) ?? null
   return {
     displayName: m.display_name ?? '',
     description: m.description ?? '',
     instructions: m.instructions ?? '',
     orchestrationTier: normalizeOrchestrationTier(m.orchestration_tier),
-    defaultOptions: normalizeDefaultOptions(m.default_options),
+    defaultOptions: normalizeDefaultOptions(m.default_options, rawCanvasLayout),
     runtimePolicyKind: policyKind,
     runtimePolicyFeatures: policyFeatures,
     runtimePolicySettingsJson: policySettingsJson,
     nodes: nodesWithPositions,
     edges: mappedEdges,
     bindingsDraft: JSON.stringify(bindings, null, 2),
-    canvasLayout: (m.canvas_layout as Record<string, unknown> | null | undefined) ?? null,
+    canvasLayout: rawCanvasLayout,
   }
 }
 
@@ -565,7 +594,7 @@ function mapTopologyToTeamDraft(m: AgentModeTopologyDto, agentList: AgentDefinit
     description: m.description ?? '',
     instructions: m.instructions ?? '',
     orchestrationTier: normalizeOrchestrationTier(m.orchestration_tier),
-    defaultOptions: normalizeDefaultOptions(m.default_options),
+    defaultOptions: normalizeDefaultOptions(m.default_options, (m.canvas_layout as Record<string, unknown> | null | undefined) ?? null),
     selection: {
       style: shape.style,
       leaderId,
@@ -957,7 +986,7 @@ function toCoreTopologyWrite(state: ModeDraftState, bindings: AgentModeBindingDt
     description: state.description.trim() || null,
     instructions: state.instructions.trim() || null,
     orchestration_tier: state.orchestrationTier ?? null,
-    default_options: state.defaultOptions ?? null,
+    default_options: normalizeDefaultOptions(state.defaultOptions),
     nodes: state.nodes.map((n) => ({
       node_key: n.node_key ?? n.id,
       agent_definition_id: n.agent_id || n.agent_definition_id || '',
@@ -976,7 +1005,7 @@ function toCoreTopologyWrite(state: ModeDraftState, bindings: AgentModeBindingDt
     })),
     bindings,
     runtime_policy: runtimePolicy.value,
-    canvas_layout: state.canvasLayout,
+    canvas_layout: stripLegacyContextFromCanvasLayout(state.canvasLayout),
   }
 }
 
@@ -1033,6 +1062,7 @@ async function saveModeDraft(): Promise<boolean> {
     )
     if (saved) syncSavedTopologyResponse(saved)
     else modeBaselineSignal.value = serializeModeDraft(draft.value)
+    modeCatalogRevision.value += 1
     notify.success({ message: tr('agentCenter.modeDraftSaved', undefined, 'Mode draft saved') })
     return true
   } catch (e) {
@@ -1053,6 +1083,7 @@ async function publishMode(): Promise<boolean> {
     notify.success({ message: tr('agentCenter.modePublished', undefined, 'Mode published') })
     await loadModes({ force: true })
     await selectMode(selectedModeId.value, { force: true })
+    modeCatalogRevision.value += 1
     return true
   } catch (e) {
     notify.error(e)
@@ -1212,7 +1243,7 @@ async function saveTeamDraft(): Promise<string | null> {
       memberScopes: teamDraft.value.memberScopes,
       instructions: teamDraft.value.instructions,
       orchestrationTier: teamDraft.value.orchestrationTier ?? naturalTierForStyle(teamDraft.value.selection.style),
-      defaultOptions: teamDraft.value.defaultOptions,
+      defaultOptions: normalizeDefaultOptions(teamDraft.value.defaultOptions),
       displayName: name,
       description: teamDraft.value.description,
       existingDetail: selectedModeDetail.value,
@@ -1226,6 +1257,7 @@ async function saveTeamDraft(): Promise<string | null> {
       })
       await loadModes({ force: true })
       await selectMode(created.id, { force: true })
+      modeCatalogRevision.value += 1
       notify.success(tr('settings.teamCreated', { name: created.display_name }, `Created team ${created.display_name}`))
       return created.id
     }
@@ -1233,6 +1265,7 @@ async function saveTeamDraft(): Promise<string | null> {
     const saved = await api.updateAgentModeDraft(selectedModeId.value, topology, modeEtag.value)
     if (saved) syncSavedTopologyResponse(saved)
     await loadModes({ force: true })
+    modeCatalogRevision.value += 1
     notify.success(tr('settings.teamDraftSaved', undefined, 'Team draft saved'))
     return selectedModeId.value
   } catch (error) {
@@ -1251,6 +1284,7 @@ async function publishTeam(): Promise<boolean> {
     await api.publishAgentMode(id, modeEtag.value)
     await loadModes({ force: true })
     await selectMode(id, { force: true })
+    modeCatalogRevision.value += 1
     notify.success(tr('settings.teamPublished', undefined, 'Team published'))
     return true
   } catch (error) {
@@ -1340,6 +1374,9 @@ async function restoreModeVersion(version: ModeVersionDto): Promise<boolean> {
     canvas_layout: snapshot.canvas_layout ?? null,
     instructions: snapshot.instructions ?? null,
     orchestration_tier: normalizeOrchestrationTier(snapshotMode?.orchestration_tier),
+    ...(snapshotMode?.default_options !== undefined
+      ? { default_options: normalizeDefaultOptions(snapshotMode.default_options as SpaceOptionsDto | null, snapshot.canvas_layout ?? null) }
+      : {}),
     ...(snapshot.runtime_policy ? { runtime_policy: snapshot.runtime_policy } : {}),
   }
 
@@ -1488,7 +1525,7 @@ function switchWorkspaceView(targetView: ModeWorkspaceView, options: { userIniti
           description: draft.value.description,
           instructions: draft.value.instructions,
           orchestrationTier: draft.value.orchestrationTier,
-          defaultOptions: draft.value.defaultOptions ? { ...draft.value.defaultOptions } : null,
+          defaultOptions: draft.value.defaultOptions ? copySpaceOptions(draft.value.defaultOptions) : null,
         }
       }
     }

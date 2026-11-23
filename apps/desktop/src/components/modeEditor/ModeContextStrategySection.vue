@@ -11,10 +11,16 @@ import {
   type RecallFidelity,
 } from '@/lib/contextMemoryApi'
 
+type ContextAdvancedInput = {
+  [K in keyof ContextPolicyParams]?: ContextPolicyParams[K] | null
+}
+
 const props = withDefaults(
   defineProps<{
     strategy?: ContextStrategyTier | null
-    advanced?: Partial<ContextPolicyParams> | null
+    advanced?: ContextAdvancedInput | null
+    baselineStrategy?: ContextStrategyTier | null
+    baselineAdvanced?: ContextAdvancedInput | null
     compact?: boolean
     readonly?: boolean
     allowInherit?: boolean
@@ -22,6 +28,8 @@ const props = withDefaults(
   {
     strategy: null,
     advanced: null,
+    baselineStrategy: null,
+    baselineAdvanced: null,
     compact: false,
     readonly: false,
     allowInherit: false,
@@ -62,39 +70,70 @@ const STRATEGY_TIERS = computed(() => [
   },
 ])
 
+const ADVANCED_KEYS = Object.keys(DEFAULT_CONTEXT_POLICY_PARAMS) as Array<keyof ContextPolicyParams>
+
+const normalizedStrategy = computed<ContextStrategyTier | null>(() =>
+  props.strategy === 'direct' || props.strategy === 'managed' || props.strategy === 'deep_curator'
+    ? props.strategy
+    : null,
+)
+
+const normalizedBaselineStrategy = computed<ContextStrategyTier | null>(() =>
+  props.baselineStrategy === 'direct' || props.baselineStrategy === 'managed' || props.baselineStrategy === 'deep_curator'
+    ? props.baselineStrategy
+    : null,
+)
+
 const effectiveStrategy = computed<ContextStrategyTier | null>(() => {
-  if (props.strategy === 'direct' || props.strategy === 'managed' || props.strategy === 'deep_curator') {
-    return props.strategy
-  }
+  if (normalizedStrategy.value) return normalizedStrategy.value
+  if (normalizedBaselineStrategy.value) return normalizedBaselineStrategy.value
   return props.allowInherit ? null : 'managed'
 })
 
 const customizedAdvancedCount = computed(() => {
-  if (!props.advanced) return 0
   let count = 0
-  for (const key of Object.keys(DEFAULT_CONTEXT_POLICY_PARAMS) as Array<keyof ContextPolicyParams>) {
-    if (props.advanced[key] !== undefined) count++
+  for (const key of ADVANCED_KEYS) {
+    const val = props.advanced?.[key] ?? null
+    const baseVal = props.baselineAdvanced?.[key] ?? null
+    if (props.allowInherit) {
+      if (val !== baseVal) count++
+    } else if (val !== null) {
+      count++
+    }
   }
   return count
 })
 
 const isOverridden = computed(() => {
   if (!props.allowInherit) return false
-  return props.strategy != null || customizedAdvancedCount.value > 0
+  return normalizedStrategy.value !== normalizedBaselineStrategy.value || customizedAdvancedCount.value > 0
 })
 
 const mergedAdvanced = computed<ContextPolicyParams>(() => ({
-  recall_fidelity: props.advanced?.recall_fidelity ?? DEFAULT_CONTEXT_POLICY_PARAMS.recall_fidelity,
+  recall_fidelity:
+    props.advanced?.recall_fidelity ??
+    props.baselineAdvanced?.recall_fidelity ??
+    DEFAULT_CONTEXT_POLICY_PARAMS.recall_fidelity,
   compaction_trigger_ratio:
-    props.advanced?.compaction_trigger_ratio ?? DEFAULT_CONTEXT_POLICY_PARAMS.compaction_trigger_ratio,
+    props.advanced?.compaction_trigger_ratio ??
+    props.baselineAdvanced?.compaction_trigger_ratio ??
+    DEFAULT_CONTEXT_POLICY_PARAMS.compaction_trigger_ratio,
   recent_message_limit:
-    props.advanced?.recent_message_limit ?? DEFAULT_CONTEXT_POLICY_PARAMS.recent_message_limit,
+    props.advanced?.recent_message_limit ??
+    props.baselineAdvanced?.recent_message_limit ??
+    DEFAULT_CONTEXT_POLICY_PARAMS.recent_message_limit,
   allow_cross_session_recall:
     props.advanced?.allow_cross_session_recall ??
+    props.baselineAdvanced?.allow_cross_session_recall ??
     (effectiveStrategy.value === 'deep_curator' ? true : DEFAULT_CONTEXT_POLICY_PARAMS.allow_cross_session_recall),
-  evolution_mode: props.advanced?.evolution_mode ?? DEFAULT_CONTEXT_POLICY_PARAMS.evolution_mode,
+  evolution_mode:
+    props.advanced?.evolution_mode ??
+    props.baselineAdvanced?.evolution_mode ??
+    DEFAULT_CONTEXT_POLICY_PARAMS.evolution_mode,
   core_markdown_max_tokens:
-    props.advanced?.core_markdown_max_tokens ?? DEFAULT_CONTEXT_POLICY_PARAMS.core_markdown_max_tokens,
+    props.advanced?.core_markdown_max_tokens ??
+    props.baselineAdvanced?.core_markdown_max_tokens ??
+    DEFAULT_CONTEXT_POLICY_PARAMS.core_markdown_max_tokens,
 }))
 
 const fidelityOptions = computed(() => [
@@ -108,9 +147,21 @@ const evolutionOptions = computed(() => [
   { value: 'candidate_only', label: t('memoryContext.advanced.evolution.candidate_only') },
 ])
 
+function cleanAdvancedObject(input?: ContextAdvancedInput | null): Partial<ContextPolicyParams> {
+  const out: Partial<ContextPolicyParams> = {}
+  if (!input) return out
+  if (input.recall_fidelity != null) out.recall_fidelity = input.recall_fidelity
+  if (input.compaction_trigger_ratio != null) out.compaction_trigger_ratio = input.compaction_trigger_ratio
+  if (input.recent_message_limit != null) out.recent_message_limit = input.recent_message_limit
+  if (input.allow_cross_session_recall != null) out.allow_cross_session_recall = input.allow_cross_session_recall
+  if (input.evolution_mode != null) out.evolution_mode = input.evolution_mode
+  if (input.core_markdown_max_tokens != null) out.core_markdown_max_tokens = input.core_markdown_max_tokens
+  return out
+}
+
 function selectStrategy(tier: ContextStrategyTier | null) {
   if (props.readonly) return
-  if (props.allowInherit && tier !== null && props.strategy === tier) {
+  if (props.allowInherit && tier !== null && normalizedStrategy.value === tier && normalizedBaselineStrategy.value === null) {
     emit('update:strategy', null)
     return
   }
@@ -120,7 +171,7 @@ function selectStrategy(tier: ContextStrategyTier | null) {
 function patchAdvanced<K extends keyof ContextPolicyParams>(key: K, value: ContextPolicyParams[K]) {
   if (props.readonly) return
   emit('update:advanced', {
-    ...(props.advanced ?? {}),
+    ...cleanAdvancedObject(props.advanced),
     [key]: value,
   })
 }
@@ -146,8 +197,10 @@ function onMaxTokensInput(raw: string | number) {
 
 function handleReset() {
   if (props.readonly) return
-  emit('update:strategy', props.allowInherit ? null : 'managed')
-  emit('update:advanced', {})
+  if (!props.allowInherit) {
+    emit('update:strategy', 'managed')
+    emit('update:advanced', {})
+  }
   emit('reset')
 }
 

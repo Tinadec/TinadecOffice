@@ -42,7 +42,7 @@ import { setErrorRecoveryHandlers, useNotifications } from '@/composables/useNot
 import type { PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { ComposerSubmitOptions, DispatchMode, MeetingModelOverrideDto, SessionSettingsUpdate, SpaceOptionsDto } from '@/api'
-import { applyComposerSettings, copyComposerSettings, newComposerSettings, resolveModeDefaultSpaceOptions, type ComposerSettings } from '@/lib/composerSettings'
+import { applyComposerSettings, copyComposerSettings, copySpaceOptions, newComposerSettings, resolveModeDefaultSpaceOptions, type ComposerSettings, type ModeRuntimePolicyLike } from '@/lib/composerSettings'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 import { createRunStream, type RunStreamHandle } from '@/lib/runStream'
 import { generatedApi } from '@/generated/client'
@@ -176,7 +176,7 @@ async function updateComposerSettings(patch: SessionSettingsUpdate): Promise<boo
   const key = `${storageId}::${sessionId ?? `draft:${view}`}`
   const frozenPatch: SessionSettingsUpdate = {
     ...patch,
-    ...(patch.space_options ? { space_options: { ...patch.space_options } } : {}),
+    ...(patch.space_options ? { space_options: copySpaceOptions(patch.space_options) } : {}),
     ...(patch.meeting_model_override ? { meeting_model_override: { ...patch.meeting_model_override } } : {}),
   }
   settingsErrors.value = { ...settingsErrors.value, [key]: null }
@@ -1604,15 +1604,31 @@ function start() {
 
 async function selectMode(
   modeVersionId: string | null,
-  modeOrDefaults?: SpaceOptionsDto | { default_options?: SpaceOptionsDto | null } | null,
+  modeOrDefaults?:
+    | Partial<SpaceOptionsDto>
+    | {
+        default_options?: Partial<SpaceOptionsDto> | null
+        runtime_policy?: ModeRuntimePolicyLike | null
+        canvas_layout?: Record<string, unknown> | null
+      }
+    | null,
 ): Promise<boolean> {
-  const rawDefaults: Partial<SpaceOptionsDto> | null | undefined =
-    modeOrDefaults && typeof modeOrDefaults === 'object' && 'default_options' in modeOrDefaults
-      ? modeOrDefaults.default_options
-      : modeOrDefaults && typeof modeOrDefaults === 'object' && 'plan_first' in modeOrDefaults
-        ? modeOrDefaults
-        : null
-  const nextSpaceOptions = resolveModeDefaultSpaceOptions(rawDefaults)
+  const isModeRecord = Boolean(
+    modeOrDefaults
+    && typeof modeOrDefaults === 'object'
+    && ('default_options' in modeOrDefaults || 'runtime_policy' in modeOrDefaults || 'canvas_layout' in modeOrDefaults),
+  )
+  const nextSpaceOptions = isModeRecord
+    ? resolveModeDefaultSpaceOptions(
+        (modeOrDefaults as { default_options?: Partial<SpaceOptionsDto> | null }).default_options,
+        (modeOrDefaults as { runtime_policy?: ModeRuntimePolicyLike | null }).runtime_policy,
+        (modeOrDefaults as { canvas_layout?: Record<string, unknown> | null }).canvas_layout,
+      )
+    : resolveModeDefaultSpaceOptions(
+        modeOrDefaults && typeof modeOrDefaults === 'object'
+          ? (modeOrDefaults as Partial<SpaceOptionsDto>)
+          : null,
+      )
   return updateComposerSettings(modeVersionId
     ? { mode_version_id: modeVersionId, space_options: nextSpaceOptions }
     : { clear_mode_version: true, space_options: nextSpaceOptions })

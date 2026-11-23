@@ -6,7 +6,7 @@ import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { ComposerSubmitOptions, SessionSettingsUpdate, SpaceOptionsDto, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
-import type { ComposerSettings } from '@/lib/composerSettings'
+import { copySpaceOptions, type ComposerSettings } from '@/lib/composerSettings'
 import type { PermissionLevel } from '@/types/mode'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import type { ApprovalDto } from '../api'
@@ -84,21 +84,23 @@ const hero = computed(() => props.messages.length === 0 && !props.loading)
 const modeVersionId = ref<string | null>(null)
 const spaceOptions = ref<SpaceOptionsDto | null>(null)
 function selectModePreset(payload: { mode_version_id: string | null; space_options: SpaceOptionsDto }) {
+  const nextSpace = copySpaceOptions(payload.space_options)
   modeVersionId.value = payload.mode_version_id
-  spaceOptions.value = { ...payload.space_options }
+  spaceOptions.value = nextSpace
   emit('update:settings', payload.mode_version_id
-    ? { mode_version_id: payload.mode_version_id, space_options: payload.space_options }
-    : { clear_mode_version: true, space_options: payload.space_options })
+    ? { mode_version_id: payload.mode_version_id, space_options: copySpaceOptions(nextSpace) }
+    : { clear_mode_version: true, space_options: copySpaceOptions(nextSpace) })
 }
 function updateSpaceOptions(value: SpaceOptionsDto) {
-  spaceOptions.value = { ...value }
-  emit('update:settings', { space_options: value })
+  const nextSpace = copySpaceOptions(value)
+  spaceOptions.value = nextSpace
+  emit('update:settings', { space_options: copySpaceOptions(nextSpace) })
 }
 watch(
-  () => props.currentSession?.id,
+  () => [props.currentSession?.id, props.currentSession?.mode_version_id, props.currentSession?.space_options] as const,
   () => {
     modeVersionId.value = props.currentSession?.mode_version_id ?? null
-    spaceOptions.value = props.currentSession?.space_options ? { ...props.currentSession.space_options } : null
+    spaceOptions.value = props.currentSession?.space_options ? copySpaceOptions(props.currentSession.space_options) : null
   },
   { immediate: true },
 )

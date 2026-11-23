@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { ArrowLeft, Bot, Check, ChevronRight, FileCode2, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, Sparkles, Users, Workflow, X } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ChevronRight, FileCode2, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, SlidersHorizontal, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api as baseApi, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
 import { selectedStorage } from '@/lib/storageScope'
@@ -9,7 +9,7 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { renderWorkspaceCommandTemplate, useWorkspaceCommands } from '@/composables/useWorkspaceCommands'
 import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
-import { resolveModeDefaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
+import { copyContextAdvanced, copySpaceOptions, normalizeContextAdvanced, resolveModeDefaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { pickLocalized } from '@/lib/packI18n'
@@ -18,6 +18,7 @@ import type { AgentModels, ModelChoice, NamedStrategy } from '@/composables/useA
 import type { AgentDirectoryItemDto } from '@/api'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
 import type { ContextPolicyParams, ContextStrategyTier } from '@/lib/contextMemoryApi'
+import { modeCatalogRevision } from '@/composables/useAgentModesStore'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
 import ModeContextStrategySection from './modeEditor/ModeContextStrategySection.vue'
 
@@ -108,6 +109,9 @@ const showReasoning = computed(() => page.value === 'model'
   && (!props.agentModels || props.agentModels.loaded.value || props.agentModels.error.value)
   && Boolean(props.defaultModel?.reasoningSupported.value))
 function stopSliderKeys(event: KeyboardEvent) { if (event.key !== 'Escape') event.stopPropagation() }
+function onSearchInput(event: Event) {
+  if (event.target instanceof HTMLInputElement) query.value = event.target.value
+}
 let anchorObserver: ResizeObserver | null = null
 let navigationDeleteKey: string | null = null
 let pageAnimations: Animation[] = []
@@ -159,8 +163,22 @@ const availableModes = computed(() => {
 })
 const selectedMode = computed(() => availableModes.value
   .find(mode => mode.latest_published_mode_version_id === props.modeVersionId))
-const modeDefaults = computed(() => resolveModeDefaultSpaceOptions(selectedMode.value?.default_options))
-const space = computed(() => props.spaceOptions ? resolveModeDefaultSpaceOptions(props.spaceOptions) : modeDefaults.value)
+const modeDefaults = computed(() =>
+  resolveModeDefaultSpaceOptions(
+    selectedMode.value?.default_options,
+    selectedMode.value?.runtime_policy,
+    selectedMode.value?.canvas_layout ?? null,
+  ),
+)
+const space = computed(() =>
+  props.spaceOptions ? resolveModeDefaultSpaceOptions(props.spaceOptions) : modeDefaults.value,
+)
+const activeContextTier = computed<ContextStrategyTier>(() =>
+  space.value.context_strategy ?? modeDefaults.value.context_strategy ?? 'managed',
+)
+const contextStrategyLabel = computed(() =>
+  t(`memoryContext.strategy.${activeContextTier.value}.label`),
+)
 const hasSpaceOverrides = computed(() => {
   if (!props.spaceOptions) return false
   if (props.modeVersionId && !selectedMode.value) return false
@@ -174,13 +192,35 @@ function applyModePreset(mode: AgentModeTopologyDto, preserveExistingSpace = fal
   const modeVersionId = mode.latest_published_mode_version_id!
   const nextSpace = preserveExistingSpace && props.spaceOptions
     ? resolveModeDefaultSpaceOptions(props.spaceOptions)
-    : resolveModeDefaultSpaceOptions(mode.default_options)
+    : resolveModeDefaultSpaceOptions(mode.default_options, mode.runtime_policy, mode.canvas_layout ?? null)
   emit('update:modeVersionId', modeVersionId)
   emit('select-mode', { mode_version_id: modeVersionId, space_options: nextSpace })
 }
 function resetToPresetDefaults() {
   if (props.settingsSaving) return
-  emit('update:spaceOptions', { ...modeDefaults.value })
+  emit('update:spaceOptions', copySpaceOptions(modeDefaults.value))
+}
+function updateContextStrategy(next: ContextStrategyTier | null) {
+  if (props.settingsSaving) return
+  emit('update:spaceOptions', {
+    ...copySpaceOptions(space.value),
+    context_strategy: next ?? modeDefaults.value.context_strategy ?? null,
+  })
+}
+function updateContextAdvanced(next: Partial<ContextPolicyParams>) {
+  if (props.settingsSaving) return
+  emit('update:spaceOptions', {
+    ...copySpaceOptions(space.value),
+    context_advanced: normalizeContextAdvanced(next),
+  })
+}
+function resetContextStrategy() {
+  if (props.settingsSaving) return
+  emit('update:spaceOptions', {
+    ...copySpaceOptions(space.value),
+    context_strategy: modeDefaults.value.context_strategy ?? null,
+    context_advanced: copyContextAdvanced(modeDefaults.value.context_advanced),
+  })
 }
 // A conversation without a mode gets the first published one (Solo when the pack has it) as
 // soon as the catalog is known, so its runs never fall back to workspace-defaults' choice.
@@ -198,6 +238,7 @@ const title = computed(() => {
   if (page.value === 'root') return t('composer.commands')
   if (page.value === 'model-agents') return t('commandPanel.modelAgents')
   if (page.value === 'model-agent') return modelAgent.value?.display_name || modelAgent.value?.slug || t('commandPanel.modelAgents')
+  if (page.value === 'context-strategy') return t('commandPanel.contextStrategy')
   return t(`commandPanel.${page.value}`)
 })
 const activeQuery = computed(() => page.value === 'root' && props.slashQuery != null ? props.slashQuery : query.value)
@@ -218,14 +259,31 @@ interface Row {
   testId?: string
   run: () => void
 }
-const icons: Record<string, Component> = { model: Sparkles, mode: Layers, plan: ListChecks, spec: FileText, agents: Users, workflow: Workflow, bulletin: MessageSquare, worktree: GitBranch }
+const icons: Record<string, Component> = {
+  model: Sparkles,
+  mode: Layers,
+  'context-strategy': SlidersHorizontal,
+  plan: ListChecks,
+  spec: FileText,
+  agents: Users,
+  workflow: Workflow,
+  bulletin: MessageSquare,
+  worktree: GitBranch,
+}
+function focusActivePage() {
+  if (page.value === 'context-strategy') {
+    panelRef.value?.querySelector<HTMLElement>('.ctx-segment-btn.active, .ctx-segment-btn, button')?.focus()
+    return
+  }
+  searchRef.value?.focus()
+}
 function selectPage(next: ComposerPage) {
   if (next === page.value) return
   rootQuery.value = query.value
   query.value = ''
   page.value = next
   index.value = 0
-  void nextTick(() => searchRef.value?.focus())
+  void nextTick(() => focusActivePage())
 }
 function back() {
   const parent = parentPage[page.value] ?? 'root'
@@ -234,7 +292,7 @@ function back() {
   index.value = 0
   void nextTick(() => {
     if (props.slashQuery != null) emit('focus-composer')
-    else searchRef.value?.focus()
+    else focusActivePage()
   })
 }
 function modeRows(workflow: boolean): Row[] {
@@ -243,7 +301,7 @@ function modeRows(workflow: boolean): Row[] {
   // resolved to whatever workspace-defaults named, often nothing anyone would choose.
   const off: Row[] = workflow ? [{
     id: 'default', label: t('commandPanel.workflowOff'), icon: Workflow, checked: !selected, disabled: props.settingsSaving,
-    run: () => emit('update:spaceOptions', { ...space.value, workflow_mode_version_id: null }),
+    run: () => emit('update:spaceOptions', { ...copySpaceOptions(space.value), workflow_mode_version_id: null }),
   }] : []
   return [...off, ...availableModes.value.filter(mode => !workflow || mode.edges.length > 0).map(mode => ({
     id: mode.latest_published_mode_version_id!, label: modeName(mode), hint: modeDescription(mode),
@@ -251,7 +309,7 @@ function modeRows(workflow: boolean): Row[] {
     keywords: mode.slug ?? '', checked: selected === mode.latest_published_mode_version_id,
     disabled: props.settingsSaving,
     run: () => {
-      if (workflow) emit('update:spaceOptions', { ...space.value, workflow_mode_version_id: mode.latest_published_mode_version_id! })
+      if (workflow) emit('update:spaceOptions', { ...copySpaceOptions(space.value), workflow_mode_version_id: mode.latest_published_mode_version_id! })
       else applyModePreset(mode)
     },
   }))]
@@ -348,6 +406,7 @@ function otherAgentRows(): Row[] {
   }))
 }
 const allRows = computed<Row[]>(() => {
+  if (page.value === 'context-strategy') return []
   if (page.value === 'permission') return permissionChoices.map(choice => ({
     id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
     disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
@@ -369,7 +428,17 @@ const allRows = computed<Row[]>(() => {
     if ('surface' in setting && setting.surface === 'space' && !props.spatial) continue
     const toggle = 'toggle' in setting ? setting.toggle : null
     const submenu = 'page' in setting ? setting.page : null
-    const currentValue = setting.id === 'model' ? props.defaultModelLabel : setting.id === 'mode' ? (selectedMode.value ? modeName(selectedMode.value) : t('commandPanel.mode')) : setting.id === 'permission' ? permissionName.value : setting.id === 'workflow' ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off')) : undefined
+    const currentValue = setting.id === 'model'
+      ? props.defaultModelLabel
+      : setting.id === 'mode'
+        ? (selectedMode.value ? modeName(selectedMode.value) : t('commandPanel.mode'))
+        : setting.id === 'permission'
+          ? permissionName.value
+          : setting.id === 'context-strategy'
+            ? contextStrategyLabel.value
+            : setting.id === 'workflow'
+              ? workflowName.value ?? (space.value.workflow_mode_version_id ? t('commandPanel.unavailableSelection') : t('commandPanel.off'))
+              : undefined
     rows.push({
       id: setting.id, label: t(setting.label), hint: t(setting.hint),
       keywords: t(setting.keywords),
@@ -378,7 +447,7 @@ const allRows = computed<Row[]>(() => {
       switch: !!toggle, checked: toggle ? Boolean(space.value[toggle]) : undefined, submenu: !!submenu,
       disabled: props.settingsSaving,
       run: () => {
-        if (toggle) emit('update:spaceOptions', { ...space.value, [toggle]: !space.value[toggle] })
+        if (toggle) emit('update:spaceOptions', { ...copySpaceOptions(space.value), [toggle]: !space.value[toggle] })
         else if (submenu) selectPage(submenu)
       },
     })
@@ -459,6 +528,7 @@ function keydown(event: KeyboardEvent): boolean {
     else emit('close')
     return true
   }
+  if (page.value === 'context-strategy') return false
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()
     const candidates = rows.value.map((row, i) => row.disabled ? -1 : i).filter(i => i >= 0)
@@ -533,12 +603,13 @@ watch(() => props.open, async open => {
   await nextTick()
   place()
   animateContent(0)
-  if (props.slashQuery == null) searchRef.value?.focus()
+  if (props.slashQuery == null) focusActivePage()
 }, { immediate: true })
 watch(() => props.initialPage, next => { if (props.open && next) selectPage(next) })
 // Switching workspace retargets the catalog: the ids listed here must belong to the scope that
 // will freeze them, or the next send is rejected as mode_unavailable.
 watch(selectedStorage, () => { if (props.open) void loadCatalogs() })
+watch(modeCatalogRevision, () => { void loadCatalogs() })
 watch(() => props.anchor, (anchor, previous) => {
   if (previous) anchorObserver?.unobserve(previous)
   if (anchor) anchorObserver?.observe(anchor)
@@ -552,7 +623,8 @@ watch(() => props.slashQuery, (next, previous) => {
 })
 function outside(event: Event) {
   if (!props.open) return
-  const target = event.target as Node
+  const target = event.target
+  if (!(target instanceof Node)) return
   if (panelRef.value?.contains(target)) return
   const trigger = target instanceof Element ? target.closest('[aria-haspopup="dialog"]') : null
   if (trigger && props.anchor?.contains(trigger)) return
@@ -595,19 +667,33 @@ defineExpose({ keydown, activate, page, selectPage })
     <section v-if="open" ref="panelRef" class="composer-command-panel" data-testid="composer-commands" role="dialog" :aria-label="title" :aria-busy="settingsSaving || loading" :style="[position, panelStyle]" v-bind="panelDataAttrs" @keydown="keydown">
       <div ref="contentRef" class="command-panel-content" :data-page="page">
       <header class="command-panel-header">
-        <button v-if="page !== 'root'" class="command-panel-icon command-panel-back" :aria-label="backLabel" :title="t('commandPanel.backHint')" @click="back"><ArrowLeft :size="16" /><span>{{ backLabel }}</span></button>
+        <button v-if="page !== 'root'" class="command-panel-icon command-panel-back ui-pressable" :aria-label="backLabel" :title="t('commandPanel.backHint')" @click="back"><ArrowLeft :size="16" /><span>{{ backLabel }}</span></button>
         <strong>{{ title }}</strong>
-        <button class="command-panel-icon command-panel-close" :aria-label="t('commandPanel.close')" @click="emit('close')"><X :size="15" /></button>
+        <button class="command-panel-icon command-panel-close ui-pressable" :aria-label="t('commandPanel.close')" @click="emit('close')"><X :size="15" /></button>
       </header>
-      <label class="command-panel-search">
+      <label v-if="page !== 'context-strategy'" class="command-panel-search">
         <Search :size="15" aria-hidden="true" />
-        <input ref="searchRef" :value="activeQuery" :readonly="page === 'root' && slashQuery != null" :placeholder="t('commandPanel.search')" :aria-label="t('commandPanel.search')" @input="query = ($event.target as HTMLInputElement).value" />
+        <input ref="searchRef" :value="activeQuery" :readonly="page === 'root' && slashQuery != null" :placeholder="t('commandPanel.search')" :aria-label="t('commandPanel.search')" @input="onSearchInput" />
       </label>
-      <div v-if="hasSpaceOverrides && (page === 'root' || page === 'mode')" class="command-panel-override-bar" data-testid="command-panel-overrides" role="status">
+      <div v-if="hasSpaceOverrides && (page === 'root' || page === 'mode' || page === 'context-strategy')" class="command-panel-override-bar" data-testid="command-panel-overrides" role="status">
         <span class="command-panel-override-badge">{{ t('commandPanel.temporaryOverrides') }}</span>
-        <button type="button" class="command-panel-override-reset" :title="t('commandPanel.resetToPresetHint')" :disabled="settingsSaving" data-testid="command-panel-reset-options" @click="resetToPresetDefaults">{{ t('commandPanel.resetToPreset') }}</button>
+        <button type="button" class="command-panel-override-reset ui-pressable" :title="t('commandPanel.resetToPresetHint')" :disabled="settingsSaving" data-testid="command-panel-reset-options" @click="resetToPresetDefaults">{{ t('commandPanel.resetToPreset') }}</button>
       </div>
-      <div class="command-panel-list">
+      <div v-if="page === 'context-strategy'" class="command-panel-context-strategy" data-testid="command-panel-context-strategy-page">
+        <ModeContextStrategySection
+          compact
+          allow-inherit
+          :readonly="settingsSaving"
+          :strategy="space.context_strategy ?? null"
+          :advanced="space.context_advanced ?? null"
+          :baseline-strategy="modeDefaults.context_strategy ?? null"
+          :baseline-advanced="modeDefaults.context_advanced ?? null"
+          @update:strategy="updateContextStrategy"
+          @update:advanced="updateContextAdvanced"
+          @reset="resetContextStrategy"
+        />
+      </div>
+      <div v-else class="command-panel-list">
         <p v-if="catalogError" class="command-panel-feedback" role="alert">{{ t('commandPanel.catalogError') }} <button @click="loadCatalogs">{{ t('commandPanel.retry') }}</button></p>
         <p v-if="agentListFailed" class="command-panel-feedback" role="alert" data-testid="command-panel-agents-failed">{{ t(page === 'model' ? 'composer.agentModels.loadFailedFallback' : 'composer.agentModels.loadFailed') }} <button @click="agentModels?.load()">{{ t('commandPanel.retry') }}</button></p>
         <p v-if="(loading || agentListPending) && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
@@ -627,18 +713,6 @@ defineExpose({ keydown, activate, page, selectPage })
           :hint="t('composer.reasoning.hint', { model: defaultModel?.reasoningTarget.value?.model ?? defaultModel?.current.value?.model ?? '' })"
           @commit="defaultModel?.setReasoningEffort($event)" />
       </div>
-      <div v-if="page === 'mode'" class="command-panel-reasoning" data-testid="command-panel-context-strategy" @keydown.stop>
-        <ModeContextStrategySection
-          compact
-          allow-inherit
-          :readonly="settingsSaving"
-          :strategy="((space as unknown as { context_strategy?: ContextStrategyTier | null })?.context_strategy ?? null)"
-          :advanced="((space as unknown as { context_advanced?: Partial<ContextPolicyParams> | null })?.context_advanced ?? null)"
-          @update:strategy="(v) => emit('update:spaceOptions', { ...space, context_strategy: v } as SpaceOptionsDto)"
-          @update:advanced="(v) => emit('update:spaceOptions', { ...space, context_advanced: v } as SpaceOptionsDto)"
-          @reset="emit('update:spaceOptions', { ...space, context_strategy: null, context_advanced: {} } as SpaceOptionsDto)"
-        />
-      </div>
       </div>
       <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>
     </section>
@@ -646,24 +720,25 @@ defineExpose({ keydown, activate, page, selectPage })
 </template>
 
 <style scoped>
-.composer-command-panel { --command-panel-transition-duration: var(--durationFast, 150ms); --command-panel-transition-easing: var(--curveDecelerateMid, cubic-bezier(0.2, 0, 0, 1)); z-index: 9999; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; background: var(--surface-section); box-shadow: var(--shadow-panel); color: var(--text-primary); font-size: 12px; }
+.composer-command-panel { --command-panel-transition-duration: var(--duration-pop, var(--durationFast, 150ms)); --command-panel-transition-easing: var(--ease-snappy, var(--curveDecelerateMid, cubic-bezier(0.2, 0, 0, 1))); z-index: 9999; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; background: var(--surface-section); box-shadow: var(--shadow-panel); color: var(--text-primary); font-size: 12px; }
 .command-panel-content { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .command-panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px; flex-shrink: 0; }
 .command-panel-header strong { font-weight: 600; }
 .command-panel-icon { width: 28px; height: 28px; display: grid; place-items: center; background: transparent; border: 0; border-radius: 7px; color: var(--text-secondary); cursor: pointer; }
-.command-panel-icon:hover { background: var(--surface-hover); }
+.command-panel-icon:hover { background: var(--surface-hover); color: var(--text-primary); }
 .command-panel-back { width: auto; display: inline-flex; gap: 4px; padding: 0 6px; }
 .command-panel-close { margin-left: auto; }
 .command-panel-search { display: flex; gap: 8px; align-items: center; color: var(--text-muted); margin: 4px 12px 8px; padding: 8px; border-radius: 8px; background: var(--surface-input); flex-shrink: 0; font-weight: 400; }
-.command-panel-override-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 12px 6px; padding: 4px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent-warning, #d97706) 10%, transparent); color: var(--text-secondary); font-size: 11px; flex-shrink: 0; }
-.command-panel-override-badge { font-weight: 500; color: var(--accent-warning, var(--text-primary)); }
-.command-panel-override-reset { padding: 2px 7px; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--surface-section); color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer; }
+.command-panel-override-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 12px 6px; padding: 5px 10px; border-radius: 8px; background: var(--surface-input); color: var(--text-secondary); font-size: 11px; flex-shrink: 0; }
+.command-panel-override-badge { font-weight: 500; color: var(--text-primary); }
+.command-panel-override-reset { padding: 2px 8px; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--surface-section); color: var(--text-primary); font: inherit; font-size: 11px; cursor: pointer; }
 .command-panel-override-reset:hover:not(:disabled) { background: var(--surface-hover); }
 .command-panel-override-reset:disabled { opacity: .5; cursor: not-allowed; }
 .command-panel-search input { min-width: 0; width: 100%; height: auto; min-height: 0; padding: 0; border-radius: 0; line-height: 1.5; color: var(--text-primary); background: transparent; border: 0; box-shadow: none; outline: none; font: inherit; }
+.command-panel-context-strategy { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 12px 12px; }
 .command-panel-reasoning { flex-shrink: 0; margin: 0 12px 8px; padding: 10px 12px 12px; border-radius: 10px; background: var(--surface-input); }
 .command-panel-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 6px 6px; }
-.command-panel-row { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; min-height: 36px; background: transparent; border: 0; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; }
+.command-panel-row { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; min-height: 36px; background: transparent; border: 0; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .command-panel-row.is-highlighted:not(:disabled), .command-panel-row:hover:not(:disabled) { background: var(--surface-hover); }
 .command-panel-row:disabled { opacity: .5; cursor: not-allowed; }
 .command-panel-row:focus-visible, .command-panel-icon:focus-visible { outline: 2px solid var(--text-muted); outline-offset: -2px; }
@@ -675,7 +750,7 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-copy strong { font-weight: 500; overflow-wrap: anywhere; }
 .command-panel-copy small { font-size: 11px; line-height: 1.45; color: var(--text-muted); overflow-wrap: anywhere; }
 .command-panel-value { max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; }
-.command-panel-switch { width: 28px; height: 16px; flex-shrink: 0; display: flex; align-items: center; padding: 2px; border-radius: 999px; background: var(--border-muted); }
+.command-panel-switch { width: 28px; height: 16px; flex-shrink: 0; display: flex; align-items: center; padding: 2px; border-radius: 999px; background: var(--border-muted); transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .command-panel-switch span { width: 12px; height: 12px; border-radius: 50%; background: var(--text-muted); }
 .command-panel-switch.is-on { background: var(--text-primary); justify-content: flex-end; }
 .command-panel-switch.is-on span { background: var(--bg-primary); }
@@ -684,4 +759,7 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-note, .command-panel-feedback { margin: 6px 10px; font-size: 11px; line-height: 1.6; }
 .command-panel-note { color: var(--text-muted); }
 .command-panel-feedback button { color: inherit; background: transparent; border: 0; text-decoration: underline; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) {
+  .command-panel-row, .command-panel-switch { transition: none; }
+}
 </style>

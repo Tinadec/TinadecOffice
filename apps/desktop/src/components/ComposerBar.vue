@@ -26,7 +26,7 @@ import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { isCommandAvailable, parseSlashCommand, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { toggleSessionPartner as togglePartnerWindow } from '@/lib/sessionPartner'
 import { composerSlashQuery, composerSettings, permissionChoices, type ComposerPage } from '@/lib/composerCommands'
-import { defaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
+import { contextAdvancedEqual, copySpaceOptions, defaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
 import {
   attachFiles,
@@ -114,6 +114,7 @@ const enabledSpaceLabels = computed(() => {
   if (props.spatial) {
     return [
       ...composerSettings.filter(setting => 'toggle' in setting && props.spaceOptions?.[setting.toggle]).map(setting => t(setting.label)),
+      ...(props.spaceOptions?.context_strategy || props.spaceOptions?.context_advanced ? [t('commandPanel.contextStrategy')] : []),
       ...(props.spaceOptions?.workflow_mode_version_id ? [t('commandPanel.workflow')] : []),
     ]
   }
@@ -122,6 +123,9 @@ const enabledSpaceLabels = computed(() => {
   const changed = composerSettings
     .filter(setting => 'toggle' in setting && Boolean(props.spaceOptions?.[setting.toggle]) !== Boolean(baseline[setting.toggle]))
     .map(setting => t(setting.label))
+  const contextChanged = (props.spaceOptions?.context_strategy ?? null) !== (baseline.context_strategy ?? null)
+    || !contextAdvancedEqual(props.spaceOptions?.context_advanced, baseline.context_advanced)
+  if (contextChanged) changed.push(t('commandPanel.contextStrategy'))
   return [t('commandPanel.temporaryOverrides'), ...changed]
 })
 const plusTriggerRef = ref<HTMLElement | null>(null)
@@ -178,7 +182,7 @@ const commandHost: CommandHost = {
       target_run_id: null,
       mode_version_id: props.modeVersionId ?? null,
       meeting_model_override: props.meetingModelOverride ?? null,
-      ...(props.spaceOptions ? { space_options: { ...props.spaceOptions } } : {}),
+      ...(props.spaceOptions ? { space_options: copySpaceOptions(props.spaceOptions) } : {}),
     })
   },
   // Stop keeps going out over the emit chain instead of calling homeController.stopRun()
@@ -869,7 +873,7 @@ function submit(pref?: DispatchPref, asText = false) {
       permission_mode: props.permission,
       mode_version_id: props.modeVersionId ?? null,
       meeting_model_override: props.meetingModelOverride ?? null,
-      ...(props.spaceOptions ? { space_options: { ...props.spaceOptions } } : {}),
+      ...(props.spaceOptions ? { space_options: copySpaceOptions(props.spaceOptions) } : {}),
     })
     return
   }
