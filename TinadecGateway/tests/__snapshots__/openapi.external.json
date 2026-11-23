@@ -842,6 +842,29 @@
         ],
         "type": "object"
       },
+      "ApplyContextEvolutionProposalRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "eval_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "require_eval_gate": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ApprovalGateDto": {
         "properties": {
           "created_at": {
@@ -1032,6 +1055,77 @@
           "after_tokens",
           "occurred_at",
           "summary"
+        ],
+        "type": "object"
+      },
+      "CompactionReconciliation": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "dropped_bytes_estimate": {
+            "type": "integer"
+          },
+          "dropped_ratio_percent": {
+            "type": "number"
+          },
+          "dropped_tokens": {
+            "type": "integer"
+          },
+          "has_compaction_digest": {
+            "type": "boolean"
+          },
+          "has_pricing_data": {
+            "type": "boolean"
+          },
+          "lane_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string"
+          },
+          "pre_compaction_tokens": {
+            "type": "integer"
+          },
+          "previous_pack_dropped_delta": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "previous_pack_retained_delta": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "retained_bytes_estimate": {
+            "type": "integer"
+          },
+          "retained_ratio_percent": {
+            "type": "number"
+          },
+          "retained_tokens": {
+            "type": "integer"
+          },
+          "token_budget": {
+            "type": "integer"
+          },
+          "utilization_percent": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "pack_id",
+          "created_at",
+          "token_budget",
+          "retained_tokens",
+          "dropped_tokens",
+          "pre_compaction_tokens",
+          "retained_bytes_estimate",
+          "dropped_bytes_estimate",
+          "utilization_percent",
+          "retained_ratio_percent",
+          "dropped_ratio_percent",
+          "has_pricing_data",
+          "has_compaction_digest"
         ],
         "type": "object"
       },
@@ -2623,6 +2717,685 @@
         ],
         "type": "object"
       },
+      "ContextAuditExtraSource": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "system_prompt",
+              "pipeline_template",
+              "workspace_instructions",
+              "tool_schema",
+              "skill",
+              "prompt_fragment",
+              "other"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "meta": {
+            "nullable": true,
+            "type": "string"
+          },
+          "path": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ContextCategoryNode": {
+        "properties": {
+          "budget_share_percent": {
+            "type": "number"
+          },
+          "category": {
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/ContextCategoryNode"
+            },
+            "type": "array"
+          },
+          "depth": {
+            "type": "integer"
+          },
+          "dropped_bytes_estimate": {
+            "type": "integer"
+          },
+          "dropped_item_count": {
+            "type": "integer"
+          },
+          "dropped_tokens": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContextEvidenceItem"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "retained_bytes_estimate": {
+            "type": "integer"
+          },
+          "retained_tokens": {
+            "type": "integer"
+          },
+          "share_percent": {
+            "type": "number"
+          },
+          "source_key": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "category",
+          "depth",
+          "retained_tokens",
+          "dropped_tokens",
+          "retained_bytes_estimate",
+          "dropped_bytes_estimate",
+          "share_percent",
+          "budget_share_percent",
+          "item_count",
+          "dropped_item_count",
+          "items",
+          "children"
+        ],
+        "type": "object"
+      },
+      "ContextCompactionDiagnostics": {
+        "properties": {
+          "critical_dropped_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pack_count": {
+            "type": "integer"
+          },
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/CompactionReconciliation"
+            },
+            "type": "array"
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/CompactionReconciliation"
+          },
+          "root": {
+            "$ref": "#/components/schemas/ContextCategoryNode"
+          },
+          "selected_pack_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "total_dropped_tokens_across_packs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pack_count",
+          "total_dropped_tokens_across_packs",
+          "critical_dropped_sources",
+          "root",
+          "reconciliation",
+          "packs"
+        ],
+        "type": "object"
+      },
+      "ContextDedupProposalEvidence": {
+        "properties": {
+          "estimated_wasted_tokens": {
+            "type": "integer"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "line_range_label": {
+            "type": "string"
+          },
+          "overlap_chars": {
+            "type": "integer"
+          },
+          "remediation_code": {
+            "type": "string"
+          },
+          "source_a_end_line": {
+            "type": "integer"
+          },
+          "source_a_id": {
+            "type": "string"
+          },
+          "source_a_kind": {
+            "type": "string"
+          },
+          "source_a_label": {
+            "type": "string"
+          },
+          "source_a_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_a_start_line": {
+            "type": "integer"
+          },
+          "source_b_end_line": {
+            "type": "integer"
+          },
+          "source_b_id": {
+            "type": "string"
+          },
+          "source_b_kind": {
+            "type": "string"
+          },
+          "source_b_label": {
+            "type": "string"
+          },
+          "source_b_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_b_start_line": {
+            "type": "integer"
+          },
+          "suggested_remediation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_a_id",
+          "source_a_label",
+          "source_a_kind",
+          "source_a_start_line",
+          "source_a_end_line",
+          "source_b_id",
+          "source_b_label",
+          "source_b_kind",
+          "source_b_start_line",
+          "source_b_end_line",
+          "line_range_label",
+          "overlap_chars",
+          "estimated_wasted_tokens",
+          "remediation_code",
+          "excerpt",
+          "suggested_remediation"
+        ],
+        "type": "object"
+      },
+      "ContextEvidenceItem": {
+        "properties": {
+          "bytes_estimate": {
+            "type": "integer"
+          },
+          "dropped": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "tokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "tokens",
+          "bytes_estimate",
+          "dropped"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionApplyResult": {
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "applied_mode_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "applied_mode_version": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "eval_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "promoted_agent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/ContextEvolutionProposal"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "updated_toml_preview": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal",
+          "applied",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionEvaluation": {
+        "properties": {
+          "eval_runs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "evidence_diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/ContextEvolutionEvidenceSnapshot"
+            },
+            "type": "array"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/ContextEvolutionProposal"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "proposal",
+          "eval_runs",
+          "evidence_diagnostics"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionEvidenceSnapshot": {
+        "properties": {
+          "active_signals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "critical_dropped_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "degradation_detected": {
+            "type": "boolean"
+          },
+          "degradation_reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_same_args_retry_streak": {
+            "type": "integer"
+          },
+          "peak_occupancy_pct": {
+            "type": "number"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total_dropped_tokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "peak_occupancy_pct",
+          "degradation_detected",
+          "degradation_reason_codes",
+          "critical_dropped_sources",
+          "total_dropped_tokens",
+          "active_signals",
+          "max_same_args_retry_streak"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionMetricsComparison": {
+        "properties": {
+          "after_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "avg_peak_occupancy_pct": {
+            "type": "number"
+          },
+          "before_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "degradation_rate": {
+            "type": "number"
+          },
+          "degraded_run_count": {
+            "type": "integer"
+          },
+          "dropped_critical_run_count": {
+            "type": "integer"
+          },
+          "dropped_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expected_benefit": {
+            "type": "string"
+          },
+          "high_occupancy_avg_latency_ms": {
+            "type": "number"
+          },
+          "high_occupancy_error_rate": {
+            "type": "number"
+          },
+          "low_occupancy_avg_latency_ms": {
+            "type": "number"
+          },
+          "low_occupancy_error_rate": {
+            "type": "number"
+          },
+          "window_run_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_run_count",
+          "degraded_run_count",
+          "degradation_rate",
+          "dropped_critical_run_count",
+          "avg_peak_occupancy_pct",
+          "high_occupancy_error_rate",
+          "low_occupancy_error_rate",
+          "high_occupancy_avg_latency_ms",
+          "low_occupancy_avg_latency_ms",
+          "dropped_sources",
+          "before_values",
+          "after_values",
+          "expected_benefit"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionProposal": {
+        "properties": {
+          "applied_mode_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "applied_mode_version": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "applied_toml_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "applied_toml_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "composer_prompt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "decision_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "dedup_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDedupProposalEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eval_gate_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "eval_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "evidence_run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "context_policy_proposal",
+              "prompt_dedup_proposal"
+            ],
+            "type": "string"
+          },
+          "linked_agent_candidate_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "metrics_comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextEvolutionMetricsComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_patch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextPolicyPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "promoted_agent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "remediation_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "requires_human_approval": {
+            "type": "boolean"
+          },
+          "risk_level": {
+            "type": "string"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "target_mode_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "target_mode_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "target_mode_slug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "target_scope": {
+            "enum": [
+              "global",
+              "mode",
+              "workspace"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "target_scope",
+          "title",
+          "summary",
+          "rationale",
+          "confidence",
+          "risk_level",
+          "requires_human_approval",
+          "evidence_run_ids",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ContextEvolutionProposalList": {
+        "properties": {
+          "auto_tune_low_risk_context_policy": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContextEvolutionProposal"
+            },
+            "type": "array"
+          },
+          "pending_count": {
+            "type": "integer"
+          },
+          "total_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_count",
+          "pending_count",
+          "auto_tune_low_risk_context_policy"
+        ],
+        "type": "object"
+      },
+      "ContextLineRange": {
+        "properties": {
+          "end": {
+            "type": "integer"
+          },
+          "start": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
       "ContextMemoryPolicy": {
         "properties": {
           "allow_cross_session_recall": {
@@ -2645,6 +3418,9 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "auto_tune_low_risk_context_policy": {
+            "type": "boolean"
           },
           "candidate_only": {
             "type": "boolean"
@@ -2738,6 +3514,348 @@
         ],
         "type": "object"
       },
+      "ContextOverlapAudit": {
+        "properties": {
+          "agent_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "duplicate_estimated_tokens": {
+            "type": "integer"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "k_gram_size": {
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/OverlapPassageMatch"
+            },
+            "type": "array"
+          },
+          "mode_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "overall_overlap_percent": {
+            "type": "number"
+          },
+          "pairs": {
+            "items": {
+              "$ref": "#/components/schemas/ContextOverlapPairSummary"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "run_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "source_count": {
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ContextOverlapSourceStats"
+            },
+            "type": "array"
+          },
+          "total_estimated_tokens": {
+            "type": "integer"
+          },
+          "window_size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "k_gram_size",
+          "window_size",
+          "source_count",
+          "total_estimated_tokens",
+          "duplicate_estimated_tokens",
+          "overall_overlap_percent",
+          "generated_at",
+          "pairs",
+          "matches",
+          "sources"
+        ],
+        "type": "object"
+      },
+      "ContextOverlapAuditRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "extra_sources": {
+            "items": {
+              "$ref": "#/components/schemas/ContextAuditExtraSource"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "include_prompts": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "include_skills": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "include_tools": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "k_gram_size": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "max_excerpt_length": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "max_matches_per_pair": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "mode_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "run_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "window_size": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "workspace_root": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ContextOverlapPairSummary": {
+        "properties": {
+          "estimated_duplicate_tokens": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "match_count": {
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/OverlapPassageMatch"
+            },
+            "type": "array"
+          },
+          "overlap_percent": {
+            "type": "number"
+          },
+          "overlap_percent_a": {
+            "type": "number"
+          },
+          "overlap_percent_b": {
+            "type": "number"
+          },
+          "remediation_code": {
+            "type": "string"
+          },
+          "remediation_summary": {
+            "type": "string"
+          },
+          "shared_chars": {
+            "type": "integer"
+          },
+          "source_a_id": {
+            "type": "string"
+          },
+          "source_a_kind": {
+            "type": "string"
+          },
+          "source_a_label": {
+            "type": "string"
+          },
+          "source_b_id": {
+            "type": "string"
+          },
+          "source_b_kind": {
+            "type": "string"
+          },
+          "source_b_label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_a_id",
+          "source_a_label",
+          "source_a_kind",
+          "source_b_id",
+          "source_b_label",
+          "source_b_kind",
+          "shared_chars",
+          "overlap_percent",
+          "overlap_percent_a",
+          "overlap_percent_b",
+          "estimated_duplicate_tokens",
+          "match_count",
+          "matches",
+          "remediation_code",
+          "remediation_summary"
+        ],
+        "type": "object"
+      },
+      "ContextOverlapSourceStats": {
+        "properties": {
+          "char_count": {
+            "type": "integer"
+          },
+          "duplicated_chars": {
+            "type": "integer"
+          },
+          "estimated_tokens": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "line_count": {
+            "type": "integer"
+          },
+          "overlap_percent": {
+            "type": "number"
+          },
+          "path": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "char_count",
+          "line_count",
+          "estimated_tokens",
+          "duplicated_chars",
+          "overlap_percent"
+        ],
+        "type": "object"
+      },
+      "ContextPolicyParamsOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cross_session_recall": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "compaction_trigger_ratio": {
+            "nullable": true,
+            "type": "number"
+          },
+          "core_markdown_max_tokens": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "evolution_mode": {
+            "enum": [
+              "auto_evolve",
+              "candidate_only"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "recall_fidelity": {
+            "enum": [
+              "summary_only",
+              "balanced",
+              "verbatim_first"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "recent_message_limit": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "ContextPolicyPatch": {
+        "properties": {
+          "allow_cross_session_recall": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "compaction_trigger_ratio": {
+            "nullable": true,
+            "type": "number"
+          },
+          "context_strategy": {
+            "enum": [
+              "direct",
+              "managed",
+              "deep_curator"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "core_markdown_max_tokens": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "evolution_mode": {
+            "enum": [
+              "auto_evolve",
+              "candidate_only"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "recall_fidelity": {
+            "enum": [
+              "summary_only",
+              "balanced",
+              "verbatim_first"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "recent_message_limit": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "ContextVersion": {
         "additionalProperties": true,
         "properties": {
@@ -2815,6 +3933,169 @@
           "usage_percent",
           "compaction_count",
           "compaction_points"
+        ],
+        "type": "object"
+      },
+      "ContextWindowBucket": {
+        "properties": {
+          "avg_latency_ms": {
+            "type": "number"
+          },
+          "avg_occupancy_pct": {
+            "type": "number"
+          },
+          "error_count": {
+            "type": "integer"
+          },
+          "error_rate": {
+            "type": "number"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max_latency_ms": {
+            "type": "number"
+          },
+          "range_end": {
+            "type": "integer"
+          },
+          "range_start": {
+            "type": "integer"
+          },
+          "sample_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "range_start",
+          "range_end",
+          "label",
+          "sample_count",
+          "error_count",
+          "error_rate",
+          "avg_latency_ms",
+          "max_latency_ms",
+          "avg_occupancy_pct"
+        ],
+        "type": "object"
+      },
+      "ContextWindowBucketReport": {
+        "properties": {
+          "avg_latency_ms": {
+            "type": "number"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/ContextWindowBucket"
+            },
+            "type": "array"
+          },
+          "degradation_detected": {
+            "type": "boolean"
+          },
+          "degradation_reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "high_occupancy_avg_latency_ms": {
+            "type": "number"
+          },
+          "high_occupancy_error_rate": {
+            "type": "number"
+          },
+          "low_occupancy_avg_latency_ms": {
+            "type": "number"
+          },
+          "low_occupancy_error_rate": {
+            "type": "number"
+          },
+          "overall_error_rate": {
+            "type": "number"
+          },
+          "peak_occupancy_pct": {
+            "type": "number"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/ContextWindowSamplePoint"
+            },
+            "type": "array"
+          },
+          "total_errors": {
+            "type": "integer"
+          },
+          "total_samples": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "buckets",
+          "samples",
+          "total_samples",
+          "total_errors",
+          "overall_error_rate",
+          "avg_latency_ms",
+          "peak_occupancy_pct",
+          "low_occupancy_error_rate",
+          "high_occupancy_error_rate",
+          "low_occupancy_avg_latency_ms",
+          "high_occupancy_avg_latency_ms",
+          "degradation_detected",
+          "degradation_reason_codes"
+        ],
+        "type": "object"
+      },
+      "ContextWindowSamplePoint": {
+        "properties": {
+          "bucket_index": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_error": {
+            "type": "boolean"
+          },
+          "latency_ms": {
+            "type": "number"
+          },
+          "occupancy_pct": {
+            "type": "number"
+          },
+          "source_kind": {
+            "enum": [
+              "invocation",
+              "tool",
+              "context_pack"
+            ],
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "token_budget": {
+            "type": "integer"
+          },
+          "tokens_used": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "source_kind",
+          "occupancy_pct",
+          "bucket_index",
+          "is_error",
+          "latency_ms",
+          "tokens_used",
+          "token_budget",
+          "timestamp"
         ],
         "type": "object"
       },
@@ -2949,6 +4230,75 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "DiagnosticCodeFrame": {
+        "properties": {
+          "column": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "command": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cwd": {
+            "nullable": true,
+            "type": "string"
+          },
+          "error_category": {
+            "nullable": true,
+            "type": "string"
+          },
+          "file_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "line": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticCodeFrameLine"
+            },
+            "type": "array"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "title",
+          "lines"
+        ],
+        "type": "object"
+      },
+      "DiagnosticCodeFrameLine": {
+        "properties": {
+          "highlight": {
+            "type": "boolean"
+          },
+          "line_number": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "highlight"
+        ],
         "type": "object"
       },
       "EnvironmentDto": {
@@ -3269,6 +4619,41 @@
           "mode",
           "note",
           "hits"
+        ],
+        "type": "object"
+      },
+      "ExecutiveFinding": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "severity": {
+            "enum": [
+              "danger",
+              "warn",
+              "info"
+            ],
+            "type": "string"
+          },
+          "suggested_action": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "summary",
+          "evidence_refs",
+          "suggested_action"
         ],
         "type": "object"
       },
@@ -5696,6 +7081,72 @@
         ],
         "type": "object"
       },
+      "OverlapPassageMatch": {
+        "properties": {
+          "estimated_duplicate_tokens": {
+            "type": "integer"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "line_range_pair": {
+            "type": "string"
+          },
+          "remediation_code": {
+            "type": "string"
+          },
+          "remediation_summary": {
+            "type": "string"
+          },
+          "shared_chars": {
+            "type": "integer"
+          },
+          "source_a_id": {
+            "type": "string"
+          },
+          "source_a_kind": {
+            "type": "string"
+          },
+          "source_a_label": {
+            "type": "string"
+          },
+          "source_a_lines": {
+            "$ref": "#/components/schemas/ContextLineRange"
+          },
+          "source_b_id": {
+            "type": "string"
+          },
+          "source_b_kind": {
+            "type": "string"
+          },
+          "source_b_label": {
+            "type": "string"
+          },
+          "source_b_lines": {
+            "$ref": "#/components/schemas/ContextLineRange"
+          }
+        },
+        "required": [
+          "id",
+          "source_a_id",
+          "source_a_label",
+          "source_a_kind",
+          "source_b_id",
+          "source_b_label",
+          "source_b_kind",
+          "source_a_lines",
+          "source_b_lines",
+          "shared_chars",
+          "estimated_duplicate_tokens",
+          "excerpt",
+          "remediation_code",
+          "remediation_summary"
+        ],
+        "type": "object"
+      },
       "PreAuthorization": {
         "additionalProperties": true,
         "properties": {
@@ -6028,6 +7479,16 @@
         ],
         "type": "object"
       },
+      "RejectContextEvolutionProposalRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "RevertMemoryItemRequest": {
         "additionalProperties": true,
         "properties": {
@@ -6103,11 +7564,224 @@
         ],
         "type": "object"
       },
+      "RunContextDiagnostics": {
+        "properties": {
+          "compaction": {
+            "$ref": "#/components/schemas/ContextCompactionDiagnostics"
+          },
+          "executive_findings": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveFinding"
+            },
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "governance": {
+            "$ref": "#/components/schemas/RunGovernanceDiagnostics"
+          },
+          "mode_version_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "window_buckets": {
+            "$ref": "#/components/schemas/ContextWindowBucketReport"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "generated_at",
+          "window_buckets",
+          "compaction",
+          "governance",
+          "executive_findings"
+        ],
+        "type": "object"
+      },
+      "RunFileEdit": {
+        "properties": {
+          "added": {
+            "type": "integer"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "file_path": {
+            "nullable": true,
+            "type": "string"
+          },
+          "removed": {
+            "type": "integer"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id",
+          "tool_id",
+          "added",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "RunGovernanceDiagnostics": {
+        "properties": {
+          "active_signals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "error_count": {
+            "type": "integer"
+          },
+          "error_frames": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticCodeFrame"
+            },
+            "type": "array"
+          },
+          "file_edits": {
+            "items": {
+              "$ref": "#/components/schemas/RunFileEdit"
+            },
+            "type": "array"
+          },
+          "max_same_args_retry_streak": {
+            "type": "integer"
+          },
+          "retry_streaks": {
+            "items": {
+              "$ref": "#/components/schemas/RunRetryStreak"
+            },
+            "type": "array"
+          },
+          "signal_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/RunGovernanceSignal"
+            },
+            "type": "array"
+          },
+          "total_added_lines": {
+            "type": "integer"
+          },
+          "total_model_calls": {
+            "type": "integer"
+          },
+          "total_removed_lines": {
+            "type": "integer"
+          },
+          "total_tool_calls": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "signal_counts",
+          "active_signals",
+          "signals",
+          "max_same_args_retry_streak",
+          "retry_streaks",
+          "total_tool_calls",
+          "total_model_calls",
+          "error_count",
+          "total_added_lines",
+          "total_removed_lines",
+          "file_edits",
+          "error_frames"
+        ],
+        "type": "object"
+      },
+      "RunGovernanceSignal": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "detail": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_retry_streak": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "severity": {
+            "enum": [
+              "danger",
+              "warn",
+              "neutral"
+            ],
+            "type": "string"
+          },
+          "subject_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "count",
+          "subject_ids"
+        ],
+        "type": "object"
+      },
       "RunList": {
         "items": {
           "$ref": "#/components/schemas/Run"
         },
         "type": "array"
+      },
+      "RunRetryStreak": {
+        "properties": {
+          "arguments_summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "scope_key": {
+            "type": "string"
+          },
+          "streak_count": {
+            "type": "integer"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id",
+          "tool_id",
+          "scope_key",
+          "streak_count"
+        ],
+        "type": "object"
       },
       "SentinelAlert": {
         "properties": {
@@ -7150,6 +8824,25 @@
         "properties": {
           "bulletin_board": {
             "type": "boolean"
+          },
+          "context_advanced": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextPolicyParamsOverride"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context_strategy": {
+            "enum": [
+              "direct",
+              "managed",
+              "deep_curator"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "multi_agent": {
             "type": "boolean"
@@ -10184,6 +11877,10 @@
         "additionalProperties": true,
         "properties": {
           "allow_cross_session_recall": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "auto_tune_low_risk_context_policy": {
             "nullable": true,
             "type": "boolean"
           },
@@ -14036,6 +15733,171 @@
         ]
       }
     },
+    "/api/v1/context-evolution/proposals": {
+      "get": {
+        "operationId": "getApiV1Context-evolutionProposals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEvolutionProposalList"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/context-evolution/proposals",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/context-evolution/proposals/{proposalId}": {
+      "get": {
+        "operationId": "getApiV1Context-evolutionProposalsByProposalId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEvolutionProposal"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/context-evolution/proposals/:proposalId",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/context-evolution/proposals/{proposalId}/apply": {
+      "post": {
+        "operationId": "postApiV1Context-evolutionProposalsByProposalIdApply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyContextEvolutionProposalRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEvolutionApplyResult"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/context-evolution/proposals/:proposalId/apply",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/context-evolution/proposals/{proposalId}/evaluation": {
+      "get": {
+        "operationId": "getApiV1Context-evolutionProposalsByProposalIdEvaluation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEvolutionEvaluation"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/context-evolution/proposals/:proposalId/evaluation",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/context-evolution/proposals/{proposalId}/reject": {
+      "post": {
+        "operationId": "postApiV1Context-evolutionProposalsByProposalIdReject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectContextEvolutionProposalRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEvolutionProposal"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/context-evolution/proposals/:proposalId/reject",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
     "/api/v1/context-memory/policy": {
       "get": {
         "operationId": "getApiV1Context-memoryPolicy",
@@ -14081,6 +15943,37 @@
           }
         },
         "summary": "PUT /api/v1/context-memory/policy",
+        "tags": [
+          "ContextMemory"
+        ]
+      }
+    },
+    "/api/v1/context/audit-overlap": {
+      "post": {
+        "operationId": "postApiV1ContextAudit-overlap",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextOverlapAuditRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextOverlapAudit"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "POST /api/v1/context/audit-overlap",
         "tags": [
           "ContextMemory"
         ]
@@ -16703,6 +18596,37 @@
         "summary": "Spawn run agent (temporary/persistent/profile)",
         "tags": [
           "Agents"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/context-diagnostics": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdContext-diagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunContextDiagnostics"
+                }
+              }
+            },
+            "description": "Core-owned Context & Memory response"
+          }
+        },
+        "summary": "GET /api/v1/runs/:runId/context-diagnostics",
+        "tags": [
+          "ContextMemory"
         ]
       }
     },

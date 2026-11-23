@@ -51,6 +51,15 @@ const meetingModelOverride = t.Object({
   model: nullableString(),
 }, { additionalProperties: true });
 
+const contextPolicyParamsOverride = t.Object({
+  recall_fidelity: t.Optional(t.Unsafe({ type: 'string', enum: ['summary_only', 'balanced', 'verbatim_first'], nullable: true })),
+  compaction_trigger_ratio: t.Optional(t.Unsafe({ type: 'number', nullable: true })),
+  recent_message_limit: t.Optional(nullableInteger()),
+  allow_cross_session_recall: t.Optional(t.Unsafe({ type: 'boolean', nullable: true })),
+  evolution_mode: t.Optional(t.Unsafe({ type: 'string', enum: ['auto_evolve', 'candidate_only'], nullable: true })),
+  core_markdown_max_tokens: t.Optional(nullableInteger()),
+}, { additionalProperties: false });
+
 const spaceOptions = t.Object({
   plan_first: t.Boolean(),
   spec_enabled: t.Boolean(),
@@ -58,6 +67,8 @@ const spaceOptions = t.Object({
   workflow_mode_version_id: nullableString(),
   bulletin_board: t.Boolean(),
   worktree: t.Boolean(),
+  context_strategy: t.Optional(t.Unsafe({ type: 'string', enum: ['direct', 'managed', 'deep_curator'], nullable: true })),
+  context_advanced: t.Optional(nullableRef('ContextPolicyParamsOverride')),
 }, { additionalProperties: false });
 
 const sessionPreferenceProperties = {
@@ -482,6 +493,7 @@ const toolExecutionPreview = t.Object({
 
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
+  ContextPolicyParamsOverride: contextPolicyParamsOverride,
   SpaceOptions: spaceOptions,
   CreateSessionRequest: createSessionRequest,
   UpdateSessionRequest: updateSessionRequest,

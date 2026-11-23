@@ -44,4 +44,9 @@ test('openapi external contract — serves valid document with host security sch
       assert.ok(!JSON.stringify(schemas[name]).includes('content_reference'), `${name} must not name a storage path`);
     }
   }
+
+  assert.ok('ContextPolicyParamsOverride' in schemas, 'ContextPolicyParamsOverride schema must exist');
+  assert.equal(valueAt(schemas, 'ContextPolicyParamsOverride', 'additionalProperties'), false);
+  assert.equal(valueAt(schemas, 'SpaceOptions', 'additionalProperties'), false);
+  assert.deepEqual(valueAt(schemas, 'SpaceOptions', 'properties', 'context_strategy', 'enum'), ['direct', 'managed', 'deep_curator']);
 });

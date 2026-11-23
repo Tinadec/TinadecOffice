@@ -76,7 +76,23 @@ test('session mapper preserves mode binding fields Core owns', () => {
 });
 
 test('session mapper and interaction transport preserve Core spatial choices and revisions', () => {
-  const options = { plan_first: true, spec_enabled: false, multi_agent: true, workflow_mode_version_id: null, bulletin_board: true, worktree: false };
+  const options = {
+    plan_first: true,
+    spec_enabled: false,
+    multi_agent: true,
+    workflow_mode_version_id: null,
+    bulletin_board: true,
+    worktree: false,
+    context_strategy: 'deep_curator' as const,
+    context_advanced: {
+      recall_fidelity: 'verbatim_first' as const,
+      compaction_trigger_ratio: 0.85,
+      recent_message_limit: 40,
+      allow_cross_session_recall: true,
+      evolution_mode: 'auto_evolve' as const,
+      core_markdown_max_tokens: 4096,
+    },
+  };
   const mapped = mapSession({ id: 'space', view_mode: 'space', space_options: options, settings_revision: 5, permission_mode: 'delegate-reviewer' });
   assert.deepEqual(mapped?.space_options, options);
   assert.equal(mapped?.settings_revision, 5);

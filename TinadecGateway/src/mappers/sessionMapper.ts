@@ -1,3 +1,13 @@
+/** Optional per-session or per-mode context governance parameter overrides. */
+export interface ContextPolicyParamsOverrideDto {
+  recall_fidelity?: 'summary_only' | 'balanced' | 'verbatim_first' | null;
+  compaction_trigger_ratio?: number | null;
+  recent_message_limit?: number | null;
+  allow_cross_session_recall?: boolean | null;
+  evolution_mode?: 'auto_evolve' | 'candidate_only' | null;
+  core_markdown_max_tokens?: number | null;
+}
+
 /** Core-owned, per-task spatial orchestration preferences. */
 export interface SpaceOptionsDto {
   plan_first: boolean;
@@ -6,6 +16,8 @@ export interface SpaceOptionsDto {
   workflow_mode_version_id: string | null;
   bulletin_board: boolean;
   worktree: boolean;
+  context_strategy?: 'direct' | 'managed' | 'deep_curator' | null;
+  context_advanced?: ContextPolicyParamsOverrideDto | null;
 }
 
 /** Session mapper */

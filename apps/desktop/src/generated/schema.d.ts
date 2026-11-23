@@ -415,11 +415,35 @@ export interface paths {
     /** POST /api/v1/configuration/documents/:documentId/validate */
     post: operations["postApiV1ConfigurationDocumentsByDocumentIdValidate"];
   };
+  "/api/v1/context-evolution/proposals": {
+    /** GET /api/v1/context-evolution/proposals */
+    get: operations["getApiV1Context-evolutionProposals"];
+  };
+  "/api/v1/context-evolution/proposals/{proposalId}": {
+    /** GET /api/v1/context-evolution/proposals/:proposalId */
+    get: operations["getApiV1Context-evolutionProposalsByProposalId"];
+  };
+  "/api/v1/context-evolution/proposals/{proposalId}/apply": {
+    /** POST /api/v1/context-evolution/proposals/:proposalId/apply */
+    post: operations["postApiV1Context-evolutionProposalsByProposalIdApply"];
+  };
+  "/api/v1/context-evolution/proposals/{proposalId}/evaluation": {
+    /** GET /api/v1/context-evolution/proposals/:proposalId/evaluation */
+    get: operations["getApiV1Context-evolutionProposalsByProposalIdEvaluation"];
+  };
+  "/api/v1/context-evolution/proposals/{proposalId}/reject": {
+    /** POST /api/v1/context-evolution/proposals/:proposalId/reject */
+    post: operations["postApiV1Context-evolutionProposalsByProposalIdReject"];
+  };
   "/api/v1/context-memory/policy": {
     /** GET /api/v1/context-memory/policy */
     get: operations["getApiV1Context-memoryPolicy"];
     /** PUT /api/v1/context-memory/policy */
     put: operations["putApiV1Context-memoryPolicy"];
+  };
+  "/api/v1/context/audit-overlap": {
+    /** POST /api/v1/context/audit-overlap */
+    post: operations["postApiV1ContextAudit-overlap"];
   };
   "/api/v1/debug/breakpoints": {
     /** List breakpoints */
@@ -882,6 +906,10 @@ export interface paths {
   "/api/v1/runs/{runId}/agents/spawn": {
     /** Spawn run agent (temporary/persistent/profile) */
     post: operations["postApiV1RunsByRunIdAgentsSpawn"];
+  };
+  "/api/v1/runs/{runId}/context-diagnostics": {
+    /** GET /api/v1/runs/:runId/context-diagnostics */
+    get: operations["getApiV1RunsByRunIdContext-diagnostics"];
   };
   "/api/v1/runs/{runId}/context-versions": {
     /** Run context versions */
@@ -1740,6 +1768,14 @@ export interface components {
       /** @description Pack-local prompt pipeline resource key. */
       prompt_pipeline_ref: string;
     };
+    ApplyContextEvolutionProposalRequest: {
+      /** Format: uuid */
+      eval_run_id?: string | null;
+      expected_content_hash?: string | null;
+      reason?: string | null;
+      require_eval_gate?: boolean | null;
+      [key: string]: unknown;
+    };
     ApprovalGateDto: {
       /** Format: date-time */
       created_at: string;
@@ -1786,6 +1822,24 @@ export interface components {
       occurred_at: string;
       seq: number;
       summary: string;
+    };
+    CompactionReconciliation: {
+      created_at: string;
+      dropped_bytes_estimate: number;
+      dropped_ratio_percent: number;
+      dropped_tokens: number;
+      has_compaction_digest: boolean;
+      has_pricing_data: boolean;
+      lane_key?: string | null;
+      pack_id: string;
+      pre_compaction_tokens: number;
+      previous_pack_dropped_delta?: number | null;
+      previous_pack_retained_delta?: number | null;
+      retained_bytes_estimate: number;
+      retained_ratio_percent: number;
+      retained_tokens: number;
+      token_budget: number;
+      utilization_percent: number;
     };
     CompanionActivity: {
       /** Format: uuid */
@@ -2261,11 +2315,185 @@ export interface components {
         }[];
       valid: boolean;
     };
+    ContextAuditExtraSource: {
+      content: string;
+      id: string;
+      /** @enum {string} */
+      kind: "system_prompt" | "pipeline_template" | "workspace_instructions" | "tool_schema" | "skill" | "prompt_fragment" | "other";
+      label: string;
+      meta?: string | null;
+      path?: string | null;
+    };
+    ContextCategoryNode: {
+      budget_share_percent: number;
+      category: string;
+      children: components["schemas"]["ContextCategoryNode"][];
+      depth: number;
+      dropped_bytes_estimate: number;
+      dropped_item_count: number;
+      dropped_tokens: number;
+      id: string;
+      item_count: number;
+      items: components["schemas"]["ContextEvidenceItem"][];
+      label: string;
+      retained_bytes_estimate: number;
+      retained_tokens: number;
+      share_percent: number;
+      source_key?: string | null;
+    };
+    ContextCompactionDiagnostics: {
+      critical_dropped_sources: string[];
+      pack_count: number;
+      packs: components["schemas"]["CompactionReconciliation"][];
+      reconciliation: components["schemas"]["CompactionReconciliation"];
+      root: components["schemas"]["ContextCategoryNode"];
+      selected_pack_id?: string | null;
+      total_dropped_tokens_across_packs: number;
+    };
+    ContextDedupProposalEvidence: {
+      estimated_wasted_tokens: number;
+      excerpt: string;
+      line_range_label: string;
+      overlap_chars: number;
+      remediation_code: string;
+      source_a_end_line: number;
+      source_a_id: string;
+      source_a_kind: string;
+      source_a_label: string;
+      source_a_path?: string | null;
+      source_a_start_line: number;
+      source_b_end_line: number;
+      source_b_id: string;
+      source_b_kind: string;
+      source_b_label: string;
+      source_b_path?: string | null;
+      source_b_start_line: number;
+      suggested_remediation: string;
+    };
+    ContextEvidenceItem: {
+      bytes_estimate: number;
+      dropped: boolean;
+      id: string;
+      source: string;
+      tokens: number;
+    };
+    ContextEvolutionApplyResult: {
+      applied: boolean;
+      /** Format: uuid */
+      applied_mode_id?: string | null;
+      applied_mode_version?: number | null;
+      /** Format: uuid */
+      eval_run_id?: string | null;
+      /** Format: uuid */
+      promoted_agent_id?: string | null;
+      proposal: components["schemas"]["ContextEvolutionProposal"];
+      summary: string;
+      updated_toml_preview?: string | null;
+    };
+    ContextEvolutionEvaluation: {
+      eval_runs: {
+          [key: string]: unknown;
+        }[];
+      evidence_diagnostics: components["schemas"]["ContextEvolutionEvidenceSnapshot"][];
+      proposal: components["schemas"]["ContextEvolutionProposal"];
+      /** Format: uuid */
+      proposal_id: string;
+    };
+    ContextEvolutionEvidenceSnapshot: {
+      active_signals: string[];
+      critical_dropped_sources: string[];
+      degradation_detected: boolean;
+      degradation_reason_codes: string[];
+      max_same_args_retry_streak: number;
+      peak_occupancy_pct: number;
+      run_id: string;
+      status: string;
+      total_dropped_tokens: number;
+    };
+    ContextEvolutionMetricsComparison: {
+      after_values: {
+        [key: string]: string;
+      };
+      avg_peak_occupancy_pct: number;
+      before_values: {
+        [key: string]: string;
+      };
+      degradation_rate: number;
+      degraded_run_count: number;
+      dropped_critical_run_count: number;
+      dropped_sources: string[];
+      expected_benefit: string;
+      high_occupancy_avg_latency_ms: number;
+      high_occupancy_error_rate: number;
+      low_occupancy_avg_latency_ms: number;
+      low_occupancy_error_rate: number;
+      window_run_count: number;
+    };
+    ContextEvolutionProposal: {
+      /** Format: uuid */
+      applied_mode_id?: string | null;
+      applied_mode_version?: number | null;
+      applied_toml_content_hash?: string | null;
+      applied_toml_path?: string | null;
+      composer_prompt?: string | null;
+      confidence: number;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      decided_at?: string | null;
+      decision_reason?: string | null;
+      dedup_evidence?: components["schemas"]["ContextDedupProposalEvidence"] | null;
+      eval_gate_status?: string | null;
+      /** Format: uuid */
+      eval_run_id?: string | null;
+      evidence_run_ids: string[];
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "context_policy_proposal" | "prompt_dedup_proposal";
+      /** Format: uuid */
+      linked_agent_candidate_id?: string | null;
+      metrics_comparison?: components["schemas"]["ContextEvolutionMetricsComparison"] | null;
+      policy_patch?: components["schemas"]["ContextPolicyPatch"] | null;
+      /** Format: uuid */
+      project_id?: string | null;
+      /** Format: uuid */
+      promoted_agent_id?: string | null;
+      rationale: string;
+      remediation_code?: string | null;
+      requires_human_approval: boolean;
+      risk_level: string;
+      /** Format: uuid */
+      source_run_id?: string | null;
+      /** @enum {string} */
+      status: "pending" | "applied" | "rejected";
+      summary: string;
+      /** Format: uuid */
+      target_mode_id?: string | null;
+      target_mode_name?: string | null;
+      target_mode_slug?: string | null;
+      /** @enum {string} */
+      target_scope: "global" | "mode" | "workspace";
+      title: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    ContextEvolutionProposalList: {
+      auto_tune_low_risk_context_policy: boolean;
+      items: components["schemas"]["ContextEvolutionProposal"][];
+      pending_count: number;
+      total_count: number;
+    };
+    ContextLineRange: {
+      end: number;
+      start: number;
+    };
     ContextMemoryPolicy: {
       allow_cross_session_recall: boolean;
       allowed_kinds: string[];
       allowed_scopes: string[];
       always_on_primitives: string[];
+      auto_tune_low_risk_context_policy?: boolean;
       candidate_only: boolean;
       compaction_trigger_ratio: number;
       companion_can_write_project_memory: boolean;
@@ -2287,6 +2515,92 @@ export interface components {
       strategy: "direct" | "managed" | "deep_curator";
       version: number;
     };
+    ContextOverlapAudit: {
+      agent_id?: string | null;
+      duplicate_estimated_tokens: number;
+      /** Format: date-time */
+      generated_at: string;
+      k_gram_size: number;
+      matches: components["schemas"]["OverlapPassageMatch"][];
+      mode_id?: string | null;
+      overall_overlap_percent: number;
+      pairs: components["schemas"]["ContextOverlapPairSummary"][];
+      project_id?: string | null;
+      run_id?: string | null;
+      scope: string;
+      source_count: number;
+      sources: components["schemas"]["ContextOverlapSourceStats"][];
+      total_estimated_tokens: number;
+      window_size: number;
+    };
+    ContextOverlapAuditRequest: {
+      agent_id?: string | null;
+      extra_sources?: components["schemas"]["ContextAuditExtraSource"][] | null;
+      include_prompts?: boolean | null;
+      include_skills?: boolean | null;
+      include_tools?: boolean | null;
+      k_gram_size?: number | null;
+      max_excerpt_length?: number | null;
+      max_matches_per_pair?: number | null;
+      mode_id?: string | null;
+      /** Format: uuid */
+      project_id?: string | null;
+      run_id?: string | null;
+      window_size?: number | null;
+      workspace_root?: string | null;
+      [key: string]: unknown;
+    };
+    ContextOverlapPairSummary: {
+      estimated_duplicate_tokens: number;
+      id: string;
+      match_count: number;
+      matches: components["schemas"]["OverlapPassageMatch"][];
+      overlap_percent: number;
+      overlap_percent_a: number;
+      overlap_percent_b: number;
+      remediation_code: string;
+      remediation_summary: string;
+      shared_chars: number;
+      source_a_id: string;
+      source_a_kind: string;
+      source_a_label: string;
+      source_b_id: string;
+      source_b_kind: string;
+      source_b_label: string;
+    };
+    ContextOverlapSourceStats: {
+      char_count: number;
+      duplicated_chars: number;
+      estimated_tokens: number;
+      id: string;
+      kind: string;
+      label: string;
+      line_count: number;
+      overlap_percent: number;
+      path?: string | null;
+    };
+    ContextPolicyParamsOverride: {
+      allow_cross_session_recall?: boolean | null;
+      compaction_trigger_ratio?: number | null;
+      core_markdown_max_tokens?: number | null;
+      /** @enum {string|null} */
+      evolution_mode?: "auto_evolve" | "candidate_only" | null;
+      /** @enum {string|null} */
+      recall_fidelity?: "summary_only" | "balanced" | "verbatim_first" | null;
+      recent_message_limit?: number | null;
+    };
+    ContextPolicyPatch: {
+      allow_cross_session_recall?: boolean | null;
+      compaction_trigger_ratio?: number | null;
+      /** @enum {string|null} */
+      context_strategy?: "direct" | "managed" | "deep_curator" | null;
+      core_markdown_max_tokens?: number | null;
+      /** @enum {string|null} */
+      evolution_mode?: "auto_evolve" | "candidate_only" | null;
+      /** @enum {string|null} */
+      recall_fidelity?: "summary_only" | "balanced" | "verbatim_first" | null;
+      recent_message_limit?: number | null;
+    };
     ContextVersion: {
       base_revision: number | null;
       created_at: string | null;
@@ -2305,6 +2619,45 @@ export interface components {
       max_tokens: number;
       usage_percent: number;
       used_tokens: number;
+    };
+    ContextWindowBucket: {
+      avg_latency_ms: number;
+      avg_occupancy_pct: number;
+      error_count: number;
+      error_rate: number;
+      index: number;
+      label: string;
+      max_latency_ms: number;
+      range_end: number;
+      range_start: number;
+      sample_count: number;
+    };
+    ContextWindowBucketReport: {
+      avg_latency_ms: number;
+      buckets: components["schemas"]["ContextWindowBucket"][];
+      degradation_detected: boolean;
+      degradation_reason_codes: string[];
+      high_occupancy_avg_latency_ms: number;
+      high_occupancy_error_rate: number;
+      low_occupancy_avg_latency_ms: number;
+      low_occupancy_error_rate: number;
+      overall_error_rate: number;
+      peak_occupancy_pct: number;
+      samples: components["schemas"]["ContextWindowSamplePoint"][];
+      total_errors: number;
+      total_samples: number;
+    };
+    ContextWindowSamplePoint: {
+      bucket_index: number;
+      id: string;
+      is_error: boolean;
+      latency_ms: number;
+      occupancy_pct: number;
+      /** @enum {string} */
+      source_kind: "invocation" | "tool" | "context_pack";
+      timestamp: string;
+      token_budget: number;
+      tokens_used: number;
     };
     ConversationRecallRequest: {
       cross_session?: boolean | null;
@@ -2335,6 +2688,23 @@ export interface components {
       space_options?: components["schemas"]["SpaceOptions"] | null;
       title?: string | null;
       view_mode?: "flat" | "space";
+    };
+    DiagnosticCodeFrame: {
+      column?: number | null;
+      command?: string | null;
+      cwd?: string | null;
+      error_category?: string | null;
+      file_path?: string | null;
+      id: string;
+      line?: number | null;
+      lines: components["schemas"]["DiagnosticCodeFrameLine"][];
+      source_id: string;
+      title: string;
+    };
+    DiagnosticCodeFrameLine: {
+      highlight: boolean;
+      line_number?: number | null;
+      text: string;
     };
     EnvironmentDto: {
       /** Format: int32 */
@@ -2408,6 +2778,14 @@ export interface components {
       hits: components["schemas"]["EvidenceHitDto"][];
       mode: string;
       note: string | null;
+    };
+    ExecutiveFinding: {
+      code: string;
+      evidence_refs: string[];
+      /** @enum {string} */
+      severity: "danger" | "warn" | "info";
+      suggested_action: string;
+      summary: string;
     };
     ExternalCliDiscoveredItem: {
       already_imported: boolean;
@@ -3028,6 +3406,23 @@ export interface components {
       label: string | null;
       status: string | null;
     };
+    OverlapPassageMatch: {
+      estimated_duplicate_tokens: number;
+      excerpt: string;
+      id: string;
+      line_range_pair?: string;
+      remediation_code: string;
+      remediation_summary: string;
+      shared_chars: number;
+      source_a_id: string;
+      source_a_kind: string;
+      source_a_label: string;
+      source_a_lines: components["schemas"]["ContextLineRange"];
+      source_b_id: string;
+      source_b_kind: string;
+      source_b_label: string;
+      source_b_lines: components["schemas"]["ContextLineRange"];
+    };
     PreAuthorization: {
       expires_at: string | null;
       /** Format: uuid */
@@ -3119,6 +3514,10 @@ export interface components {
       session_id: string;
       session_title?: string | null;
     };
+    RejectContextEvolutionProposalRequest: {
+      reason?: string | null;
+      [key: string]: unknown;
+    };
     RevertMemoryItemRequest: {
       reason?: string | null;
       target_version?: number | null;
@@ -3139,7 +3538,58 @@ export interface components {
       updated_at: string | null;
       [key: string]: unknown;
     };
+    RunContextDiagnostics: {
+      compaction: components["schemas"]["ContextCompactionDiagnostics"];
+      executive_findings: components["schemas"]["ExecutiveFinding"][];
+      /** Format: date-time */
+      generated_at: string;
+      governance: components["schemas"]["RunGovernanceDiagnostics"];
+      mode_version_id?: string | null;
+      run_id: string;
+      session_id?: string | null;
+      status: string;
+      window_buckets: components["schemas"]["ContextWindowBucketReport"];
+    };
+    RunFileEdit: {
+      added: number;
+      execution_id: string;
+      file_path?: string | null;
+      removed: number;
+      tool_id: string;
+    };
+    RunGovernanceDiagnostics: {
+      active_signals: string[];
+      error_count: number;
+      error_frames: components["schemas"]["DiagnosticCodeFrame"][];
+      file_edits: components["schemas"]["RunFileEdit"][];
+      max_same_args_retry_streak: number;
+      retry_streaks: components["schemas"]["RunRetryStreak"][];
+      signal_counts: {
+        [key: string]: number;
+      };
+      signals: components["schemas"]["RunGovernanceSignal"][];
+      total_added_lines: number;
+      total_model_calls: number;
+      total_removed_lines: number;
+      total_tool_calls: number;
+    };
+    RunGovernanceSignal: {
+      code: string;
+      count: number;
+      detail?: string | null;
+      max_retry_streak?: number | null;
+      /** @enum {string} */
+      severity: "danger" | "warn" | "neutral";
+      subject_ids: string[];
+    };
     RunList: components["schemas"]["Run"][];
+    RunRetryStreak: {
+      arguments_summary?: string | null;
+      execution_id: string;
+      scope_key: string;
+      streak_count: number;
+      tool_id: string;
+    };
     SentinelAlert: {
       code: string;
       /** Format: date-time */
@@ -3353,6 +3803,9 @@ export interface components {
     };
     SpaceOptions: {
       bulletin_board: boolean;
+      context_advanced?: components["schemas"]["ContextPolicyParamsOverride"] | null;
+      /** @enum {string|null} */
+      context_strategy?: "direct" | "managed" | "deep_curator" | null;
       multi_agent: boolean;
       plan_first: boolean;
       spec_enabled: boolean;
@@ -4122,6 +4575,7 @@ export interface components {
     };
     UpdateContextMemoryPolicyRequest: {
       allow_cross_session_recall?: boolean | null;
+      auto_tune_low_risk_context_policy?: boolean | null;
       candidate_only?: boolean | null;
       compaction_trigger_ratio?: number | null;
       companion_can_write_project_memory?: boolean | null;
@@ -6088,6 +6542,91 @@ export interface operations {
       };
     };
   };
+  /** GET /api/v1/context-evolution/proposals */
+  "getApiV1Context-evolutionProposals": {
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextEvolutionProposalList"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/context-evolution/proposals/:proposalId */
+  "getApiV1Context-evolutionProposalsByProposalId": {
+    parameters: {
+      path: {
+        proposalId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextEvolutionProposal"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/context-evolution/proposals/:proposalId/apply */
+  "postApiV1Context-evolutionProposalsByProposalIdApply": {
+    parameters: {
+      path: {
+        proposalId: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ApplyContextEvolutionProposalRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextEvolutionApplyResult"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/context-evolution/proposals/:proposalId/evaluation */
+  "getApiV1Context-evolutionProposalsByProposalIdEvaluation": {
+    parameters: {
+      path: {
+        proposalId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextEvolutionEvaluation"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/context-evolution/proposals/:proposalId/reject */
+  "postApiV1Context-evolutionProposalsByProposalIdReject": {
+    parameters: {
+      path: {
+        proposalId: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["RejectContextEvolutionProposalRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextEvolutionProposal"];
+        };
+      };
+    };
+  };
   /** GET /api/v1/context-memory/policy */
   "getApiV1Context-memoryPolicy": {
     responses: {
@@ -6111,6 +6650,22 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["ContextMemoryPolicy"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/context/audit-overlap */
+  "postApiV1ContextAudit-overlap": {
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ContextOverlapAuditRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ContextOverlapAudit"];
         };
       };
     };
@@ -7613,6 +8168,22 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** GET /api/v1/runs/:runId/context-diagnostics */
+  "getApiV1RunsByRunIdContext-diagnostics": {
+    parameters: {
+      path: {
+        runId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Context & Memory response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["RunContextDiagnostics"];
+        };
       };
     };
   };
