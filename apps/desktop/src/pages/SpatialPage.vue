@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
+import { type RouteLocationNormalizedLoaded, type Router, useRoute, useRouter } from 'vue-router'
 import { Background } from '@vue-flow/background'
 import {
   BaseEdge,
@@ -25,6 +26,7 @@ import {
   ArrowUpRight,
   Bot,
   ChevronDown,
+  Columns3,
   Eraser,
   FileCode2,
   Frame,
@@ -70,6 +72,7 @@ import SpatialWorkCard from '@/components/spatial/SpatialWorkCard.vue'
 import SpatialSectionNode from '@/components/spatial/SpatialSectionNode.vue'
 import SpatialStickyNode from '@/components/spatial/SpatialStickyNode.vue'
 import SpatialTextNode from '@/components/spatial/SpatialTextNode.vue'
+import SpatialProjectBoardNode from '@/components/spatial/SpatialProjectBoardNode.vue'
 import SpatialDrawingLayer from '@/components/spatial/SpatialDrawingLayer.vue'
 import SpatialMediaFileNode from '@/components/spatial/SpatialMediaFileNode.vue'
 import SpatialCommentPinsLayer from '@/components/spatial/SpatialCommentPinsLayer.vue'
@@ -81,11 +84,20 @@ import SpatialPresenceLayer, {
 import SpatialLiveDigestInspector, {
   type SpatialDigestFillSteerEvent,
 } from '@/components/spatial/SpatialLiveDigestInspector.vue'
-import SpatialSelectionBar from '@/components/spatial/SpatialSelectionBar.vue'
+import SpatialSelectionBar, {
+  type SpatialPromoteToBoardEvent,
+} from '@/components/spatial/SpatialSelectionBar.vue'
 import TeammateSteerPopover, {
   type TeammateSteerAnchorRect,
   type TeammateSteerTarget,
 } from '@/components/teammate/TeammateSteerPopover.vue'
+import {
+  BoardTaskDrawer,
+  buildSpatialFocusLocation,
+  consumePendingSpatialFocus,
+  stashPendingSpatialFocus,
+  useProjectBoardView,
+} from '@/components/board'
 import {
   SPATIAL_SECTION_PALETTE,
   SPATIAL_SECTION_TONES,
@@ -93,11 +105,14 @@ import {
   SPATIAL_STICKY_TONES,
   SPATIAL_TEXT_SCALES,
   SPATIAL_WHITEBOARD_DEFAULTS,
+  computeSpatialFocusViewport,
   encodeMediaPathToken,
   isSectionTone,
   isStickyTone,
   isTextScale,
+  sanitizeSpatialBoardWidgetProps,
   type SpatialAlignMode,
+  type SpatialBoardWidgetProps,
   type SpatialCommentPin,
   type SpatialConnectorCurve,
   type SpatialDistributeAxis,
@@ -113,7 +128,19 @@ import {
 import { UiButton, UiCheckbox, UiSelect } from '@/components/ui'
 import { homeController as c } from '@/controllers/HomeController'
 import { ensureProductionUie } from '@/lib/uiEngine'
-import { api, type SessionTopologyDto } from '@/api'
+import {
+  api,
+  type ApproveProjectBoardTaskInput,
+  type CreateProjectBoardTaskInput,
+  type DispatchProjectBoardTaskInput,
+  type ProjectBoardConflictResolution,
+  type ProjectBoardTaskDto,
+  type ProjectBoardTaskStatus,
+  type SessionTopologyDto,
+  type UpdateProjectBoardTaskInput,
+} from '@/api'
+import { selectionIdentity } from '@/lib/storageScope'
+import { useNotifications } from '@/composables/useNotifications'
 import {
   buildSpatialSelectionPrompt,
   collectSpatialTeammates,
@@ -133,6 +160,30 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { usePageTransition } from '@/composables/usePageTransition'
 
 const { t, te, locale } = useI18n()
+const { notify } = useNotifications()
+
+function resolveOptionalRoute(): RouteLocationNormalizedLoaded | null {
+  try {
+    const inst = getCurrentInstance()
+    if (!inst) return null
+    return useRoute() ?? null
+  } catch {
+    return null
+  }
+}
+
+function resolveOptionalRouter(): Router | null {
+  try {
+    const inst = getCurrentInstance()
+    if (!inst) return null
+    return useRouter() ?? null
+  } catch {
+    return null
+  }
+}
+
+const optionalRoute = resolveOptionalRoute()
+const optionalRouter = resolveOptionalRouter()
 
 function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
   if (te(key)) return params ? t(key, params) : t(key)
@@ -234,6 +285,90 @@ const board = useSpatialBoardSync({
     void setViewport(vp)
   },
 })
+
+// Phase 2 Spatial <-> Project Board live bridge (SSE-backed task hydration, drawer, promotion & focus pulse)
+const resolvedSpatialProjectId = computed<string | null>(() => {
+  const fromSession = c.currentSession.value?.project_id
+  if (fromSession) return selectionIdentity(fromSession).id
+  const fromSelected = c.selectedProjectId.value
+  if (fromSelected) return selectionIdentity(fromSelected).id
+  return null
+})
+
+const activeSpatialProjects = computed(() =>
+  c.projects.value
+    .filter((p) => p.lifecycle_status !== 'archived' && p.lifecycle_status !== 'trashed')
+    .map((p) => ({ id: p.id, name: p.name })),
+)
+
+const spatialProjectName = computed<string | null>(() => {
+  if (!resolvedSpatialProjectId.value) return null
+  return c.projects.value.find((p) => p.id === resolvedSpatialProjectId.value)?.name ?? null
+})
+
+const spatialProjectBoard = useProjectBoardView({
+  scope: 'project',
+  projectId: () => resolvedSpatialProjectId.value,
+  projects: activeSpatialProjects,
+})
+
+const boardTasksById = computed<ReadonlyMap<string, ProjectBoardTaskDto>>(() => {
+  const map = new Map<string, ProjectBoardTaskDto>()
+  for (const item of spatialProjectBoard.tasks.value) {
+    map.set(item.task_id, item)
+  }
+  return map
+})
+
+const boardTasksByKey = computed<ReadonlyMap<string, ProjectBoardTaskDto>>(() => {
+  const map = new Map<string, ProjectBoardTaskDto>()
+  for (const item of spatialProjectBoard.tasks.value) {
+    map.set(item.task_key, item)
+  }
+  return map
+})
+
+provide('space:board-tasks-by-id', boardTasksById)
+provide('space:board-tasks-by-key', boardTasksByKey)
+
+const promotingToBoard = ref(false)
+const boardDrawerOpen = ref(false)
+const boardDrawerMode = ref<'create' | 'edit'>('edit')
+const boardDrawerTaskId = ref<string | null>(null)
+const boardDrawerFallbackTask = ref<ProjectBoardTaskDto | null>(null)
+const boardDrawerDefaultProjectId = ref<string | null>(null)
+const boardDrawerDefaultStatus = ref<ProjectBoardTaskStatus>('ready')
+const pulsingObjectId = ref<string | null>(null)
+let pulseTimer: ReturnType<typeof setTimeout> | null = null
+let lastDroppedTaskGuard: { key: string; at: number } | null = null
+
+const selectedBoardDrawerTask = computed<ProjectBoardTaskDto | null>(() => {
+  if (!boardDrawerTaskId.value) return boardDrawerFallbackTask.value
+  return boardTasksById.value.get(boardDrawerTaskId.value) ?? boardDrawerFallbackTask.value
+})
+
+function resolveLinkedBoardTask(propsRec: Record<string, unknown>): ProjectBoardTaskDto | null {
+  const tid = typeof propsRec.board_task_id === 'string' ? propsRec.board_task_id.trim() : ''
+  if (tid && boardTasksById.value.has(tid)) {
+    return boardTasksById.value.get(tid) ?? null
+  }
+  const tkey = typeof propsRec.board_task_key === 'string' ? propsRec.board_task_key.trim() : ''
+  if (tkey && boardTasksByKey.value.has(tkey)) {
+    return boardTasksByKey.value.get(tkey) ?? null
+  }
+  return null
+}
+
+function triggerFocusPulse(objectId: string) {
+  if (pulseTimer !== null) clearTimeout(pulseTimer)
+  pulsingObjectId.value = objectId
+  pulseTimer = setTimeout(() => {
+    pulseTimer = null
+    if (pulsingObjectId.value === objectId) {
+      pulsingObjectId.value = null
+    }
+  }, 1800)
+}
 
 let alive = true
 let generation = 0
@@ -432,6 +567,7 @@ const nodes = computed<FlowNode[]>((previous) => {
     const isCollapsed = Boolean(sec.props.collapsed)
     const sectionRunId = resolveSectionRunId(sec)
     const matchesActiveDigest = Boolean(sectionRunId && digestRunId && sectionRunId === digestRunId)
+    const linkedTask = resolveLinkedBoardTask(sec.props)
     out.push({
       id: sec.id,
       type: 'section',
@@ -439,7 +575,11 @@ const nodes = computed<FlowNode[]>((previous) => {
       width: sec.width,
       height: isCollapsed ? 44 : sec.height,
       zIndex: 1,
-      class: selectedSet.value.has(sec.id) ? 'space-node-section selected' : 'space-node-section',
+      class: [
+        'space-node-section',
+        selectedSet.value.has(sec.id) ? 'selected' : '',
+        pulsingObjectId.value === sec.id ? 'space-focus-pulse' : '',
+      ].filter(Boolean).join(' '),
       style: {
         width: `${sec.width}px`,
         height: isCollapsed ? '44px' : `${sec.height}px`,
@@ -449,6 +589,7 @@ const nodes = computed<FlowNode[]>((previous) => {
       data: {
         ...sec.props,
         childCount: sectionChildCounts.value[sec.id] ?? 0,
+        ...(linkedTask ? { linkedTask } : {}),
         ...(sectionRunId ? { runId: sectionRunId } : {}),
         ...(matchesActiveDigest
           ? {
@@ -481,6 +622,7 @@ const nodes = computed<FlowNode[]>((previous) => {
       class: [
         !isCompact && item.autoHeight ? 'space-auto-height' : '',
         selectedSet.value.has(object.id) ? 'selected' : '',
+        pulsingObjectId.value === object.id ? 'space-focus-pulse' : '',
         isCausalFocus ? 'space-causal-focus' : '',
         isCausalDim ? 'space-causal-dim' : '',
         isMacroLod.value ? 'space-node-macro' : '',
@@ -497,10 +639,37 @@ const nodes = computed<FlowNode[]>((previous) => {
     })
   }
 
+  // 2b. Live Project Board widgets (`kind: 'board'`, zero task data copy in spatial props)
+  for (const bObj of board.objectsByKind.value.board) {
+    out.push({
+      id: bObj.id,
+      type: 'board',
+      position: { x: bObj.x, y: bObj.y },
+      width: bObj.width,
+      height: bObj.height,
+      zIndex: 12,
+      class: [
+        'space-node-board',
+        selectedSet.value.has(bObj.id) ? 'selected' : '',
+        pulsingObjectId.value === bObj.id ? 'space-focus-pulse' : '',
+      ].filter(Boolean).join(' '),
+      style: {
+        width: `${bObj.width}px`,
+        height: `${bObj.height}px`,
+        display: hiddenByCollapsedSection.value.has(bObj.id) ? 'none' : undefined,
+      },
+      dragHandle: '.space-drag-handle',
+      data: sanitizeSpatialBoardWidgetProps(bObj.props),
+      connectable: true,
+      deletable: false,
+    })
+  }
+
   // 3. Whiteboard stickies, text & media tiles
   for (const wbKind of ['media', 'sticky', 'text'] as const) {
     const zBase = wbKind === 'text' ? 16 : wbKind === 'sticky' ? 15 : 14
     for (const obj of board.objectsByKind.value[wbKind]) {
+      const linkedTask = wbKind === 'sticky' || wbKind === 'text' ? resolveLinkedBoardTask(obj.props) : null
       out.push({
         id: obj.id,
         type: wbKind,
@@ -508,14 +677,21 @@ const nodes = computed<FlowNode[]>((previous) => {
         width: obj.width,
         height: obj.height,
         zIndex: zBase,
-        class: selectedSet.value.has(obj.id) ? `space-node-${wbKind} selected` : `space-node-${wbKind}`,
+        class: [
+          `space-node-${wbKind}`,
+          selectedSet.value.has(obj.id) ? 'selected' : '',
+          pulsingObjectId.value === obj.id ? 'space-focus-pulse' : '',
+        ].filter(Boolean).join(' '),
         style: {
           width: `${obj.width}px`,
           height: `${obj.height}px`,
           display: hiddenByCollapsedSection.value.has(obj.id) ? 'none' : undefined,
         },
         dragHandle: '.space-drag-handle',
-        data: { ...obj.props },
+        data: {
+          ...obj.props,
+          ...(linkedTask ? { linkedTask } : {}),
+        },
         connectable: true,
         deletable: false,
       })
@@ -884,6 +1060,7 @@ onMounted(async () => {
   document.addEventListener('keyup', onDocumentKeyup)
   window.addEventListener('paste', onWindowPaste)
   await nextTick()
+  await applyPendingOrRouteSpatialFocus()
   emit('ready')
 })
 
@@ -893,6 +1070,7 @@ onBeforeUnmount(() => {
   topologyAbort?.abort()
   unsubscribe?.()
   clearTimeout(refreshTimer)
+  if (pulseTimer !== null) clearTimeout(pulseTimer)
   surfaceObserver?.disconnect()
   document.removeEventListener('keydown', onDocumentKeydown)
   document.removeEventListener('keyup', onDocumentKeyup)
@@ -1274,6 +1452,20 @@ function onPaneClick(event: MouseEvent) {
     return
   }
 
+  if (activeTool.value === 'board') {
+    const created = board.createBoardWidget({
+      x: Math.round(pos.x - SPATIAL_WHITEBOARD_DEFAULTS.board.width / 2),
+      y: Math.round(pos.y - SPATIAL_WHITEBOARD_DEFAULTS.board.height / 2),
+      props: {
+        project_id: resolvedSpatialProjectId.value,
+        layout: 'kanban',
+      },
+    })
+    setSelection([created.id])
+    activeTool.value = 'select'
+    return
+  }
+
   if (activeTool.value === 'connector') {
     connectorSourceId.value = null
   }
@@ -1455,10 +1647,75 @@ async function insertDroppedFiles(files: FileList | File[], worldPos: { x: numbe
   }
 }
 
+function dropLinkedTaskStickyAtClientPos(
+  task: { task_id: string; task_key: string; title: string },
+  clientX: number,
+  clientY: number,
+) {
+  const now = Date.now()
+  if (
+    lastDroppedTaskGuard &&
+    lastDroppedTaskGuard.key === task.task_id &&
+    now - lastDroppedTaskGuard.at < 350
+  ) {
+    return
+  }
+  lastDroppedTaskGuard = { key: task.task_id, at: now }
+  const pos = clientToWorld(clientX, clientY)
+  const created = board.createSticky({
+    x: Math.round(pos.x - SPATIAL_WHITEBOARD_DEFAULTS.sticky.width / 2),
+    y: Math.round(pos.y - SPATIAL_WHITEBOARD_DEFAULTS.sticky.height / 2),
+    tone: 'slate',
+    text: task.title,
+    board_task_id: task.task_id,
+    board_task_key: task.task_key,
+  })
+  setSelection([created.id])
+}
+
 function onCanvasDrop(event: DragEvent) {
   dragOverCanvas.value = false
   const dt = event.dataTransfer
   if (!dt) return
+
+  // If a BoardTaskCard is dragged out onto the canvas (outside any embedded board widget), drop a linked sticky.
+  const targetEl = event.target as HTMLElement | null
+  const insideBoardWidget = Boolean(targetEl?.closest?.('.spatial-board-node'))
+  if (!insideBoardWidget) {
+    const rawBoardJson = dt.getData('application/x-tinadec-board-task-json')
+    if (rawBoardJson) {
+      try {
+        const parsed = JSON.parse(rawBoardJson) as {
+          task_id?: string
+          task_key?: string
+          title?: string
+        }
+        if (parsed.task_id && parsed.task_key) {
+          dropLinkedTaskStickyAtClientPos(
+            {
+              task_id: parsed.task_id,
+              task_key: parsed.task_key,
+              title: parsed.title ?? parsed.task_key,
+            },
+            event.clientX,
+            event.clientY,
+          )
+          return
+        }
+      } catch {
+        // Fallback below.
+      }
+    }
+    const rawTaskId = dt.getData('text/x-tinadec-board-task')
+    if (rawTaskId) {
+      const matched = boardTasksById.value.get(rawTaskId)
+      if (matched) {
+        dropLinkedTaskStickyAtClientPos(matched, event.clientX, event.clientY)
+        return
+      }
+    }
+  }
+
   const pos = clientToWorld(event.clientX, event.clientY)
   if (dt.files?.length) {
     void insertDroppedFiles(dt.files, pos)
@@ -1529,6 +1786,304 @@ function onDeleteSelected() {
   const wbIds = selectedIds.value.filter((id) => Boolean(board.objectsById.value[id]))
   if (wbIds.length) board.deleteObjects(wbIds)
   clearSelection()
+}
+
+// ── Phase 2 Spatial <-> Project Board Bridge Actions ──────────────────────────
+
+const selectedPromotableIds = computed(() =>
+  selectedIds.value.filter((id) => {
+    const kind = board.objectsById.value[id]?.kind
+    return kind === 'sticky' || kind === 'text' || kind === 'section'
+  }),
+)
+
+async function onPromoteSelectionToBoard(payload: SpatialPromoteToBoardEvent) {
+  const pid = resolvedSpatialProjectId.value
+  if (!pid || !payload.objectIds.length || promotingToBoard.value) return
+  promotingToBoard.value = true
+  try {
+    const res = await spatialProjectBoard.promoteFromSpatial(pid, {
+      session_id: sessionKey.value,
+      object_ids: payload.objectIds,
+      mode: payload.mode,
+      target_status: payload.targetStatus,
+      viewport_hint: {
+        x: currentViewport.value.x,
+        y: currentViewport.value.y,
+        zoom: currentViewport.value.zoom,
+      },
+      writer_id: board.clientId,
+    })
+    for (const link of res.updated_object_links) {
+      if (board.objectsById.value[link.object_id]) {
+        board.updateObjectProps(link.object_id, {
+          board_task_id: link.task_id,
+          board_task_key: link.task_key,
+        })
+      }
+    }
+    notify.success(t('space.boardBridge.promotedToast', { count: res.tasks.length }))
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.saveFailed') })
+  } finally {
+    promotingToBoard.value = false
+  }
+}
+
+function openSpatialBoardCreateDrawer(payload: { projectId: string; status: ProjectBoardTaskStatus }) {
+  boardDrawerMode.value = 'create'
+  boardDrawerTaskId.value = null
+  boardDrawerFallbackTask.value = null
+  boardDrawerDefaultProjectId.value = payload.projectId || resolvedSpatialProjectId.value
+  boardDrawerDefaultStatus.value = payload.status
+  boardDrawerOpen.value = true
+}
+
+function openSpatialBoardTaskDrawer(task: ProjectBoardTaskDto) {
+  boardDrawerMode.value = 'edit'
+  boardDrawerTaskId.value = task.task_id
+  boardDrawerFallbackTask.value = task
+  boardDrawerDefaultProjectId.value = task.project_id
+  boardDrawerOpen.value = true
+}
+
+async function onOpenCapsuleBoardTask(payload: {
+  taskId: string | null
+  taskKey: string | null
+  task: ProjectBoardTaskDto | null
+}) {
+  if (payload.task) {
+    openSpatialBoardTaskDrawer(payload.task)
+    return
+  }
+  const byId = payload.taskId ? boardTasksById.value.get(payload.taskId) : undefined
+  if (byId) {
+    openSpatialBoardTaskDrawer(byId)
+    return
+  }
+  const byKey = payload.taskKey ? boardTasksByKey.value.get(payload.taskKey) : undefined
+  if (byKey) {
+    openSpatialBoardTaskDrawer(byKey)
+    return
+  }
+  if (payload.taskId && resolvedSpatialProjectId.value) {
+    try {
+      const fetched = await api.getProjectBoardTask(resolvedSpatialProjectId.value, payload.taskId)
+      spatialProjectBoard.upsertTaskLocal(fetched)
+      openSpatialBoardTaskDrawer(fetched)
+    } catch (err) {
+      notify.error(err, { title: t('board.errors.saveFailed') })
+    }
+  }
+}
+
+async function handleCreateBoardTask(projectId: string, input: CreateProjectBoardTaskInput) {
+  try {
+    const pid = projectId || resolvedSpatialProjectId.value || ''
+    if (!pid) return
+    const created = await spatialProjectBoard.createTask(pid, input)
+    boardDrawerTaskId.value = created.task_id
+    boardDrawerFallbackTask.value = created
+    boardDrawerMode.value = 'edit'
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.saveFailed') })
+  }
+}
+
+async function handleSaveBoardTask(projectId: string, taskId: string, patch: UpdateProjectBoardTaskInput) {
+  try {
+    const saved = await spatialProjectBoard.updateTask(projectId, taskId, patch)
+    boardDrawerFallbackTask.value = saved
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.saveFailed') })
+  }
+}
+
+async function handleDeleteBoardTask(projectId: string, taskId: string) {
+  try {
+    await spatialProjectBoard.deleteTask(projectId, taskId)
+    boardDrawerOpen.value = false
+    boardDrawerTaskId.value = null
+    boardDrawerFallbackTask.value = null
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.deleteFailed') })
+  }
+}
+
+async function handleResolveBoardConflict(
+  projectId: string,
+  taskId: string,
+  resolution: ProjectBoardConflictResolution,
+) {
+  try {
+    const resolved = await spatialProjectBoard.resolveConflict(projectId, taskId, resolution)
+    boardDrawerFallbackTask.value = resolved
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.conflictResolveFailed') })
+  }
+}
+
+async function handleDispatchBoardTask(
+  projectId: string,
+  taskId: string,
+  input: DispatchProjectBoardTaskInput,
+) {
+  try {
+    const dispatched = await spatialProjectBoard.dispatchTask(projectId, taskId, input)
+    boardDrawerFallbackTask.value = dispatched
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.dispatchFailed') })
+  }
+}
+
+async function handleCancelBoardTask(projectId: string, taskId: string) {
+  try {
+    const cancelled = await spatialProjectBoard.cancelTask(projectId, taskId)
+    boardDrawerFallbackTask.value = cancelled
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.cancelFailed') })
+  }
+}
+
+async function handleApproveBoardTask(
+  projectId: string,
+  taskId: string,
+  input: ApproveProjectBoardTaskInput,
+) {
+  try {
+    const approved = await spatialProjectBoard.approveTask(projectId, taskId, input)
+    boardDrawerFallbackTask.value = approved
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.approveFailed') })
+  }
+}
+
+async function handleRequestBoardChanges(projectId: string, taskId: string, feedback: string) {
+  try {
+    const updated = await spatialProjectBoard.requestChanges(projectId, taskId, feedback)
+    boardDrawerFallbackTask.value = updated
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.requestChangesFailed') })
+  }
+}
+
+async function handleOpenBoardSession(sessionId: string) {
+  boardDrawerOpen.value = false
+  await c.setSelectedSession(sessionId)
+  if (optionalRouter) {
+    await optionalRouter.push('/')
+  }
+}
+
+async function focusSpatialObjectWithHint(
+  objectId: string,
+  viewportHint?: { x?: unknown; y?: unknown; zoom?: unknown } | Record<string, unknown> | null,
+): Promise<boolean> {
+  if (!objectId) return false
+  await nextTick()
+  const bounds = allObjectRects.value[objectId] ?? null
+  const nextVp = computeSpatialFocusViewport({
+    bounds,
+    viewportHint,
+    surfaceWidth: surfaceSize.width,
+    surfaceHeight: surfaceSize.height,
+    currentZoom: currentViewport.value.zoom,
+  })
+  if (!bounds && !nextVp) return false
+  setSelection([objectId])
+  triggerFocusPulse(objectId)
+  if (nextVp) {
+    currentViewport.value = nextVp
+    await setViewport(nextVp)
+    camera(nextVp)
+  }
+  return Boolean(bounds || nextVp)
+}
+
+const pendingFocusObjectId = ref<string | null>(null)
+const pendingFocusViewportHint = ref<Record<string, unknown> | null>(null)
+
+async function applyPendingOrRouteSpatialFocus() {
+  const querySessionId =
+    typeof optionalRoute?.query?.sessionId === 'string' ? optionalRoute.query.sessionId.trim() : ''
+  const queryFocusObjectId =
+    typeof optionalRoute?.query?.focusObjectId === 'string'
+      ? optionalRoute.query.focusObjectId.trim()
+      : ''
+
+  const stashed = consumePendingSpatialFocus(querySessionId || undefined)
+  const targetSessionId = querySessionId || stashed?.session_id || ''
+  const targetObjectId = queryFocusObjectId || stashed?.object_id || ''
+  const hint = (stashed?.viewport_hint as Record<string, unknown> | null | undefined) ?? null
+
+  if (!targetSessionId && !targetObjectId) return
+
+  if (targetSessionId && c.selectedSessionId.value !== targetSessionId) {
+    await c.setSelectedSession(targetSessionId)
+    await nextTick()
+  }
+
+  if (targetObjectId) {
+    const focused = await focusSpatialObjectWithHint(targetObjectId, hint)
+    if (!focused) {
+      pendingFocusObjectId.value = targetObjectId
+      pendingFocusViewportHint.value = hint
+    } else {
+      pendingFocusObjectId.value = null
+      pendingFocusViewportHint.value = null
+    }
+  }
+
+  if (optionalRouter && optionalRoute && (querySessionId || queryFocusObjectId)) {
+    const nextQuery = { ...optionalRoute.query }
+    delete nextQuery.focusObjectId
+    await optionalRouter.replace({ path: optionalRoute.path, query: nextQuery }).catch(() => undefined)
+  }
+}
+
+watch(
+  () => [optionalRoute?.query?.sessionId, optionalRoute?.query?.focusObjectId, ready.value] as const,
+  ([, , isReady]) => {
+    if (isReady) {
+      void applyPendingOrRouteSpatialFocus()
+    }
+  },
+)
+
+watch(
+  () => Object.keys(allObjectRects.value).length,
+  () => {
+    if (!pendingFocusObjectId.value) return
+    const targetId = pendingFocusObjectId.value
+    if (allObjectRects.value[targetId]) {
+      pendingFocusObjectId.value = null
+      const hint = pendingFocusViewportHint.value
+      pendingFocusViewportHint.value = null
+      void focusSpatialObjectWithHint(targetId, hint)
+    }
+  },
+)
+
+async function handleJumpSpatialFromBoard(task: ProjectBoardTaskDto) {
+  if (!task.spatial_ref) return
+  boardDrawerOpen.value = false
+  if (task.spatial_ref.session_id === sessionKey.value || task.spatial_ref.session_id === c.selectedSessionId.value) {
+    await focusSpatialObjectWithHint(
+      task.spatial_ref.object_id,
+      (task.spatial_ref.viewport_hint as Record<string, unknown> | null | undefined) ?? null,
+    )
+    return
+  }
+  stashPendingSpatialFocus(task.spatial_ref)
+  await c.setSelectedSession(task.spatial_ref.session_id)
+  if (optionalRouter) {
+    await optionalRouter.push(buildSpatialFocusLocation(task.spatial_ref))
+  } else {
+    await focusSpatialObjectWithHint(
+      task.spatial_ref.object_id,
+      (task.spatial_ref.viewport_hint as Record<string, unknown> | null | undefined) ?? null,
+    )
+  }
 }
 
 // ── Drawing & Comments ────────────────────────────────────────────────────────
@@ -1898,14 +2453,18 @@ function layerLabelForWhiteboard(obj: SpatialDocObject): string {
   if (obj.kind === 'connector') {
     return (typeof obj.props.label === 'string' && obj.props.label.trim()) || t('space.figma.kindConnector')
   }
+  if ((obj.kind as string) === 'board') {
+    return (typeof obj.props.title === 'string' && obj.props.title.trim()) || t('space.figma.kindBoard')
+  }
   return obj.kind
 }
 
-function wbKindLabel(kind: SpatialDocObject['kind']): string {
+function wbKindLabel(kind: SpatialDocObject['kind'] | 'board'): string {
   switch (kind) {
     case 'section': return t('space.figma.kindSection')
     case 'sticky': return t('space.figma.kindSticky')
     case 'text': return t('space.figma.kindText')
+    case 'board': return t('space.figma.kindBoard')
     case 'media': return t('space.figma.kindMedia')
     case 'drawing': return t('space.figma.kindDrawing')
     case 'connector': return t('space.figma.kindConnector')
@@ -1991,6 +2550,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
     case 's': selectTool('section'); break
     case 'n': selectTool('sticky'); break
     case 't': selectTool('text'); break
+    case 'b': selectTool('board'); break
     case 'p': selectTool('pen'); break
     case 'l': selectTool('connector'); break
     case 'i': selectTool('media'); break
@@ -2021,6 +2581,7 @@ const toolItems: ReadonlyArray<{ id: SpatialToolMode; shortcut: string; labelKey
   { id: 'section', shortcut: 'S', labelKey: 'space.figma.toolSection', icon: Frame },
   { id: 'sticky', shortcut: 'N', labelKey: 'space.figma.toolSticky', icon: StickyNote },
   { id: 'text', shortcut: 'T', labelKey: 'space.figma.toolText', icon: Type },
+  { id: 'board', shortcut: 'B', labelKey: 'space.figma.toolBoard', icon: Columns3 },
   { id: 'pen', shortcut: 'P', labelKey: 'space.figma.toolPen', icon: Pen },
   { id: 'connector', shortcut: 'L', labelKey: 'space.figma.toolConnector', icon: ArrowUpRight },
   { id: 'media', shortcut: 'I', labelKey: 'space.figma.toolMedia', icon: ImagePlus },
@@ -2169,6 +2730,26 @@ function collaboratorInitial(name: string): string {
                   @update:color="(color) => board.updateObjectProps(id, { color })"
                   @update:collapsed="(collapsed) => board.updateObjectProps(id, { collapsed })"
                   @open-live-digest="openLiveDigestForRun"
+                  @open-board-task="onOpenCapsuleBoardTask"
+                  @resize-start="gesturing = true"
+                  @resize-end="(params) => resizeStop(id, params)"
+                />
+              </template>
+
+              <template #node-board="{ id, data, selected }">
+                <SpatialProjectBoardNode
+                  :id="id"
+                  :data="data"
+                  :session-project-id="resolvedSpatialProjectId"
+                  :project-name="spatialProjectName"
+                  :projects="activeSpatialProjects"
+                  :selected-task-id="boardDrawerTaskId"
+                  :selected="selected || selectedSet.has(id)"
+                  @update:widget-props="(patch: Partial<SpatialBoardWidgetProps>) => board.updateObjectProps(id, patch)"
+                  @select-task="openSpatialBoardTaskDrawer"
+                  @new-task="openSpatialBoardCreateDrawer"
+                  @jump-spatial="handleJumpSpatialFromBoard"
+                  @drop-task-to-canvas="({ task, clientX, clientY }) => dropLinkedTaskStickyAtClientPos(task, clientX, clientY)"
                   @resize-start="gesturing = true"
                   @resize-end="(params) => resizeStop(id, params)"
                 />
@@ -2201,6 +2782,7 @@ function collaboratorInitial(name: string): string {
                   :selected="selected || selectedSet.has(id)"
                   @update:text="(text) => board.updateObjectProps(id, { text })"
                   @update:tone="(tone) => board.updateObjectProps(id, { tone })"
+                  @open-board-task="onOpenCapsuleBoardTask"
                   @resize-start="gesturing = true"
                   @resize-end="(params) => resizeStop(id, params)"
                 />
@@ -2213,6 +2795,7 @@ function collaboratorInitial(name: string): string {
                   :selected="selected || selectedSet.has(id)"
                   @update:text="(text) => board.updateObjectProps(id, { text })"
                   @update:scale="(scale) => board.updateObjectProps(id, { scale })"
+                  @open-board-task="onOpenCapsuleBoardTask"
                   @resize-start="gesturing = true"
                   @resize-end="(params) => resizeStop(id, params)"
                 />
@@ -2316,12 +2899,17 @@ function collaboratorInitial(name: string): string {
               :viewport="currentViewport"
               :surface-width="surfaceSize.width"
               :surface-height="surfaceSize.height"
+              :project-id="resolvedSpatialProjectId"
+              :promotable-ids="selectedPromotableIds"
+              :can-promote-to-board="Boolean(resolvedSpatialProjectId) && selectedPromotableIds.length > 0"
+              :promoting="promotingToBoard"
               @align="onAlignSelected"
               @distribute="onDistributeSelected"
               @wrap-section="onWrapSelectionInSection"
               @duplicate="onDuplicateSelected"
               @delete="onDeleteSelected"
               @dispatch-to-team="dispatchSelectionToTeam"
+              @promote-to-board="onPromoteSelectionToBoard"
             />
 
             <!-- Active Connector Hint Banner -->
@@ -3039,6 +3627,27 @@ function collaboratorInitial(name: string): string {
             </div>
           </aside>
 
+          <!-- Right Slide-Over Project Board Task Drawer (Shared with Flat Board) -->
+          <BoardTaskDrawer
+            v-model:open="boardDrawerOpen"
+            :mode="boardDrawerMode"
+            :task="selectedBoardDrawerTask"
+            :project-tasks="spatialProjectBoard.tasks.value"
+            :default-project-id="boardDrawerDefaultProjectId || resolvedSpatialProjectId"
+            :default-status="boardDrawerDefaultStatus"
+            :projects="activeSpatialProjects"
+            @create-task="handleCreateBoardTask"
+            @save-task="handleSaveBoardTask"
+            @delete-task="handleDeleteBoardTask"
+            @resolve-conflict="handleResolveBoardConflict"
+            @dispatch-task="handleDispatchBoardTask"
+            @cancel-task="handleCancelBoardTask"
+            @approve-task="handleApproveBoardTask"
+            @request-changes="handleRequestBoardChanges"
+            @open-session="handleOpenBoardSession"
+            @jump-spatial="handleJumpSpatialFromBoard"
+          />
+
           <!-- Direct Single-Teammate Steer / Pause Popover -->
           <TeammateSteerPopover
             v-if="steerTarget"
@@ -3213,6 +3822,7 @@ function collaboratorInitial(name: string): string {
 }
 
 .space-flow-area .vue-flow__node-section,
+.space-flow-area .vue-flow__node-board,
 .space-flow-area .vue-flow__node-sticky,
 .space-flow-area .vue-flow__node-text,
 .space-flow-area .vue-flow__node-media {
@@ -3220,6 +3830,23 @@ function collaboratorInitial(name: string): string {
   border: 0;
   padding: 0;
   box-shadow: none;
+}
+
+@keyframes space-monochrome-focus-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--text-primary) 42%, transparent);
+  }
+  65% {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--text-primary) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.space-flow-area .space-focus-pulse {
+  border-radius: 14px;
+  animation: space-monochrome-focus-pulse 900ms cubic-bezier(0.2, 0, 0, 1) 2;
 }
 
 .space-auto-height .uie-card-host {

@@ -3,6 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
 import { useI18n } from 'vue-i18n'
+import type { ProjectBoardTaskDto } from '@/api'
+import SpatialTaskStatusCapsule from './SpatialTaskStatusCapsule.vue'
 import {
   SPATIAL_TEXT_SCALES,
   isTextScale,
@@ -16,17 +18,30 @@ const props = withDefaults(defineProps<{
   scale?: SpatialTextScale
   color?: string
   align?: 'left' | 'center' | 'right'
+  board_task_id?: string | null
+  board_task_key?: string | null
+  linkedTask?: ProjectBoardTaskDto | null
   selected?: boolean
   readonly?: boolean
-  data?: Partial<SpatialTextProps>
+  data?: Partial<SpatialTextProps> & { linkedTask?: ProjectBoardTaskDto | null }
 }>(), {
   selected: false,
   readonly: false,
+  board_task_id: undefined,
+  board_task_key: undefined,
+  linkedTask: undefined,
 })
 
 const emit = defineEmits<{
   'update:text': [text: string]
   'update:scale': [scale: SpatialTextScale]
+  'open-board-task': [
+    payload: {
+      taskId: string | null
+      taskKey: string | null
+      task: ProjectBoardTaskDto | null
+    },
+  ]
   'resize-start': []
   'resize-end': [params: { x: number; y: number; width: number; height: number }]
 }>()
@@ -40,6 +55,12 @@ const resolvedScale = computed<SpatialTextScale>(() => {
 })
 const resolvedColor = computed(() => props.color ?? props.data?.color ?? '')
 const resolvedAlign = computed<'left' | 'center' | 'right'>(() => props.align ?? props.data?.align ?? 'left')
+const resolvedBoardTaskId = computed(() => props.board_task_id ?? props.data?.board_task_id ?? null)
+const resolvedBoardTaskKey = computed(() => props.board_task_key ?? props.data?.board_task_key ?? null)
+const resolvedLinkedTask = computed(() => props.linkedTask ?? props.data?.linkedTask ?? null)
+const hasBoardTaskLink = computed(() =>
+  Boolean(resolvedBoardTaskId.value || resolvedBoardTaskKey.value || resolvedLinkedTask.value),
+)
 
 const scaleLabels: Record<SpatialTextScale, string> = {
   sm: 'S',
@@ -131,6 +152,15 @@ function setScale(scale: SpatialTextScale) {
       </button>
     </div>
 
+    <div v-if="hasBoardTaskLink" class="spatial-text-capsule-row">
+      <SpatialTaskStatusCapsule
+        :board-task-id="resolvedBoardTaskId"
+        :board-task-key="resolvedBoardTaskKey"
+        :linked-task="resolvedLinkedTask"
+        @open-task="emit('open-board-task', $event)"
+      />
+    </div>
+
     <textarea
       v-if="editing"
       ref="textareaRef"
@@ -219,6 +249,12 @@ function setScale(scale: SpatialTextScale) {
 .spatial-text-scale-btn.is-active {
   background: color-mix(in srgb, var(--accent-primary, #7c3aed) 18%, transparent);
   color: var(--accent-primary, #7c3aed);
+}
+
+.spatial-text-capsule-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
 }
 
 .spatial-text-display,

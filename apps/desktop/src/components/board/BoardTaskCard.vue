@@ -55,8 +55,17 @@ const isRunning = computed(() => {
 
 function onDragStart(event: DragEvent) {
   if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.effectAllowed = 'copyMove'
     event.dataTransfer.setData('text/x-tinadec-board-task', props.task.task_id)
+    event.dataTransfer.setData(
+      'application/x-tinadec-board-task-json',
+      JSON.stringify({
+        task_id: props.task.task_id,
+        task_key: props.task.task_key,
+        project_id: props.task.project_id,
+        title: props.task.title,
+      }),
+    )
   }
   emit('dragstart', event, props.task)
 }

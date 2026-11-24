@@ -24,6 +24,7 @@ import {
   type ProjectBoardLayoutMode,
   type ProjectBoardSettingsDto,
   type ProjectBoardSortBy,
+  type ProjectBoardSpatialRefDto,
   type ProjectBoardSseEventDto,
   type ProjectBoardSummaryDto,
   type ProjectBoardSwimlaneBy,
@@ -35,6 +36,8 @@ import {
   type ProjectBoardViewDto,
   type ProjectBoardViewScope,
   type ProjectBoardVisibleField,
+  type PromoteFromSpatialInput,
+  type PromoteFromSpatialResultDto,
   type UpdateProjectBoardSettingsInput,
   type UpdateProjectBoardTaskInput,
 } from '@/api'
@@ -80,7 +83,66 @@ export const ALL_BOARD_VISIBLE_FIELDS: readonly ProjectBoardVisibleField[] = [
 ] as const
 
 export const SPATIAL_PROMOTION_PREF_STORAGE_KEY = 'tinadec.projectBoard.spatialPromotePref.v1'
+export const PENDING_SPATIAL_FOCUS_STORAGE_KEY = 'tinadec.pendingSpatialFocus'
 const BOARD_SNAPSHOT_CACHE_PREFIX = 'tinadec.projectBoard.snapshot.v1:'
+
+export interface PendingSpatialFocusPayload {
+  session_id: string
+  object_id: string
+  viewport_hint?: { x: number; y: number; zoom: number } | Record<string, unknown> | null
+}
+
+export function buildSpatialFocusLocation(spatialRef: ProjectBoardSpatialRefDto): {
+  path: '/space'
+  query: { sessionId: string; focusObjectId: string }
+} {
+  return {
+    path: '/space',
+    query: {
+      sessionId: spatialRef.session_id,
+      focusObjectId: spatialRef.object_id,
+    },
+  }
+}
+
+export function stashPendingSpatialFocus(spatialRef: ProjectBoardSpatialRefDto): void {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const payload: PendingSpatialFocusPayload = {
+        session_id: spatialRef.session_id,
+        object_id: spatialRef.object_id,
+        viewport_hint: spatialRef.viewport_hint ?? null,
+      }
+      window.sessionStorage.setItem(PENDING_SPATIAL_FOCUS_STORAGE_KEY, JSON.stringify(payload))
+    }
+  } catch {
+    // Ignore restricted sessionStorage errors.
+  }
+}
+
+export function consumePendingSpatialFocus(expectedSessionId?: string | null): PendingSpatialFocusPayload | null {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return null
+    const raw = window.sessionStorage.getItem(PENDING_SPATIAL_FOCUS_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PendingSpatialFocusPayload>
+    if (typeof parsed.session_id !== 'string' || typeof parsed.object_id !== 'string') {
+      window.sessionStorage.removeItem(PENDING_SPATIAL_FOCUS_STORAGE_KEY)
+      return null
+    }
+    if (expectedSessionId && parsed.session_id !== expectedSessionId) {
+      return null
+    }
+    window.sessionStorage.removeItem(PENDING_SPATIAL_FOCUS_STORAGE_KEY)
+    return {
+      session_id: parsed.session_id,
+      object_id: parsed.object_id,
+      viewport_hint: parsed.viewport_hint ?? null,
+    }
+  } catch {
+    return null
+  }
+}
 
 export type SpatialPromotionMode = 'merge_single' | 'split_many' | 'parent_with_children'
 
@@ -690,6 +752,11 @@ export interface UseProjectBoardViewReturn {
   updateActiveSavedView: () => Promise<ProjectBoardViewDto | null>
   deleteSavedView: (viewId: string) => Promise<void>
   createTask: (projectId: string, input: CreateProjectBoardTaskInput) => Promise<ProjectBoardTaskDto>
+  promoteFromSpatial: (
+    projectId: string,
+    input: PromoteFromSpatialInput,
+  ) => Promise<PromoteFromSpatialResultDto>
+  upsertTaskLocal: (incoming: ProjectBoardTaskDto) => void
   updateTask: (projectId: string, taskId: string, patch: UpdateProjectBoardTaskInput) => Promise<ProjectBoardTaskDto>
   deleteTask: (projectId: string, taskId: string) => Promise<void>
   moveTask: (
@@ -1119,6 +1186,18 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     return created
   }
 
+  async function promoteFromSpatial(
+    projectId: string,
+    input: PromoteFromSpatialInput,
+  ): Promise<PromoteFromSpatialResultDto> {
+    const result = await api.promoteSpatialToBoard(projectId, input)
+    for (const task of result.tasks) {
+      upsertTaskLocal(task)
+    }
+    emitBoardSummaryBroadcast()
+    return result
+  }
+
   async function updateTask(
     projectId: string,
     taskId: string,
@@ -1293,6 +1372,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     updateActiveSavedView,
     deleteSavedView,
     createTask,
+    promoteFromSpatial,
+    upsertTaskLocal,
     updateTask,
     deleteTask,
     moveTask,

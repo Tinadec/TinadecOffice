@@ -30,6 +30,8 @@ import {
   BoardSwimlaneView,
   BoardTaskDrawer,
   BoardViewToolbar,
+  buildSpatialFocusLocation,
+  stashPendingSpatialFocus,
   useProjectBoardView,
   type BoardTaskGroup,
 } from '@/components/board'
@@ -445,20 +447,9 @@ async function handleOpenSession(sessionId: string) {
 async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   if (!task.spatial_ref) return
   drawerOpen.value = false
-  try {
-    sessionStorage.setItem(
-      'tinadec.pendingSpatialFocus',
-      JSON.stringify({
-        session_id: task.spatial_ref.session_id,
-        object_id: task.spatial_ref.object_id,
-        viewport_hint: task.spatial_ref.viewport_hint ?? null,
-      }),
-    )
-  } catch {
-    // Ignore storage errors.
-  }
+  stashPendingSpatialFocus(task.spatial_ref)
   await c.setSelectedSession(task.spatial_ref.session_id)
-  await router.push('/space')
+  await router.push(buildSpatialFocusLocation(task.spatial_ref))
 }
 </script>
 

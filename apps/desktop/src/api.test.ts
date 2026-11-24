@@ -10,6 +10,7 @@ import type {
   EnvironmentDto, EnvironmentHolderDto, EnvironmentRegisterInput, EnvironmentUpdateInput,
   OrganizationDto, OrganizationMemberDto, OrganizationMessageDto, OrganizationMessagePageDto, OrganizationReportDecisionInput,
   OrganizationReportDto, OrganizationReportPageDto, OrganizationRoomDto, OrganizationSubjectStateDto, PostOrganizationMessageInput,
+  PromoteFromSpatialInput, PromoteFromSpatialResultDto, SpatialObjectTaskLinkDto,
   SessionTopologyDto, TopologyInstanceDto, TopologyLeaseDto, TopologyMemberDto, TopologyRunDto, TopologyTaskDto,
 } from './api'
 import type { components } from './generated/schema'
@@ -416,8 +417,83 @@ describe('session organization requests', () => {
       true satisfies SameKeys<EnvironmentHolderDto, C['EnvironmentHolderDto']>,
       true satisfies SameKeys<EnvironmentRegisterInput, C['EnvironmentRegisterRequest']>,
       true satisfies SameKeys<EnvironmentUpdateInput, C['EnvironmentUpdateRequest']>,
+      true satisfies SameKeys<PromoteFromSpatialInput, C['PromoteFromSpatialRequest']>,
+      true satisfies SameKeys<SpatialObjectTaskLinkDto, C['SpatialObjectTaskLink']>,
+      true satisfies SameKeys<PromoteFromSpatialResultDto, C['PromoteFromSpatialResult']>,
     ]
-    expect(mirrors).toHaveLength(24)
+    expect(mirrors).toHaveLength(27)
+  })
+})
+
+describe('promoteSpatialToBoard', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setHostAccessStatus({ state: 'ready', managed: true })
+  })
+
+  it('posts to /api/v1/projects/{projectId}/board/tasks/promote-from-spatial and normalizes tasks and links', async () => {
+    setHostAccessStatus({ state: 'ready', managed: true })
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          mode: 'parent_with_children',
+          parent_task_id: 'task-parent',
+          spatial_seq: 42,
+          tasks: [
+            {
+              task_id: 'task-parent',
+              project_id: 'proj-1',
+              task_key: 'TIN-10',
+              title: 'Architecture Section',
+              description_md: '',
+              checklist: [],
+              status: 'ready',
+              priority: 'medium',
+              blocked: false,
+              depends_on: [],
+              labels: [],
+              spatial_ref: { session_id: 'sess-1', object_id: 'sec-1' },
+              sort_key: 'V',
+              has_sync_conflict: false,
+              revision: 1,
+              created_at_unix_ms: 1700000000000,
+              updated_at_unix_ms: 1700000000000,
+            },
+          ],
+          updated_object_links: [
+            { object_id: 'sec-1', task_id: 'task-parent', task_key: 'TIN-10' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await api.promoteSpatialToBoard('proj-1', {
+      session_id: 'sess-1',
+      object_ids: ['sec-1', 'sticky-1'],
+      mode: 'parent_with_children',
+      target_status: 'ready',
+    })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toContain('/api/v1/projects/proj-1/board/tasks/promote-from-spatial')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      session_id: 'sess-1',
+      object_ids: ['sec-1', 'sticky-1'],
+      mode: 'parent_with_children',
+      target_status: 'ready',
+    })
+    expect(res.mode).toBe('parent_with_children')
+    expect(res.parent_task_id).toBe('task-parent')
+    expect(res.spatial_seq).toBe(42)
+    expect(res.tasks).toHaveLength(1)
+    expect(res.tasks[0]?.task_key).toBe('TIN-10')
+    expect(res.updated_object_links).toEqual([
+      { object_id: 'sec-1', task_id: 'task-parent', task_key: 'TIN-10' },
+    ])
   })
 })
 

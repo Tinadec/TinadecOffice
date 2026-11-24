@@ -4,7 +4,9 @@ import { Handle, Position } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
 import { ChevronDown, ChevronRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import type { ProjectBoardTaskDto } from '@/api'
 import { useLiveDigest } from '@/composables/useLiveDigest'
+import SpatialTaskStatusCapsule from './SpatialTaskStatusCapsule.vue'
 import {
   SPATIAL_SECTION_PALETTE,
   SPATIAL_SECTION_TONES,
@@ -29,17 +31,26 @@ const props = withDefaults(defineProps<{
   collapsed?: boolean
   childCount?: number
   runId?: string | null
+  board_task_id?: string | null
+  board_task_key?: string | null
+  linkedTask?: ProjectBoardTaskDto | null
   liveHeadline?: string | null
   liveUsagePercent?: number | null
   liveCompactionCount?: number
   liveRunning?: boolean
   selected?: boolean
   readonly?: boolean
-  data?: Partial<SpatialSectionProps> & { childCount?: number } & SpatialSectionLiveDigestData
+  data?: Partial<SpatialSectionProps> & {
+    childCount?: number
+    linkedTask?: ProjectBoardTaskDto | null
+  } & SpatialSectionLiveDigestData
 }>(), {
   selected: false,
   readonly: false,
   runId: undefined,
+  board_task_id: undefined,
+  board_task_key: undefined,
+  linkedTask: undefined,
   liveHeadline: undefined,
   liveUsagePercent: undefined,
   liveCompactionCount: undefined,
@@ -51,6 +62,13 @@ const emit = defineEmits<{
   'update:color': [color: SpatialSectionTone]
   'update:collapsed': [collapsed: boolean]
   'open-live-digest': [runId: string | null]
+  'open-board-task': [
+    payload: {
+      taskId: string | null
+      taskKey: string | null
+      task: ProjectBoardTaskDto | null
+    },
+  ]
   'resize-start': []
   'resize-end': [params: { x: number; y: number; width: number; height: number }]
 }>()
@@ -74,6 +92,9 @@ const resolvedRunId = computed<string | null>(() => {
   const raw = props.runId ?? props.data?.runId
   return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null
 })
+const resolvedBoardTaskId = computed(() => props.board_task_id ?? props.data?.board_task_id ?? null)
+const resolvedBoardTaskKey = computed(() => props.board_task_key ?? props.data?.board_task_key ?? null)
+const resolvedLinkedTask = computed(() => props.linkedTask ?? props.data?.linkedTask ?? null)
 const palette = computed(() => SPATIAL_SECTION_PALETTE[resolvedColor.value])
 
 const explicitHeadline = computed<string | null>(() => {
@@ -242,6 +263,13 @@ function onOpenDigest() {
         <span v-if="resolvedChildCount > 0" class="spatial-section-count" data-testid="section-child-count">
           {{ resolvedChildCount }}
         </span>
+
+        <SpatialTaskStatusCapsule
+          :board-task-id="resolvedBoardTaskId"
+          :board-task-key="resolvedBoardTaskKey"
+          :linked-task="resolvedLinkedTask"
+          @open-task="emit('open-board-task', $event)"
+        />
 
         <div
           v-if="!readonly"

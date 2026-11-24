@@ -1,9 +1,19 @@
+import type {
+  ProjectBoardFiltersDto,
+  ProjectBoardGroupBy,
+  ProjectBoardLayoutMode,
+  ProjectBoardSortBy,
+  ProjectBoardSwimlaneBy,
+  ProjectBoardVisibleField,
+} from '@/api'
+
 export type SpatialToolMode =
   | 'select'
   | 'pan'
   | 'section'
   | 'sticky'
   | 'text'
+  | 'board'
   | 'pen'
   | 'highlighter'
   | 'eraser'
@@ -155,6 +165,8 @@ export interface SpatialSectionProps {
   color?: SpatialSectionTone | string
   collapsed?: boolean
   runId?: string | null
+  board_task_id?: string | null
+  board_task_key?: string | null
 }
 
 export interface SpatialStickyProps {
@@ -162,6 +174,8 @@ export interface SpatialStickyProps {
   tone: SpatialStickyTone
   authorName?: string
   authorKind?: 'human' | 'ai'
+  board_task_id?: string | null
+  board_task_key?: string | null
 }
 
 export interface SpatialTextProps {
@@ -169,6 +183,21 @@ export interface SpatialTextProps {
   scale: SpatialTextScale
   color?: string
   align?: 'left' | 'center' | 'right'
+  board_task_id?: string | null
+  board_task_key?: string | null
+}
+
+export interface SpatialBoardWidgetProps {
+  project_id?: string | null
+  title?: string
+  layout?: ProjectBoardLayoutMode
+  group_by?: ProjectBoardGroupBy
+  swimlane_by?: ProjectBoardSwimlaneBy
+  sort_by?: ProjectBoardSortBy
+  filters?: ProjectBoardFiltersDto
+  visible_fields?: ProjectBoardVisibleField[]
+  compact?: boolean
+  saved_view_id?: string | null
 }
 
 export type SpatialDrawingMode = 'pen' | 'highlighter'
@@ -257,11 +286,89 @@ export const SPATIAL_WHITEBOARD_DEFAULTS = {
   section: { width: 520, height: 340, color: 'neutral' as SpatialSectionTone },
   sticky: { width: 224, height: 224, tone: 'butter' as SpatialStickyTone },
   text: { width: 280, height: 56, scale: 'md' as SpatialTextScale },
+  board: { width: 780, height: 480, layout: 'kanban' as ProjectBoardLayoutMode },
   mediaImage: { width: 320, height: 240 },
   mediaFile: { width: 360, height: 260 },
   pen: { color: '#3b82f6', strokeWidth: 3 },
   highlighter: { color: '#facc15', strokeWidth: 18 },
 } as const
+
+const ALLOWED_BOARD_WIDGET_PROP_KEYS = new Set<string>([
+  'project_id',
+  'title',
+  'layout',
+  'group_by',
+  'swimlane_by',
+  'sort_by',
+  'filters',
+  'visible_fields',
+  'compact',
+  'saved_view_id',
+])
+
+/**
+ * Strips any task/card payload fields from a `kind: 'board'` spatial object's LWW props.
+ * Only view projection metadata is ever stored in the spatial document (zero task data copy).
+ */
+export function sanitizeSpatialBoardWidgetProps(
+  raw: Record<string, unknown> | Partial<SpatialBoardWidgetProps> | null | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [key, value] of Object.entries(raw)) {
+    if (!ALLOWED_BOARD_WIDGET_PROP_KEYS.has(key)) continue
+    if (value !== undefined) {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+/**
+ * Computes a centered viewport for focusing a spatial object by its world bounds,
+ * falling back to `viewportHint` when node bounds are not yet materialized.
+ */
+export function computeSpatialFocusViewport(options: {
+  bounds?: { x: number; y: number; width: number; height: number } | null
+  viewportHint?: { x?: unknown; y?: unknown; zoom?: unknown } | Record<string, unknown> | null
+  surfaceWidth?: number
+  surfaceHeight?: number
+  currentZoom?: number
+}): SpatialViewport | null {
+  const sw = options.surfaceWidth && options.surfaceWidth > 0 ? options.surfaceWidth : 1280
+  const sh = options.surfaceHeight && options.surfaceHeight > 0 ? options.surfaceHeight : 800
+  const hint = options.viewportHint && typeof options.viewportHint === 'object' ? options.viewportHint : null
+  const hintZoom = hint && typeof hint.zoom === 'number' && Number.isFinite(hint.zoom) ? hint.zoom : null
+
+  if (options.bounds) {
+    const rawZoom = hintZoom ?? options.currentZoom ?? 1
+    const zoom = Math.max(0.55, Math.min(1.25, rawZoom))
+    const cx = options.bounds.x + options.bounds.width / 2
+    const cy = options.bounds.y + options.bounds.height / 2
+    return {
+      x: Math.round(sw / 2 - cx * zoom),
+      y: Math.round(sh / 2 - cy * zoom),
+      zoom: Number(zoom.toFixed(3)),
+    }
+  }
+
+  if (
+    hint &&
+    typeof hint.x === 'number' &&
+    Number.isFinite(hint.x) &&
+    typeof hint.y === 'number' &&
+    Number.isFinite(hint.y)
+  ) {
+    const zoom = Math.max(0.2, Math.min(2, hintZoom ?? options.currentZoom ?? 1))
+    return {
+      x: hint.x,
+      y: hint.y,
+      zoom: Number(zoom.toFixed(3)),
+    }
+  }
+
+  return null
+}
 
 export function isStickyTone(value: unknown): value is SpatialStickyTone {
   return typeof value === 'string' && (SPATIAL_STICKY_TONES as readonly string[]).includes(value)

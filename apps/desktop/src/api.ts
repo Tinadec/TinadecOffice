@@ -5072,6 +5072,21 @@ export const api = {
     ).then(normalizeBoardTaskDto);
   },
 
+  promoteSpatialToBoard(
+    projectId: string,
+    input: PromoteFromSpatialInput,
+    options?: { storageId?: string },
+  ): Promise<PromoteFromSpatialResultDto> {
+    return request<PromoteFromSpatialResultDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/promote-from-spatial`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizePromoteFromSpatialResultDto);
+  },
+
   getProjectBoardTask(
     projectId: string,
     taskId: string,
@@ -5821,6 +5836,32 @@ export interface CreateProjectBoardTaskInput {
   sort_key?: string | null;
 }
 
+export interface PromoteFromSpatialInput {
+  session_id: string;
+  object_ids: string[];
+  mode?: 'merge_single' | 'split_many' | 'parent_with_children';
+  target_status?: ProjectBoardTaskStatus;
+  priority?: ProjectBoardTaskPriority | null;
+  assignee?: ProjectBoardAssigneeDto | null;
+  labels?: string[] | null;
+  viewport_hint?: Record<string, unknown> | null;
+  writer_id?: string | null;
+}
+
+export interface SpatialObjectTaskLinkDto {
+  object_id: string;
+  task_id: string;
+  task_key: string;
+}
+
+export interface PromoteFromSpatialResultDto {
+  mode: 'merge_single' | 'split_many' | 'parent_with_children';
+  parent_task_id: string | null;
+  tasks: ProjectBoardTaskDto[];
+  updated_object_links: SpatialObjectTaskLinkDto[];
+  spatial_seq: number;
+}
+
 export interface UpdateProjectBoardTaskInput {
   title?: string | null;
   description_md?: string | null;
@@ -6312,12 +6353,38 @@ function openBoardEventStream(
   };
 }
 
+function normalizePromoteFromSpatialResultDto(
+  raw: Partial<PromoteFromSpatialResultDto>,
+): PromoteFromSpatialResultDto {
+  const mode =
+    raw?.mode === 'merge_single' || raw?.mode === 'split_many' || raw?.mode === 'parent_with_children'
+      ? raw.mode
+      : 'split_many';
+  return {
+    mode,
+    parent_task_id: typeof raw?.parent_task_id === 'string' ? raw.parent_task_id : null,
+    tasks: Array.isArray(raw?.tasks) ? raw.tasks.map((item) => normalizeBoardTaskDto(item)) : [],
+    updated_object_links: Array.isArray(raw?.updated_object_links)
+      ? raw.updated_object_links
+          .filter((item): item is SpatialObjectTaskLinkDto => Boolean(item && typeof item === 'object'))
+          .map((item) => ({
+            object_id: typeof item.object_id === 'string' ? item.object_id : '',
+            task_id: typeof item.task_id === 'string' ? item.task_id : '',
+            task_key: typeof item.task_key === 'string' ? item.task_key : '',
+          }))
+          .filter((item) => Boolean(item.object_id && item.task_id))
+      : [],
+    spatial_seq: typeof raw?.spatial_seq === 'number' && Number.isFinite(raw.spatial_seq) ? raw.spatial_seq : 0,
+  };
+}
+
 export const getProjectOverview = api.getProjectOverview;
 export const getProjectBoardSettings = api.getProjectBoardSettings;
 export const updateProjectBoardSettings = api.updateProjectBoardSettings;
 export const syncProjectBoard = api.syncProjectBoard;
 export const listProjectBoardTasks = api.listProjectBoardTasks;
 export const createProjectBoardTask = api.createProjectBoardTask;
+export const promoteSpatialToBoard = api.promoteSpatialToBoard;
 export const getProjectBoardTask = api.getProjectBoardTask;
 export const updateProjectBoardTask = api.updateProjectBoardTask;
 export const deleteProjectBoardTask = api.deleteProjectBoardTask;

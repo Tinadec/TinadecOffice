@@ -4,6 +4,8 @@ import { Handle, Position } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
 import { Bot } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import type { ProjectBoardTaskDto } from '@/api'
+import SpatialTaskStatusCapsule from './SpatialTaskStatusCapsule.vue'
 import {
   SPATIAL_STICKY_PALETTE,
   SPATIAL_STICKY_TONES,
@@ -18,17 +20,30 @@ const props = withDefaults(defineProps<{
   tone?: SpatialStickyTone
   authorName?: string
   authorKind?: 'human' | 'ai'
+  board_task_id?: string | null
+  board_task_key?: string | null
+  linkedTask?: ProjectBoardTaskDto | null
   selected?: boolean
   readonly?: boolean
-  data?: Partial<SpatialStickyProps>
+  data?: Partial<SpatialStickyProps> & { linkedTask?: ProjectBoardTaskDto | null }
 }>(), {
   selected: false,
   readonly: false,
+  board_task_id: undefined,
+  board_task_key: undefined,
+  linkedTask: undefined,
 })
 
 const emit = defineEmits<{
   'update:text': [text: string]
   'update:tone': [tone: SpatialStickyTone]
+  'open-board-task': [
+    payload: {
+      taskId: string | null
+      taskKey: string | null
+      task: ProjectBoardTaskDto | null
+    },
+  ]
   'resize-start': []
   'resize-end': [params: { x: number; y: number; width: number; height: number }]
 }>()
@@ -42,6 +57,12 @@ const resolvedTone = computed<SpatialStickyTone>(() => {
 })
 const resolvedAuthorName = computed(() => props.authorName ?? props.data?.authorName ?? '')
 const resolvedAuthorKind = computed<'human' | 'ai'>(() => props.authorKind ?? props.data?.authorKind ?? 'human')
+const resolvedBoardTaskId = computed(() => props.board_task_id ?? props.data?.board_task_id ?? null)
+const resolvedBoardTaskKey = computed(() => props.board_task_key ?? props.data?.board_task_key ?? null)
+const resolvedLinkedTask = computed(() => props.linkedTask ?? props.data?.linkedTask ?? null)
+const hasBoardTaskLink = computed(() =>
+  Boolean(resolvedBoardTaskId.value || resolvedBoardTaskKey.value || resolvedLinkedTask.value),
+)
 const palette = computed(() => SPATIAL_STICKY_PALETTE[resolvedTone.value])
 
 const editing = ref(false)
@@ -123,6 +144,15 @@ function selectTone(tone: SpatialStickyTone) {
         :aria-pressed="toneOption === resolvedTone"
         :data-sticky-tone-btn="toneOption"
         @click.stop="selectTone(toneOption)"
+      />
+    </div>
+
+    <div v-if="hasBoardTaskLink" class="spatial-sticky-badge-row">
+      <SpatialTaskStatusCapsule
+        :board-task-id="resolvedBoardTaskId"
+        :board-task-key="resolvedBoardTaskKey"
+        :linked-task="resolvedLinkedTask"
+        @open-task="emit('open-board-task', $event)"
       />
     </div>
 
@@ -216,6 +246,13 @@ function selectTone(tone: SpatialStickyTone) {
 
 .spatial-sticky-dot.is-active {
   box-shadow: 0 0 0 2px var(--surface-raised, #ffffff), 0 0 0 3.5px var(--accent-primary, #7c3aed);
+}
+
+.spatial-sticky-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 6px;
 }
 
 .spatial-sticky-body {

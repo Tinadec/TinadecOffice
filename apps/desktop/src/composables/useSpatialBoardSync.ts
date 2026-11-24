@@ -21,7 +21,9 @@ import { sessionStorageId } from '@/lib/storageScope'
 import {
   SPATIAL_WHITEBOARD_DEFAULTS,
   extractMentions,
+  sanitizeSpatialBoardWidgetProps,
   type SpatialAlignMode,
+  type SpatialBoardWidgetProps,
   type SpatialCommentPin,
   type SpatialCommentReply,
   type SpatialConnectorCurve,
@@ -53,7 +55,9 @@ const COLLABORATOR_PALETTE = [
   '#f97316',
 ] as const
 
-const ALL_OBJECT_KINDS: readonly SpatialObjectKind[] = [
+export type DesktopSpatialObjectKind = SpatialObjectKind | 'board'
+
+const ALL_OBJECT_KINDS: readonly DesktopSpatialObjectKind[] = [
   'work',
   'section',
   'sticky',
@@ -61,6 +65,7 @@ const ALL_OBJECT_KINDS: readonly SpatialObjectKind[] = [
   'drawing',
   'media',
   'connector',
+  'board',
 ] as const
 
 export interface UseSpatialBoardSyncOptions {
@@ -967,8 +972,8 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
     return map
   })
 
-  const objectsByKind = computed<Record<SpatialObjectKind, SpatialDocObject[]>>(() => {
-    const grouped: Record<SpatialObjectKind, SpatialDocObject[]> = {
+  const objectsByKind = computed<Record<DesktopSpatialObjectKind, SpatialDocObject[]>>(() => {
+    const grouped: Record<DesktopSpatialObjectKind, SpatialDocObject[]> = {
       work: [],
       section: [],
       sticky: [],
@@ -976,9 +981,13 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
       drawing: [],
       media: [],
       connector: [],
+      board: [],
     }
     for (const obj of sortedObjects.value) {
-      grouped[obj.kind].push(obj)
+      const kindKey = obj.kind as DesktopSpatialObjectKind
+      if (kindKey in grouped) {
+        grouped[kindKey].push(obj)
+      }
     }
     return grouped
   })
@@ -1067,6 +1076,8 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
     tone?: SpatialStickyTone
     authorName?: string
     authorKind?: 'human' | 'ai'
+    board_task_id?: string | null
+    board_task_key?: string | null
     parentId?: string | null
   } = {}): SpatialDocObject {
     const id = createId('sticky')
@@ -1083,7 +1094,34 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
         tone: input.tone ?? SPATIAL_WHITEBOARD_DEFAULTS.sticky.tone,
         authorName: input.authorName ?? resolvedDisplayName(),
         authorKind: input.authorKind ?? 'human',
+        ...(input.board_task_id ? { board_task_id: input.board_task_id } : {}),
+        ...(input.board_task_key ? { board_task_key: input.board_task_key } : {}),
       },
+    })
+  }
+
+  function createBoardWidget(input: {
+    x?: number
+    y?: number
+    width?: number
+    height?: number
+    parentId?: string | null
+    props?: Partial<SpatialBoardWidgetProps> & Record<string, unknown>
+  } = {}): SpatialDocObject {
+    const id = createId('board')
+    const sanitizedProps = sanitizeSpatialBoardWidgetProps({
+      layout: SPATIAL_WHITEBOARD_DEFAULTS.board.layout,
+      ...(input.props ?? {}),
+    })
+    return doc.value.upsertObject({
+      id,
+      kind: 'board' as SpatialObjectKind,
+      parentId: input.parentId ?? null,
+      x: input.x ?? 120,
+      y: input.y ?? 120,
+      width: input.width ?? SPATIAL_WHITEBOARD_DEFAULTS.board.width,
+      height: input.height ?? SPATIAL_WHITEBOARD_DEFAULTS.board.height,
+      props: sanitizedProps,
     })
   }
 
@@ -1235,8 +1273,13 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
     propPatch: Record<string, unknown>,
     geomPatch?: Partial<Pick<SpatialDocObject, 'x' | 'y' | 'width' | 'height' | 'rotation'>>,
   ): void {
-    if (Object.keys(propPatch).length > 0) {
-      doc.value.patchProps(id, propPatch)
+    const target = doc.value.getObject(id)
+    const effectivePatch =
+      (target?.kind as string | undefined) === 'board'
+        ? sanitizeSpatialBoardWidgetProps(propPatch)
+        : propPatch
+    if (Object.keys(effectivePatch).length > 0) {
+      doc.value.patchProps(id, effectivePatch)
     }
     if (geomPatch && Object.keys(geomPatch).length > 0) {
       doc.value.moveObjects([{ id, ...geomPatch }])
@@ -1752,6 +1795,7 @@ export function useSpatialBoardSync(options: UseSpatialBoardSyncOptions) {
     stopFollowing,
     createSection,
     createSticky,
+    createBoardWidget,
     createText,
     addDrawingStroke,
     eraseDrawingStroke,

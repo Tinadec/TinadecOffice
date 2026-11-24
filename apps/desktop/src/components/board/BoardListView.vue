@@ -88,8 +88,17 @@ function buildGroupPatch(group: BoardTaskGroup, task: ProjectBoardTaskDto): Upda
 function onRowDragStart(event: DragEvent, task: ProjectBoardTaskDto) {
   draggingTask.value = task
   if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.effectAllowed = 'copyMove'
     event.dataTransfer.setData('text/x-tinadec-board-task', task.task_id)
+    event.dataTransfer.setData(
+      'application/x-tinadec-board-task-json',
+      JSON.stringify({
+        task_id: task.task_id,
+        task_key: task.task_key,
+        project_id: task.project_id,
+        title: task.title,
+      }),
+    )
   }
 }
 
