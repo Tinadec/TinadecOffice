@@ -1,4 +1,7 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
@@ -239,5 +242,188 @@ describe('ComposerBar notification unification', () => {
     await flushPromises()
     expect(items.value.some((item) => item.key === 'composer-send')).toBe(false)
     expect(wrapper.emitted('welcome-submit')).toHaveLength(1)
+  })
+})
+
+interface ParsedCssRule {
+  selectors: string[]
+  declarations: Record<string, string>
+  atRule: string | null
+}
+
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
+function parseCssDeclarations(body: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawDecl of body.split(';')) {
+    const colonIdx = rawDecl.indexOf(':')
+    if (colonIdx <= 0) continue
+    const prop = rawDecl.slice(0, colonIdx).trim().toLowerCase()
+    const val = rawDecl.slice(colonIdx + 1).trim().replace(/\s+/g, ' ')
+    if (prop) out[prop] = val
+  }
+  return out
+}
+
+function extractCssRules(rawCss: string, atRule: string | null = null): ParsedCssRule[] {
+  const css = stripCssComments(rawCss)
+  const rules: ParsedCssRule[] = []
+  let i = 0
+  while (i < css.length) {
+    while (i < css.length && /\s/.test(css[i]!)) i++
+    if (i >= css.length) break
+
+    const headerStart = i
+    while (i < css.length && css[i] !== '{' && css[i] !== ';') i++
+    if (i >= css.length) break
+
+    if (css[i] === ';') {
+      // Top-level statement like @import or @source
+      i++
+      continue
+    }
+
+    const header = css.slice(headerStart, i).trim().replace(/\s+/g, ' ')
+    i++ // consume '{'
+    const bodyStart = i
+    let depth = 1
+    while (i < css.length && depth > 0) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') depth--
+      i++
+    }
+    const body = css.slice(bodyStart, i - 1)
+
+    if (header.startsWith('@')) {
+      if (/^@(?:media|container|layer|supports|starting-style)\b/i.test(header)) {
+        rules.push(...extractCssRules(body, header))
+      }
+      continue
+    }
+
+    const selectors = header
+      .split(',')
+      .map((s) => s.trim().replace(/\s+/g, ' '))
+      .filter(Boolean)
+    rules.push({
+      selectors,
+      declarations: parseCssDeclarations(body),
+      atRule,
+    })
+  }
+  return rules
+}
+
+function findTopLevelDeclarations(rules: ParsedCssRule[], exactSelector: string): Record<string, string> {
+  const merged: Record<string, string> = {}
+  for (const rule of rules) {
+    if (rule.atRule !== null) continue
+    if (rule.selectors.includes(exactSelector)) {
+      Object.assign(merged, rule.declarations)
+    }
+  }
+  return merged
+}
+
+function resolveHorizontalPadding(declarations: Record<string, string>): { left: string; right: string } {
+  let left = ''
+  let right = ''
+  if (declarations.padding) {
+    const parts = declarations.padding.split(/\s+/).filter(Boolean)
+    if (parts.length === 1) {
+      left = parts[0]!
+      right = parts[0]!
+    } else if (parts.length === 2 || parts.length === 3) {
+      left = parts[1]!
+      right = parts[1]!
+    } else if (parts.length >= 4) {
+      right = parts[1]!
+      left = parts[3]!
+    }
+  }
+  if (declarations['padding-left']) left = declarations['padding-left']
+  if (declarations['padding-right']) right = declarations['padding-right']
+  return { left, right }
+}
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url))
+const composerVueSource = readFileSync(path.resolve(currentDir, './ComposerBar.vue'), 'utf8')
+const globalStylesSource = readFileSync(path.resolve(currentDir, '../styles.css'), 'utf8')
+
+describe('ComposerBar width & welcome-screen horizontal alignment guardrails', () => {
+  it('does not declare scoped max-width: 100% on .composer or .composer-box in ComposerBar.vue', () => {
+    const scopedMatch = composerVueSource.match(/<style\b[^>]*\bscoped\b[^>]*>([\s\S]*?)<\/style>/)
+    expect(scopedMatch).not.toBeNull()
+
+    const scopedRules = extractCssRules(scopedMatch![1]!)
+    const composerRules = scopedRules.filter((r) =>
+      r.selectors.some((sel) => sel === '.composer' || sel === '.composer-box'),
+    )
+    expect(composerRules.length).toBeGreaterThanOrEqual(2)
+
+    for (const rule of composerRules) {
+      expect(rule.declarations['max-width']).toBeUndefined()
+    }
+
+    // Mounted DOM keeps .composer wrapper and .composer-box.welcome-dialog without inline width overrides
+    const wrapper = mountComposer({ hero: true })
+    const root = wrapper.get('.composer')
+    const box = wrapper.get('.composer-box')
+    expect(root.classes()).toContain('composer--hero')
+    expect(box.classes()).toContain('welcome-dialog')
+    expect((root.element as HTMLElement).style.maxWidth).toBe('')
+    expect((box.element as HTMLElement).style.maxWidth).toBe('')
+  })
+
+  it('preserves 852px outer wrapper and 820px inner dialog max-widths in styles.css', () => {
+    const globalRules = extractCssRules(globalStylesSource)
+
+    const composerDecl = findTopLevelDeclarations(globalRules, '.composer')
+    const welcomeScreenDecl = findTopLevelDeclarations(globalRules, '.welcome-screen')
+    const welcomeDialogDecl = findTopLevelDeclarations(globalRules, '.welcome-dialog')
+    const welcomeContentDecl = findTopLevelDeclarations(globalRules, '.welcome-content')
+    const heroConversationDecl = findTopLevelDeclarations(globalRules, '.conversation.composer-hero')
+
+    expect(composerDecl['max-width']).toBe('min(852px, 100%)')
+    expect(composerDecl.margin).toBe('0 auto')
+
+    expect(welcomeScreenDecl['max-width']).toBe('min(852px, 100%)')
+    expect(welcomeScreenDecl.margin).toBe('0 auto')
+
+    expect(welcomeDialogDecl['max-width']).toBe('min(820px, 100%)')
+    expect(welcomeDialogDecl.margin).toBe('0 auto')
+
+    expect(welcomeContentDecl['max-width']).toBe('min(820px, 100%)')
+    expect(welcomeContentDecl.gap).toBe('14px')
+    expect(heroConversationDecl.gap).toBe('14px')
+  })
+
+  it('keeps horizontal padding strictly aligned between .welcome-screen and .composer across default, .chat-narrow, and .chat-ultra', () => {
+    const globalRules = extractCssRules(globalStylesSource)
+
+    const defaultWelcomePad = resolveHorizontalPadding(findTopLevelDeclarations(globalRules, '.welcome-screen'))
+    const defaultComposerPad = resolveHorizontalPadding(findTopLevelDeclarations(globalRules, '.composer'))
+    expect(defaultWelcomePad).toEqual({ left: '16px', right: '16px' })
+    expect(defaultComposerPad).toEqual(defaultWelcomePad)
+
+    const narrowWelcomePad = resolveHorizontalPadding(
+      findTopLevelDeclarations(globalRules, '.conversation.chat-narrow .welcome-screen'),
+    )
+    const narrowComposerPad = resolveHorizontalPadding(
+      findTopLevelDeclarations(globalRules, '.conversation.chat-narrow .composer'),
+    )
+    expect(narrowWelcomePad).toEqual({ left: '8px', right: '8px' })
+    expect(narrowComposerPad).toEqual(narrowWelcomePad)
+
+    const ultraWelcomePad = resolveHorizontalPadding(
+      findTopLevelDeclarations(globalRules, '.conversation.chat-ultra .welcome-screen'),
+    )
+    const ultraComposerPad = resolveHorizontalPadding(
+      findTopLevelDeclarations(globalRules, '.conversation.chat-ultra .composer'),
+    )
+    expect(ultraWelcomePad).toEqual({ left: '4px', right: '4px' })
+    expect(ultraComposerPad).toEqual(ultraWelcomePad)
   })
 })

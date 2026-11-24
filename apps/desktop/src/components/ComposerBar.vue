@@ -1410,12 +1410,14 @@ function confirmSteer(id: string, interrupt = false) {
 </template>
 
 <style scoped>
+/* Outer max-width (min(852px, 100%)) and gutters come from global styles.css
+   (.composer) and inner 820px cap comes from .welcome-dialog — never set
+   max-width: 100% here or [data-v-*] specificity overrides the centered column. */
 .composer {
   container-type: inline-size;
   container-name: composer;
   width: 100%;
   min-width: 0;
-  max-width: 100%;
   box-sizing: border-box;
   overflow: visible;
 }
@@ -1425,7 +1427,6 @@ function confirmSteer(id: string, interrupt = false) {
   position: relative;
   width: 100%;
   min-width: 0;
-  max-width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border-default);
   border-radius: 16px;

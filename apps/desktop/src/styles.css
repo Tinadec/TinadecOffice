@@ -2631,6 +2631,7 @@ button.agent-topology-node:hover,
   min-width: 0;
   /* Adaptive: follows the conversation zone width, capped for readability. */
   max-width: min(820px, 100%);
+  margin: 0 auto;
 }
 
 .welcome-title-row {
@@ -5198,6 +5199,7 @@ Triggered by the page-level transition on the parent .settings-page. */
    ======================================================================== */
 
 /* ---- Narrow mode: reduce paddings, hide text labels ---- */
+/* Keep horizontal padding synced 1:1 with .conversation.chat-narrow .composer (8px). */
 .conversation.chat-narrow .welcome-screen {
   padding: 0 8px;
 }
@@ -5276,6 +5278,7 @@ Triggered by the page-level transition on the parent .settings-page. */
 }
 
 /* ---- Ultra mode: stack toolbar, minimal padding, full-width ---- */
+/* Keep horizontal padding synced 1:1 with .conversation.chat-ultra .composer (4px). */
 .conversation.chat-ultra .welcome-screen {
   padding: 0 4px;
 }
