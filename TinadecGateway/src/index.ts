@@ -2809,7 +2809,7 @@ const app = new Elysia()
     }
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Get multiplayer spatial board snapshot', tags: ['Sessions'] } })
+  }, { detail: { summary: 'Get multiplayer spatial board snapshot', tags: ['Sessions'], responses: { 200: externalJsonResponse('SpatialBoardSnapshot', 'Multiplayer spatial board snapshot.') } } })
   .post('/api/v1/sessions/:sessionId/spatial-board/ops', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/ops`;
@@ -2826,7 +2826,7 @@ const app = new Elysia()
     }
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Apply property-level LWW spatial board operations', tags: ['Sessions'] } })
+  }, { detail: { summary: 'Apply property-level LWW spatial board operations', tags: ['Sessions'], requestBody: externalJsonRequest('SpatialBoardOpsRequest'), responses: { 200: externalJsonResponse('SpatialBoardOpsResponse', 'Applied property-level LWW spatial board operations.') } } })
   .post('/api/v1/sessions/:sessionId/spatial-board/comments', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/spatial-board/comments`;

@@ -151,6 +151,19 @@ test('Project Board and Global Board REST routes forward paths, queries, headers
       body: { title: 'Wire board proxy', priority: 'high', labels: ['gateway'] },
       expectedStatus: 201,
     },
+    {
+      method: 'POST',
+      path: `/api/v1/projects/${projectId}/board/tasks/promote-from-spatial`,
+      body: {
+        session_id: '77777777-7777-4777-8777-777777777777',
+        object_ids: ['sticky:1', 'sticky:2'],
+        mode: 'split_many',
+        target_status: 'ready',
+        priority: 'high',
+        labels: ['spatial'],
+      },
+      expectedStatus: 200,
+    },
     { method: 'GET', path: `/api/v1/projects/${projectId}/board/tasks/${taskId}`, expectedStatus: 200 },
     {
       method: 'PATCH',
@@ -402,6 +415,224 @@ test('Project Board routes preserve Core 409 cycle_detected/revision_conflict an
   assert.equal(((await sseUnreachable.json()) as Record<string, unknown>).code, 'CORE_UNREACHABLE');
 });
 
+test('POST /api/v1/projects/:projectId/board/tasks/promote-from-spatial forwards 200 result and preserves 400/404/409/502 errors', { concurrency: false }, async () => {
+  const spatialSessionId = '77777777-7777-4777-8777-777777777777';
+  let capturedPath = '';
+  let capturedMethod = '';
+  let capturedHeaders = new Headers();
+  let capturedBody: Record<string, unknown> | null = null;
+
+  const mockResult = {
+    mode: 'parent_with_children',
+    parent_task_id: taskId,
+    tasks: [
+      {
+        task_id: taskId,
+        project_id: projectId,
+        project_name: 'TinadecOffice',
+        task_key: 'TIN-14',
+        title: 'Spatial Bridge Epic',
+        description_md: 'Promoted from spatial section',
+        checklist: [],
+        status: 'ready',
+        priority: 'high',
+        blocked: false,
+        blocked_reason: null,
+        assignee: { kind: 'cli', harness_id: 'claude-code' },
+        parent_task_id: null,
+        depends_on: [],
+        labels: ['spatial'],
+        spatial_ref: { session_id: spatialSessionId, object_id: 'section:1', viewport_hint: { x: 120, y: 80, zoom: 1 } },
+        sort_key: 'a0',
+        active_session_id: null,
+        active_run_id: null,
+        run_status: null,
+        worktree_path: null,
+        lease_id: null,
+        live_digest_summary: null,
+        diff_stats: null,
+        has_sync_conflict: false,
+        sync_conflict: null,
+        revision: 1,
+        created_at_unix_ms: 1700000000000,
+        updated_at_unix_ms: 1700000000000,
+      },
+    ],
+    updated_object_links: [
+      { object_id: 'section:1', task_id: taskId, task_key: 'TIN-14' },
+    ],
+    spatial_seq: 42,
+  };
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    capturedPath = url.pathname + url.search;
+    capturedMethod = init?.method ?? 'GET';
+    capturedHeaders = new Headers(init?.headers);
+    capturedBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+    return new Response(JSON.stringify(mockResult), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+
+  const promotePayload = {
+    session_id: spatialSessionId,
+    object_ids: ['section:1', 'sticky:1'],
+    mode: 'parent_with_children',
+    target_status: 'ready',
+    priority: 'high',
+    assignee: { kind: 'cli', harness_id: 'claude-code' },
+    labels: ['spatial'],
+    viewport_hint: { x: 120, y: 80, zoom: 1 },
+    writer_id: 'desktop_promoter',
+  };
+
+  const okRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/tasks/promote-from-spatial`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-tinadec-storage-id': 'scope-spatial-bridge',
+      },
+      body: JSON.stringify(promotePayload),
+    }),
+  );
+
+  assert.equal(okRes.status, 200);
+  assert.equal(capturedMethod, 'POST');
+  assert.equal(capturedPath, `/api/v1/projects/${projectId}/board/tasks/promote-from-spatial`);
+  assert.equal(capturedHeaders.get('x-tinadec-storage-id'), 'scope-spatial-bridge');
+  assert.deepEqual(capturedBody, promotePayload);
+  const okJson = (await okRes.json()) as Record<string, unknown>;
+  assert.deepEqual(okJson, mockResult);
+
+  // 400 validation pass-through from Core
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        type: 'https://tinadec.dev/problems/invalid_promotion_request',
+        title: 'Invalid spatial promotion request',
+        status: 400,
+        code: 'invalid_promotion_mode',
+        detail: 'Unsupported mode.',
+      }),
+      { status: 400, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const badRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/tasks/promote-from-spatial`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: spatialSessionId, object_ids: [] }),
+    }),
+  );
+  assert.equal(badRes.status, 400);
+  assert.equal(((await badRes.json()) as Record<string, unknown>).code, 'invalid_promotion_mode');
+
+  // 404 missing spatial object pass-through
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        status: 404,
+        code: 'spatial_object_not_found',
+        detail: 'Spatial object sticky:missing was not found.',
+      }),
+      { status: 404, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const notFoundRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/tasks/promote-from-spatial`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: spatialSessionId, object_ids: ['sticky:missing'] }),
+    }),
+  );
+  assert.equal(notFoundRes.status, 404);
+  assert.equal(((await notFoundRes.json()) as Record<string, unknown>).code, 'spatial_object_not_found');
+
+  // Spatial "board" kind ops pass through cleanly (200 metadata-only & 400 board_props_invalid)
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        seq: 43,
+        accepted_op_ids: ['op:board:1'],
+        rejected_ops: [],
+        objects: {
+          'board:1': {
+            id: 'board:1',
+            kind: 'board',
+            parent_id: null,
+            sort_key: 'a0',
+            x: 0,
+            y: 0,
+            width: 780,
+            height: 480,
+            rotation: 0,
+            props: { project_id: projectId, layout: 'kanban', compact: true },
+            prop_timestamps: {},
+            deleted: false,
+            updated_at_unix_ms: 1700000001000,
+          },
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as unknown as typeof fetch;
+
+  const boardOpRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/sessions/${spatialSessionId}/spatial-board/ops`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: 'desktop-1',
+        base_seq: 42,
+        ops: [
+          {
+            client_op_id: 'op:board:1',
+            object_id: 'board:1',
+            kind: 'board',
+            props: { project_id: projectId, layout: 'kanban', compact: true },
+          },
+        ],
+      }),
+    }),
+  );
+  assert.equal(boardOpRes.status, 200);
+  const boardOpJson = (await boardOpRes.json()) as { objects: Record<string, { kind: string }> };
+  assert.equal(boardOpJson.objects['board:1']?.kind, 'board');
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        status: 400,
+        code: 'board_props_invalid',
+        detail: 'Spatial board widgets must not embed task payloads in props.',
+      }),
+      { status: 400, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const invalidBoardPropsRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/sessions/${spatialSessionId}/spatial-board/ops`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: 'desktop-1',
+        base_seq: 43,
+        ops: [
+          {
+            client_op_id: 'op:board:bad',
+            object_id: 'board:1',
+            kind: 'board',
+            props: { tasks: [{ id: 'bad-copy' }] },
+          },
+        ],
+      }),
+    }),
+  );
+  assert.equal(invalidBoardPropsRes.status, 400);
+  assert.equal(((await invalidBoardPropsRes.json()) as Record<string, unknown>).code, 'board_props_invalid');
+});
+
 function sortKeysRecursively(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysRecursively);
   if (value && typeof value === 'object') {
@@ -426,6 +657,7 @@ test('Project Board OpenAPI paths, schemas, Session origin/board_task_id, and sn
     ['/api/v1/projects/{projectId}/board/settings', ['get', 'put']],
     ['/api/v1/projects/{projectId}/board/sync', ['post']],
     ['/api/v1/projects/{projectId}/board/tasks', ['get', 'post']],
+    ['/api/v1/projects/{projectId}/board/tasks/promote-from-spatial', ['post']],
     ['/api/v1/projects/{projectId}/board/tasks/{taskId}', ['get', 'patch', 'delete']],
     ['/api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict', ['post']],
     ['/api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch', ['post']],
@@ -475,9 +707,45 @@ test('Project Board OpenAPI paths, schemas, Session origin/board_task_id, and sn
     'ProjectBoardProjectSummaryItem',
     'ProjectBoardSummary',
     'ProjectBoardEvent',
+    'SpatialObjectKind',
+    'SpatialLwwTimestamp',
+    'SpatialBoardObject',
+    'SpatialPropertyOp',
+    'SpatialBoardOpsRequest',
+    'SpatialBoardRejectedOp',
+    'SpatialBoardOpsResponse',
+    'SpatialBoardSnapshot',
+    'PromoteFromSpatialRequest',
+    'SpatialObjectTaskLink',
+    'PromoteFromSpatialResult',
   ]) {
     assert.ok(doc.components.schemas[schemaName], `Missing OpenAPI schema ${schemaName}`);
   }
+
+  // Verify "board" spatial object kind is exposed in SpatialObjectKind, SpatialBoardObject, and SpatialPropertyOp.
+  const spatialKindEnum = doc.components.schemas.SpatialObjectKind?.enum as string[] | undefined;
+  assert.ok(spatialKindEnum?.includes('board'), 'SpatialObjectKind enum must include "board"');
+  const boardObjProps = doc.components.schemas.SpatialBoardObject?.properties as Record<string, Record<string, unknown>>;
+  assert.ok(
+    (boardObjProps?.kind?.enum as string[] | undefined)?.includes('board'),
+    'SpatialBoardObject.kind enum must include "board"',
+  );
+  const propOpProps = doc.components.schemas.SpatialPropertyOp?.properties as Record<string, Record<string, unknown>>;
+  assert.ok(
+    (propOpProps?.kind?.enum as string[] | undefined)?.includes('board'),
+    'SpatialPropertyOp.kind enum must include "board"',
+  );
+
+  // Verify PromoteFromSpatialRequest / SpatialObjectTaskLink / PromoteFromSpatialResult wire contracts.
+  assert.deepEqual(doc.components.schemas.PromoteFromSpatialRequest?.required, ['session_id', 'object_ids']);
+  assert.deepEqual(doc.components.schemas.SpatialObjectTaskLink?.required, ['object_id', 'task_id', 'task_key']);
+  assert.deepEqual(doc.components.schemas.PromoteFromSpatialResult?.required, [
+    'mode',
+    'parent_task_id',
+    'tasks',
+    'updated_object_links',
+    'spatial_seq',
+  ]);
 
   const sessionProps = doc.components.schemas.Session?.properties as Record<string, unknown>;
   const createSessionProps = doc.components.schemas.CreateSessionRequest?.properties as Record<string, unknown>;

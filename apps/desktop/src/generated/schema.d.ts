@@ -847,6 +847,10 @@ export interface paths {
     /** POST /api/v1/projects/{projectId}/board/tasks */
     post: operations["postApiV1ProjectsByProjectIdBoardTasks"];
   };
+  "/api/v1/projects/{projectId}/board/tasks/promote-from-spatial": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/promote-from-spatial */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksPromote-from-spatial"];
+  };
   "/api/v1/projects/{projectId}/board/tasks/{taskId}": {
     /** GET /api/v1/projects/{projectId}/board/tasks/{taskId} */
     get: operations["getApiV1ProjectsByProjectIdBoardTasksByTaskId"];
@@ -3832,6 +3836,32 @@ export interface components {
       statuses?: (("backlog" | "ready" | "in_progress" | "in_review" | "done")[]) | null;
     };
     ProjectList: components["schemas"]["Project"][];
+    PromoteFromSpatialRequest: {
+      assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
+      labels?: string[] | null;
+      /** @enum {string} */
+      mode?: "merge_single" | "split_many" | "parent_with_children";
+      object_ids: string[];
+      /** @enum {string|null} */
+      priority?: "urgent" | "high" | "medium" | "low" | "none" | null;
+      /** Format: uuid */
+      session_id: string;
+      /** @enum {string} */
+      target_status?: "backlog" | "ready" | "in_progress" | "in_review" | "done";
+      viewport_hint?: {
+        [key: string]: unknown;
+      } | null;
+      writer_id?: string | null;
+    };
+    PromoteFromSpatialResult: {
+      /** @enum {string} */
+      mode: "merge_single" | "split_many" | "parent_with_children";
+      /** Format: uuid */
+      parent_task_id: string | null;
+      spatial_seq: number;
+      tasks: components["schemas"]["ProjectBoardTask"][];
+      updated_object_links: components["schemas"]["SpatialObjectTaskLink"][];
+    };
     RecallVerbatimSnippet: {
       /** Format: date-time */
       created_at: string;
@@ -4150,6 +4180,95 @@ export interface components {
       spec_enabled: boolean;
       workflow_mode_version_id: string | null;
       worktree: boolean;
+    };
+    SpatialBoardObject: {
+      deleted: boolean;
+      deleted_ts?: components["schemas"]["SpatialLwwTimestamp"] | null;
+      height: number;
+      id: string;
+      /** @enum {string} */
+      kind: "work" | "section" | "sticky" | "text" | "drawing" | "media" | "connector" | "board";
+      parent_id: string | null;
+      prop_timestamps: {
+        [key: string]: components["schemas"]["SpatialLwwTimestamp"];
+      };
+      props: {
+        [key: string]: unknown;
+      };
+      rotation: number;
+      sort_key: string;
+      updated_at_unix_ms: number;
+      width: number;
+      x: number;
+      y: number;
+    };
+    SpatialBoardOpsRequest: {
+      base_seq: number;
+      client_id: string;
+      ops: components["schemas"]["SpatialPropertyOp"][];
+    };
+    SpatialBoardOpsResponse: {
+      accepted_op_ids: string[];
+      objects: {
+        [key: string]: components["schemas"]["SpatialBoardObject"];
+      };
+      rejected_ops: components["schemas"]["SpatialBoardRejectedOp"][];
+      seq: number;
+    };
+    SpatialBoardRejectedOp: {
+      client_op_id: string;
+      code: string;
+      message: string;
+      object_id: string;
+    };
+    SpatialBoardSnapshot: {
+      collaborators: {
+          [key: string]: unknown;
+        }[];
+      comments: {
+          [key: string]: unknown;
+        }[];
+      objects: {
+        [key: string]: components["schemas"]["SpatialBoardObject"];
+      };
+      seq: number;
+      /** Format: uuid */
+      session_id: string;
+      updated_at_unix_ms: number;
+    };
+    SpatialLwwTimestamp: {
+      lamport: number;
+      writer_id: string;
+    };
+    /** @enum {string} */
+    SpatialObjectKind: "work" | "section" | "sticky" | "text" | "drawing" | "media" | "connector" | "board";
+    SpatialObjectTaskLink: {
+      object_id: string;
+      /** Format: uuid */
+      task_id: string;
+      task_key: string;
+    };
+    SpatialPropertyOp: {
+      client_op_id: string;
+      deleted?: boolean | null;
+      deleted_ts?: components["schemas"]["SpatialLwwTimestamp"] | null;
+      has_parent_id?: boolean;
+      height?: number | null;
+      /** @enum {string|null} */
+      kind?: "work" | "section" | "sticky" | "text" | "drawing" | "media" | "connector" | "board" | null;
+      object_id: string;
+      parent_id?: string | null;
+      props?: {
+        [key: string]: unknown;
+      } | null;
+      rotation?: number | null;
+      sort_key?: string | null;
+      timestamps?: {
+        [key: string]: components["schemas"]["SpatialLwwTimestamp"];
+      } | null;
+      width?: number | null;
+      x?: number | null;
+      y?: number | null;
     };
     StorageCleanupPreview: {
       category: string;
@@ -8377,6 +8496,51 @@ export interface operations {
       };
     };
   };
+  /** POST /api/v1/projects/{projectId}/board/tasks/promote-from-spatial */
+  "postApiV1ProjectsByProjectIdBoardTasksPromote-from-spatial": {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PromoteFromSpatialRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["PromoteFromSpatialResult"];
+        };
+      };
+      /** @description Invalid spatial promotion request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project, spatial session, or spatial object not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Dependency cycle or revision conflict */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   /** GET /api/v1/projects/{projectId}/board/tasks/{taskId} */
   getApiV1ProjectsByProjectIdBoardTasksByTaskId: {
     parameters: {
@@ -9805,8 +9969,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Multiplayer spatial board snapshot. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["SpatialBoardSnapshot"];
+        };
       };
     };
   };
@@ -9872,9 +10039,17 @@ export interface operations {
         sessionId: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SpatialBoardOpsRequest"];
+      };
+    };
     responses: {
+      /** @description Applied property-level LWW spatial board operations. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["SpatialBoardOpsResponse"];
+        };
       };
     };
   };

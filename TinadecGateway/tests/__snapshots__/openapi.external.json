@@ -8551,6 +8551,123 @@
         },
         "type": "array"
       },
+      "PromoteFromSpatialRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "merge_single",
+              "split_many",
+              "parent_with_children"
+            ],
+            "type": "string"
+          },
+          "object_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none",
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "target_status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "type": "string"
+          },
+          "viewport_hint": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "writer_id": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "object_ids"
+        ],
+        "type": "object"
+      },
+      "PromoteFromSpatialResult": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "merge_single",
+              "split_many",
+              "parent_with_children"
+            ],
+            "type": "string"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "spatial_seq": {
+            "type": "integer"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardTask"
+            },
+            "type": "array"
+          },
+          "updated_object_links": {
+            "items": {
+              "$ref": "#/components/schemas/SpatialObjectTaskLink"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "parent_task_id",
+          "tasks",
+          "updated_object_links",
+          "spatial_seq"
+        ],
+        "type": "object"
+      },
       "RecallVerbatimSnippet": {
         "properties": {
           "created_at": {
@@ -10014,6 +10131,344 @@
           "workflow_mode_version_id",
           "bulletin_board",
           "worktree"
+        ],
+        "type": "object"
+      },
+      "SpatialBoardObject": {
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "deleted_ts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpatialLwwTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "work",
+              "section",
+              "sticky",
+              "text",
+              "drawing",
+              "media",
+              "connector",
+              "board"
+            ],
+            "type": "string"
+          },
+          "parent_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "prop_timestamps": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SpatialLwwTimestamp"
+            },
+            "type": "object"
+          },
+          "props": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "rotation": {
+            "type": "number"
+          },
+          "sort_key": {
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "number"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "parent_id",
+          "sort_key",
+          "x",
+          "y",
+          "width",
+          "height",
+          "rotation",
+          "props",
+          "prop_timestamps",
+          "deleted",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "SpatialBoardOpsRequest": {
+        "properties": {
+          "base_seq": {
+            "type": "integer"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/SpatialPropertyOp"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_id",
+          "base_seq",
+          "ops"
+        ],
+        "type": "object"
+      },
+      "SpatialBoardOpsResponse": {
+        "properties": {
+          "accepted_op_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "objects": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SpatialBoardObject"
+            },
+            "type": "object"
+          },
+          "rejected_ops": {
+            "items": {
+              "$ref": "#/components/schemas/SpatialBoardRejectedOp"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "accepted_op_ids",
+          "rejected_ops",
+          "objects"
+        ],
+        "type": "object"
+      },
+      "SpatialBoardRejectedOp": {
+        "properties": {
+          "client_op_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_op_id",
+          "object_id",
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "SpatialBoardSnapshot": {
+        "properties": {
+          "collaborators": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "comments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "objects": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SpatialBoardObject"
+            },
+            "type": "object"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "seq",
+          "objects",
+          "comments",
+          "collaborators",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "SpatialLwwTimestamp": {
+        "properties": {
+          "lamport": {
+            "type": "integer"
+          },
+          "writer_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lamport",
+          "writer_id"
+        ],
+        "type": "object"
+      },
+      "SpatialObjectKind": {
+        "enum": [
+          "work",
+          "section",
+          "sticky",
+          "text",
+          "drawing",
+          "media",
+          "connector",
+          "board"
+        ],
+        "type": "string"
+      },
+      "SpatialObjectTaskLink": {
+        "properties": {
+          "object_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_id",
+          "task_id",
+          "task_key"
+        ],
+        "type": "object"
+      },
+      "SpatialPropertyOp": {
+        "properties": {
+          "client_op_id": {
+            "type": "string"
+          },
+          "deleted": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "deleted_ts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpatialLwwTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "has_parent_id": {
+            "type": "boolean"
+          },
+          "height": {
+            "nullable": true,
+            "type": "number"
+          },
+          "kind": {
+            "enum": [
+              "work",
+              "section",
+              "sticky",
+              "text",
+              "drawing",
+              "media",
+              "connector",
+              "board"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "props": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "rotation": {
+            "nullable": true,
+            "type": "number"
+          },
+          "sort_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "timestamps": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SpatialLwwTimestamp"
+            },
+            "nullable": true,
+            "type": "object"
+          },
+          "width": {
+            "nullable": true,
+            "type": "number"
+          },
+          "x": {
+            "nullable": true,
+            "type": "number"
+          },
+          "y": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "client_op_id",
+          "object_id"
         ],
         "type": "object"
       },
@@ -19651,6 +20106,87 @@
         ]
       }
     },
+    "/api/v1/projects/{projectId}/board/tasks/promote-from-spatial": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksPromote-from-spatial",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteFromSpatialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromoteFromSpatialResult"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid spatial promotion request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project, spatial session, or spatial object not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Dependency cycle or revision conflict"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/promote-from-spatial",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/projects/{projectId}/board/tasks/{taskId}": {
       "delete": {
         "operationId": "deleteApiV1ProjectsByProjectIdBoardTasksByTaskId",
@@ -22518,7 +23054,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpatialBoardSnapshot"
+                }
+              }
+            },
+            "description": "Multiplayer spatial board snapshot."
+          }
         },
         "summary": "Get multiplayer spatial board snapshot",
         "tags": [
@@ -22649,8 +23194,27 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpatialBoardOpsRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpatialBoardOpsResponse"
+                }
+              }
+            },
+            "description": "Applied property-level LWW spatial board operations."
+          }
         },
         "summary": "Apply property-level LWW spatial board operations",
         "tags": [

@@ -14,6 +14,17 @@ const VIEW_LAYOUTS = ['kanban', 'list', 'swimlane'] as const;
 const VIEW_GROUP_BYS = ['status', 'project', 'assignee', 'priority', 'none'] as const;
 const VIEW_SWIMLANE_BYS = ['project', 'assignee'] as const;
 const VIEW_SORT_BYS = ['manual', 'priority', 'updated_at', 'dependency'] as const;
+const SPATIAL_PROMOTION_MODES = ['merge_single', 'split_many', 'parent_with_children'] as const;
+const SPATIAL_OBJECT_KINDS = [
+  'work',
+  'section',
+  'sticky',
+  'text',
+  'drawing',
+  'media',
+  'connector',
+  'board',
+] as const;
 const BOARD_EVENT_TYPES = [
   'snapshot',
   'task_upserted',
@@ -479,6 +490,150 @@ export const projectBoardSchemas = {
     },
     required: ['seq', 'event_type', 'occurred_at_unix_ms'],
   },
+  SpatialObjectKind: {
+    type: 'string',
+    enum: [...SPATIAL_OBJECT_KINDS],
+  },
+  SpatialLwwTimestamp: {
+    type: 'object',
+    properties: {
+      lamport: { type: 'integer' },
+      writer_id: { type: 'string' },
+    },
+    required: ['lamport', 'writer_id'],
+  },
+  SpatialBoardObject: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      kind: { type: 'string', enum: [...SPATIAL_OBJECT_KINDS] },
+      parent_id: { type: 'string', nullable: true },
+      sort_key: { type: 'string' },
+      x: { type: 'number' },
+      y: { type: 'number' },
+      width: { type: 'number' },
+      height: { type: 'number' },
+      rotation: { type: 'number' },
+      props: { type: 'object', additionalProperties: true },
+      prop_timestamps: { type: 'object', additionalProperties: ref('SpatialLwwTimestamp') },
+      deleted: { type: 'boolean' },
+      deleted_ts: nullableRef('SpatialLwwTimestamp'),
+      updated_at_unix_ms: { type: 'integer' },
+    },
+    required: [
+      'id',
+      'kind',
+      'parent_id',
+      'sort_key',
+      'x',
+      'y',
+      'width',
+      'height',
+      'rotation',
+      'props',
+      'prop_timestamps',
+      'deleted',
+      'updated_at_unix_ms',
+    ],
+  },
+  SpatialPropertyOp: {
+    type: 'object',
+    properties: {
+      client_op_id: { type: 'string' },
+      object_id: { type: 'string' },
+      kind: { type: 'string', enum: [...SPATIAL_OBJECT_KINDS], nullable: true },
+      parent_id: { type: 'string', nullable: true },
+      has_parent_id: { type: 'boolean' },
+      sort_key: { type: 'string', nullable: true },
+      x: { type: 'number', nullable: true },
+      y: { type: 'number', nullable: true },
+      width: { type: 'number', nullable: true },
+      height: { type: 'number', nullable: true },
+      rotation: { type: 'number', nullable: true },
+      props: { type: 'object', additionalProperties: true, nullable: true },
+      timestamps: { type: 'object', additionalProperties: ref('SpatialLwwTimestamp'), nullable: true },
+      deleted: { type: 'boolean', nullable: true },
+      deleted_ts: nullableRef('SpatialLwwTimestamp'),
+    },
+    required: ['client_op_id', 'object_id'],
+  },
+  SpatialBoardOpsRequest: {
+    type: 'object',
+    properties: {
+      client_id: { type: 'string' },
+      base_seq: { type: 'integer' },
+      ops: { type: 'array', items: ref('SpatialPropertyOp') },
+    },
+    required: ['client_id', 'base_seq', 'ops'],
+  },
+  SpatialBoardRejectedOp: {
+    type: 'object',
+    properties: {
+      client_op_id: { type: 'string' },
+      object_id: { type: 'string' },
+      code: { type: 'string' },
+      message: { type: 'string' },
+    },
+    required: ['client_op_id', 'object_id', 'code', 'message'],
+  },
+  SpatialBoardOpsResponse: {
+    type: 'object',
+    properties: {
+      seq: { type: 'integer' },
+      accepted_op_ids: { type: 'array', items: { type: 'string' } },
+      rejected_ops: { type: 'array', items: ref('SpatialBoardRejectedOp') },
+      objects: { type: 'object', additionalProperties: ref('SpatialBoardObject') },
+    },
+    required: ['seq', 'accepted_op_ids', 'rejected_ops', 'objects'],
+  },
+  SpatialBoardSnapshot: {
+    type: 'object',
+    properties: {
+      session_id: { type: 'string', format: 'uuid' },
+      seq: { type: 'integer' },
+      objects: { type: 'object', additionalProperties: ref('SpatialBoardObject') },
+      comments: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      collaborators: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      updated_at_unix_ms: { type: 'integer' },
+    },
+    required: ['session_id', 'seq', 'objects', 'comments', 'collaborators', 'updated_at_unix_ms'],
+  },
+  PromoteFromSpatialRequest: {
+    type: 'object',
+    properties: {
+      session_id: { type: 'string', format: 'uuid' },
+      object_ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
+      mode: { type: 'string', enum: [...SPATIAL_PROMOTION_MODES] },
+      target_status: { type: 'string', enum: [...TASK_STATUSES] },
+      priority: { type: 'string', nullable: true, enum: [...TASK_PRIORITIES, null] },
+      assignee: nullableRef('ProjectBoardAssignee'),
+      labels: { type: 'array', items: { type: 'string' }, nullable: true },
+      viewport_hint: { type: 'object', additionalProperties: true, nullable: true },
+      writer_id: { type: 'string', nullable: true },
+    },
+    required: ['session_id', 'object_ids'],
+    additionalProperties: false,
+  },
+  SpatialObjectTaskLink: {
+    type: 'object',
+    properties: {
+      object_id: { type: 'string' },
+      task_id: { type: 'string', format: 'uuid' },
+      task_key: { type: 'string' },
+    },
+    required: ['object_id', 'task_id', 'task_key'],
+  },
+  PromoteFromSpatialResult: {
+    type: 'object',
+    properties: {
+      mode: { type: 'string', enum: [...SPATIAL_PROMOTION_MODES] },
+      parent_task_id: { type: 'string', format: 'uuid', nullable: true },
+      tasks: { type: 'array', items: ref('ProjectBoardTask') },
+      updated_object_links: { type: 'array', items: ref('SpatialObjectTaskLink') },
+      spatial_seq: { type: 'integer' },
+    },
+    required: ['mode', 'parent_task_id', 'tasks', 'updated_object_links', 'spatial_seq'],
+  },
 };
 
 function keepStreamOpen(server: unknown, request: Request) {
@@ -499,6 +654,7 @@ type JsonRouteSpec = {
   createdStatus?: boolean;
   bodySchema?: string;
   bodyRequired?: boolean;
+  errorResponses?: Record<number, string>;
 };
 
 function registerSseRoute(
@@ -626,6 +782,20 @@ export function registerProjectBoardRoutes(
       responseSchema: 'ProjectBoardSyncResult',
     },
     // Project task actions (registered before /tasks/:taskId)
+    {
+      method: 'POST',
+      path: '/api/v1/projects/:projectId/board/tasks/promote-from-spatial',
+      openApiPath: '/api/v1/projects/{projectId}/board/tasks/promote-from-spatial',
+      bodySchema: 'PromoteFromSpatialRequest',
+      bodyRequired: true,
+      responseSchema: 'PromoteFromSpatialResult',
+      errorResponses: {
+        400: 'Invalid spatial promotion request',
+        404: 'Project, spatial session, or spatial object not found',
+        409: 'Dependency cycle or revision conflict',
+        502: 'Upstream Core unreachable',
+      },
+    },
     {
       method: 'POST',
       path: '/api/v1/projects/:projectId/board/tasks/:taskId/resolve-conflict',
@@ -774,6 +944,17 @@ export function registerProjectBoardRoutes(
                   content: { 'application/json': { schema: schemaPayload } },
                 },
               }
+            : {}),
+          ...(spec.errorResponses
+            ? Object.fromEntries(
+                Object.entries(spec.errorResponses).map(([status, description]) => [
+                  Number(status),
+                  {
+                    description,
+                    content: { 'application/problem+json': { schema: ref('ProblemDetails') } },
+                  },
+                ]),
+              )
             : {}),
         };
 
