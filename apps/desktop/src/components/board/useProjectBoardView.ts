@@ -15,8 +15,13 @@ import {
   api,
   type ApproveProjectBoardTaskInput,
   type BoardEventStreamHandle,
+  type CoordinatorApplyPlanInput,
+  type CoordinatorApplyPlanResultDto,
+  type CoordinatorPlanInput,
+  type CoordinatorPlanResultDto,
   type CreateProjectBoardTaskInput,
   type DispatchProjectBoardTaskInput,
+  type ProjectAutopilotStateDto,
   type ProjectBoardAssigneeKind,
   type ProjectBoardConflictResolution,
   type ProjectBoardFiltersDto,
@@ -36,10 +41,13 @@ import {
   type ProjectBoardViewDto,
   type ProjectBoardViewScope,
   type ProjectBoardVisibleField,
+  type ProjectNotesDto,
   type PromoteFromSpatialInput,
   type PromoteFromSpatialResultDto,
+  type UpdateProjectAutopilotInput,
   type UpdateProjectBoardSettingsInput,
   type UpdateProjectBoardTaskInput,
+  type UpdateProjectNotesInput,
 } from '@/api'
 import { useHostAccess } from '@/lib/hostAccess'
 import { selectionIdentity, selectedStorageId } from '@/lib/storageScope'
@@ -632,6 +640,8 @@ interface CachedBoardSnapshot {
   views: ProjectBoardViewDto[]
   settings: ProjectBoardSettingsDto | null
   summary: ProjectBoardSummaryDto | null
+  notes?: ProjectNotesDto | null
+  autopilot?: ProjectAutopilotStateDto | null
   savedAtUnixMs: number
 }
 
@@ -657,6 +667,8 @@ function readCachedBoardSnapshot(scope: ProjectBoardViewScope, projectId: string
       views: Array.isArray(parsed.views) ? parsed.views : [],
       settings: parsed.settings ?? null,
       summary: parsed.summary ?? null,
+      notes: parsed.notes ?? null,
+      autopilot: parsed.autopilot ?? null,
       savedAtUnixMs: typeof parsed.savedAtUnixMs === 'number' ? parsed.savedAtUnixMs : Date.now(),
     }
     memorySnapshots.set(key, hydrated)
@@ -715,6 +727,8 @@ export interface UseProjectBoardViewReturn {
   activeViewId: Ref<string | null>
   settings: Ref<ProjectBoardSettingsDto | null>
   summary: Ref<ProjectBoardSummaryDto | null>
+  notes: Ref<ProjectNotesDto | null>
+  autopilot: Ref<ProjectAutopilotStateDto | null>
   layout: Ref<ProjectBoardLayoutMode>
   groupBy: Ref<ProjectBoardGroupBy>
   swimlaneBy: Ref<ProjectBoardSwimlaneBy>
@@ -783,6 +797,12 @@ export interface UseProjectBoardViewReturn {
   ) => Promise<ProjectBoardTaskDto>
   requestChanges: (projectId: string, taskId: string, feedback: string) => Promise<ProjectBoardTaskDto>
   saveSettings: (input: UpdateProjectBoardSettingsInput) => Promise<ProjectBoardSettingsDto | null>
+  reloadNotes: () => Promise<ProjectNotesDto | null>
+  saveNotes: (input: UpdateProjectNotesInput) => Promise<ProjectNotesDto | null>
+  planCoordinator: (input: CoordinatorPlanInput) => Promise<CoordinatorPlanResultDto | null>
+  applyCoordinatorPlan: (input: CoordinatorApplyPlanInput) => Promise<CoordinatorApplyPlanResultDto | null>
+  reloadAutopilot: () => Promise<ProjectAutopilotStateDto | null>
+  updateAutopilot: (input: UpdateProjectAutopilotInput) => Promise<ProjectAutopilotStateDto | null>
   applySseEvent: (event: ProjectBoardSseEventDto) => void
   disconnectStream: () => void
 }
@@ -822,6 +842,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
   const activeViewId = ref<string | null>(null)
   const settings = shallowRef<ProjectBoardSettingsDto | null>(null)
   const summary = shallowRef<ProjectBoardSummaryDto | null>(null)
+  const notes = shallowRef<ProjectNotesDto | null>(null)
+  const autopilot = shallowRef<ProjectAutopilotStateDto | null>(null)
 
   const loading = ref(false)
   const syncing = ref(false)
@@ -839,6 +861,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     savedViews.value = cached.views
     settings.value = cached.settings
     summary.value = cached.summary
+    notes.value = cached.notes ?? null
+    autopilot.value = cached.autopilot ?? null
   }
 
   function persistCache(): void {
@@ -847,6 +871,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
       views: savedViews.value,
       settings: settings.value,
       summary: summary.value,
+      notes: notes.value,
+      autopilot: autopilot.value,
       savedAtUnixMs: Date.now(),
     })
   }
@@ -878,6 +904,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
       if (Array.isArray(event.views)) savedViews.value = event.views
       if (event.settings) settings.value = event.settings
       if (event.summary) summary.value = event.summary
+      if (event.notes) notes.value = event.notes
+      if (event.autopilot) autopilot.value = event.autopilot
       persistCache()
     } else if (event.event_type === 'task_upserted' && event.task) {
       if (scope === 'global' || event.task.project_id === resolvedProjectId.value) {
@@ -888,6 +916,30 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     } else if (event.event_type === 'settings_updated' && event.settings) {
       if (scope === 'project' && event.settings.project_id === resolvedProjectId.value) {
         settings.value = event.settings
+        persistCache()
+      }
+    } else if (event.event_type === 'notes_updated' && event.notes) {
+      const targetPid = event.notes.project_id || event.project_id
+      if (scope === 'project' && (!targetPid || targetPid === resolvedProjectId.value)) {
+        notes.value = event.notes
+        persistCache()
+      }
+    } else if (event.event_type === 'autopilot_updated' && event.autopilot) {
+      const targetPid = event.autopilot.project_id || event.project_id
+      if (scope === 'project' && (!targetPid || targetPid === resolvedProjectId.value)) {
+        autopilot.value = event.autopilot
+        if (settings.value) {
+          settings.value = {
+            ...settings.value,
+            autopilot_enabled: event.autopilot.autopilot_enabled,
+            max_concurrency: event.autopilot.max_concurrency,
+          }
+        }
+        for (const blockedTask of event.autopilot.blocked_tasks) {
+          if (!blockedTask.project_id || blockedTask.project_id === resolvedProjectId.value) {
+            upsertTaskLocal(blockedTask)
+          }
+        }
         persistCache()
       }
     } else if (event.event_type === 'view_upserted' && event.view) {
@@ -945,11 +997,13 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
 
   async function refresh(): Promise<void> {
     const pid = resolvedProjectId.value
-    if (scope === 'project' && !pid) {
-      tasks.value = []
-      settings.value = null
-      return
-    }
+      if (scope === 'project' && !pid) {
+        tasks.value = []
+        settings.value = null
+        notes.value = null
+        autopilot.value = null
+        return
+      }
     if (!canAccessBackend.value) {
       hydrateFromCache(pid)
       if (tasks.value.length > 0) stale.value = true
@@ -975,15 +1029,19 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
         }
         savedViews.value = loadedViews
       } else {
-        const [loadedTasks, loadedSettings, loadedViews] = await Promise.all([
+        const [loadedTasks, loadedSettings, loadedViews, loadedNotes, loadedAutopilot] = await Promise.all([
           api.listProjectBoardTasks(pid!),
           api.getProjectBoardSettings(pid!).catch(() => null),
           api.listBoardViews({ scope: 'project', project_id: pid! }).catch(() => [] as ProjectBoardViewDto[]),
+          api.getProjectNotes(pid!).catch(() => null),
+          api.getProjectAutopilot(pid!).catch(() => null),
         ])
         if (gen !== loadGeneration) return
         tasks.value = loadedTasks
         if (loadedSettings) settings.value = loadedSettings
         savedViews.value = loadedViews
+        if (loadedNotes) notes.value = loadedNotes
+        if (loadedAutopilot) autopilot.value = loadedAutopilot
       }
       stale.value = false
       persistCache()
@@ -1309,6 +1367,90 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     return updated
   }
 
+  async function reloadNotes(): Promise<ProjectNotesDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const loaded = await api.getProjectNotes(pid)
+    notes.value = loaded
+    persistCache()
+    return loaded
+  }
+
+  async function saveNotes(input: UpdateProjectNotesInput): Promise<ProjectNotesDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const saved = await api.updateProjectNotes(pid, input)
+    notes.value = saved
+    persistCache()
+    return saved
+  }
+
+  async function planCoordinator(
+    input: CoordinatorPlanInput,
+  ): Promise<CoordinatorPlanResultDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const result = await api.planCoordinatorTasks(pid, input)
+    if (result.auto_applied && result.created_tasks.length > 0) {
+      for (const task of result.created_tasks) {
+        upsertTaskLocal(task)
+      }
+      emitBoardSummaryBroadcast()
+      void reloadNotes().catch(() => undefined)
+      void reloadAutopilot().catch(() => undefined)
+    }
+    return result
+  }
+
+  async function applyCoordinatorPlan(
+    input: CoordinatorApplyPlanInput,
+  ): Promise<CoordinatorApplyPlanResultDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const result = await api.applyCoordinatorPlan(pid, input)
+    for (const task of result.created_tasks) {
+      upsertTaskLocal(task)
+    }
+    emitBoardSummaryBroadcast()
+    if (input.update_notes !== false) {
+      void reloadNotes().catch(() => undefined)
+    }
+    void reloadAutopilot().catch(() => undefined)
+    return result
+  }
+
+  async function reloadAutopilot(): Promise<ProjectAutopilotStateDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const loaded = await api.getProjectAutopilot(pid)
+    autopilot.value = loaded
+    persistCache()
+    return loaded
+  }
+
+  async function updateAutopilot(
+    input: UpdateProjectAutopilotInput,
+  ): Promise<ProjectAutopilotStateDto | null> {
+    const pid = resolvedProjectId.value
+    if (!pid) return null
+    const updated = await api.updateProjectAutopilot(pid, input)
+    autopilot.value = updated
+    if (settings.value) {
+      settings.value = {
+        ...settings.value,
+        autopilot_enabled: updated.autopilot_enabled,
+        max_concurrency: updated.max_concurrency,
+      }
+    }
+    if (input.cancel_active) {
+      void refresh()
+    } else {
+      persistCache()
+    }
+    emitBoardSummaryBroadcast()
+    return updated
+  }
+
   if (options.autoConnect !== false) {
     watch(
       [resolvedProjectId, canAccessBackend],
@@ -1345,6 +1487,8 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     activeViewId,
     settings,
     summary,
+    notes,
+    autopilot,
     layout,
     groupBy,
     swimlaneBy,
@@ -1383,6 +1527,12 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
     approveTask,
     requestChanges,
     saveSettings,
+    reloadNotes,
+    saveNotes,
+    planCoordinator,
+    applyCoordinatorPlan,
+    reloadAutopilot,
+    updateAutopilot,
     applySseEvent,
     disconnectStream,
   }

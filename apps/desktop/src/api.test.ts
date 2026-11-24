@@ -7,11 +7,14 @@ import { ApiError } from '@/lib/apiError'
 import { setHostAccessStatus } from '@/lib/hostAccess'
 import type {
   ApprovalGateDto, ApprovalGatesDto, EvidenceHitDto, EvidenceRecallDto,
+  CoordinatorApplyPlanInput, CoordinatorApplyPlanResultDto, CoordinatorPlanInput, CoordinatorPlanResultDto, CoordinatorTaskDraftDto,
   EnvironmentDto, EnvironmentHolderDto, EnvironmentRegisterInput, EnvironmentUpdateInput,
   OrganizationDto, OrganizationMemberDto, OrganizationMessageDto, OrganizationMessagePageDto, OrganizationReportDecisionInput,
   OrganizationReportDto, OrganizationReportPageDto, OrganizationRoomDto, OrganizationSubjectStateDto, PostOrganizationMessageInput,
+  ProjectAutopilotStateDto, ProjectBoardSseEventDto, ProjectNotesDto,
   PromoteFromSpatialInput, PromoteFromSpatialResultDto, SpatialObjectTaskLinkDto,
   SessionTopologyDto, TopologyInstanceDto, TopologyLeaseDto, TopologyMemberDto, TopologyRunDto, TopologyTaskDto,
+  UpdateProjectAutopilotInput, UpdateProjectNotesInput,
 } from './api'
 import type { components } from './generated/schema'
 
@@ -420,8 +423,168 @@ describe('session organization requests', () => {
       true satisfies SameKeys<PromoteFromSpatialInput, C['PromoteFromSpatialRequest']>,
       true satisfies SameKeys<SpatialObjectTaskLinkDto, C['SpatialObjectTaskLink']>,
       true satisfies SameKeys<PromoteFromSpatialResultDto, C['PromoteFromSpatialResult']>,
+      true satisfies SameKeys<ProjectNotesDto, C['ProjectNotes']>,
+      true satisfies SameKeys<UpdateProjectNotesInput, C['UpdateProjectNotesRequest']>,
+      true satisfies SameKeys<CoordinatorTaskDraftDto, C['CoordinatorTaskDraft']>,
+      true satisfies SameKeys<CoordinatorPlanInput, C['CoordinatorPlanRequest']>,
+      true satisfies SameKeys<CoordinatorPlanResultDto, C['CoordinatorPlanResult']>,
+      true satisfies SameKeys<CoordinatorApplyPlanInput, C['CoordinatorApplyPlanRequest']>,
+      true satisfies SameKeys<CoordinatorApplyPlanResultDto, C['CoordinatorApplyPlanResult']>,
+      true satisfies SameKeys<UpdateProjectAutopilotInput, C['UpdateProjectAutopilotRequest']>,
+      true satisfies SameKeys<ProjectAutopilotStateDto, C['ProjectAutopilotState']>,
     ]
-    expect(mirrors).toHaveLength(27)
+    expect(mirrors).toHaveLength(36)
+  })
+})
+
+describe('Phase 3 (#56) Notes, Coordinator Plan & Autopilot API client', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setHostAccessStatus({ state: 'ready', managed: true })
+  })
+
+  it('calls notes, coordinator plan/apply-plan, and autopilot endpoints and folds notes_updated & autopilot_updated SSE frames', async () => {
+    setHostAccessStatus({ state: 'ready', managed: true })
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({
+        url,
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      if (url.endsWith('/notes') && (!init?.method || init.method === 'GET')) {
+        return new Response(JSON.stringify({
+          project_id: 'proj-1',
+          content_md: '## 项目目标\nShip Phase 3',
+          resolved_file_path: '/repo/.tinadec/project/notes.md',
+          storage_mode: 'repo_tinadec',
+          revision: 3,
+          last_synced_hash: 'sha256-abc',
+          updated_at_unix_ms: 1700000001000,
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/notes') && init?.method === 'PUT') {
+        return new Response(JSON.stringify({
+          project_id: 'proj-1',
+          content_md: '## 项目目标\nUpdated',
+          resolved_file_path: '/repo/.tinadec/project/notes.md',
+          storage_mode: 'repo_tinadec',
+          revision: 4,
+          last_synced_hash: 'sha256-def',
+          updated_at_unix_ms: 1700000002000,
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/board/coordinator/plan')) {
+        return new Response(JSON.stringify({
+          project_id: 'proj-1',
+          goal: 'Build autopilot',
+          summary: '2 tasks decomposed',
+          planner_source: 'heuristic',
+          auto_applied: false,
+          drafts: [
+            {
+              draft_id: 'draft-1',
+              title: 'Sync notes.md',
+              description_md: 'Atomic write',
+              checklist: [],
+              priority: 'high',
+              status: 'ready',
+              assignee: { kind: 'native' },
+              labels: ['notes'],
+              depends_on_draft_ids: [],
+              depends_on_task_ids: [],
+            },
+          ],
+          created_tasks: [],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/board/coordinator/apply-plan')) {
+        return new Response(JSON.stringify({
+          project_id: 'proj-1',
+          created_tasks: [
+            {
+              task_id: 'task-99',
+              project_id: 'proj-1',
+              task_key: 'TIN-99',
+              title: 'Sync notes.md',
+              description_md: 'Atomic write',
+              checklist: [],
+              status: 'ready',
+              priority: 'high',
+              blocked: false,
+              depends_on: [],
+              labels: ['notes'],
+              sort_key: 'V',
+              has_sync_conflict: false,
+              revision: 1,
+              created_at_unix_ms: 1700000003000,
+              updated_at_unix_ms: 1700000003000,
+            },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({
+        project_id: 'proj-1',
+        autopilot_enabled: true,
+        max_concurrency: 3,
+        active_task_count: 1,
+        active_task_ids: ['task-99'],
+        queued_ready_count: 2,
+        blocked_task_count: 0,
+        blocked_tasks: [],
+        last_tick_at_unix_ms: 1700000004000,
+        last_error: null,
+        updated_at_unix_ms: 1700000004000,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+
+    const notes = await api.getProjectNotes('proj-1')
+    expect(notes.revision).toBe(3)
+    expect(notes.resolved_file_path).toBe('/repo/.tinadec/project/notes.md')
+
+    const savedNotes = await api.updateProjectNotes('proj-1', { content_md: '## 项目目标\nUpdated', expected_revision: 3 })
+    expect(savedNotes.revision).toBe(4)
+
+    const planned = await api.planCoordinatorTasks('proj-1', { goal: 'Build autopilot', max_tasks: 5 })
+    expect(planned.drafts).toHaveLength(1)
+    expect(planned.planner_source).toBe('heuristic')
+
+    const applied = await api.applyCoordinatorPlan('proj-1', { goal: 'Build autopilot', update_notes: true, drafts: planned.drafts })
+    expect(applied.created_tasks[0]?.task_key).toBe('TIN-99')
+
+    const apGet = await api.getProjectAutopilot('proj-1')
+    expect(apGet.max_concurrency).toBe(3)
+    const apPut = await api.updateProjectAutopilot('proj-1', { autopilot_enabled: true, max_concurrency: 3 })
+    expect(apPut.autopilot_enabled).toBe(true)
+
+    expect(calls.map((c) => c.url)).toEqual([
+      expect.stringContaining('/api/v1/projects/proj-1/notes'),
+      expect.stringContaining('/api/v1/projects/proj-1/notes'),
+      expect.stringContaining('/api/v1/projects/proj-1/board/coordinator/plan'),
+      expect.stringContaining('/api/v1/projects/proj-1/board/coordinator/apply-plan'),
+      expect.stringContaining('/api/v1/projects/proj-1/board/coordinator/autopilot'),
+      expect.stringContaining('/api/v1/projects/proj-1/board/coordinator/autopilot'),
+    ])
+
+    // Verify SSE normalization of `notes_updated` & `autopilot_updated`
+    const sseEvents: ProjectBoardSseEventDto[] = []
+    const sseFrames =
+      'id: 21\nevent: notes_updated\ndata: {"seq":21,"event_type":"notes_updated","project_id":"proj-1","notes":{"project_id":"proj-1","content_md":"# Synced","resolved_file_path":"/repo/.tinadec/project/notes.md","storage_mode":"repo_tinadec","revision":5,"last_synced_hash":"h5","updated_at_unix_ms":1700000005000},"occurred_at_unix_ms":1700000005000}\n\n' +
+      'id: 22\nevent: autopilot_updated\ndata: {"seq":22,"event_type":"autopilot_updated","project_id":"proj-1","autopilot":{"project_id":"proj-1","autopilot_enabled":false,"max_concurrency":2,"active_task_count":0,"active_task_ids":[],"queued_ready_count":1,"blocked_task_count":1,"blocked_tasks":[{"task_id":"t-b1","project_id":"proj-1","task_key":"TIN-8","title":"Blocked card","status":"ready","priority":"high","blocked":true,"blocked_reason":"Needs API key"}],"last_tick_at_unix_ms":null,"last_error":null,"updated_at_unix_ms":1700000006000},"occurred_at_unix_ms":1700000006000}\n\n'
+    const streamHandle = api.subscribeProjectBoardEvents('proj-1', (ev) => sseEvents.push(ev), {
+      fetchImpl: async () => new Response(sseFrames, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+      reconnectDelayMs: 60_000,
+    })
+    for (let i = 0; i < 50 && sseEvents.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    streamHandle.close()
+    expect(sseEvents).toHaveLength(2)
+    expect(sseEvents[0]?.event_type).toBe('notes_updated')
+    expect(sseEvents[0]?.notes?.revision).toBe(5)
+    expect(sseEvents[1]?.event_type).toBe('autopilot_updated')
+    expect(sseEvents[1]?.autopilot?.blocked_tasks[0]?.blocked_reason).toBe('Needs API key')
   })
 })
 

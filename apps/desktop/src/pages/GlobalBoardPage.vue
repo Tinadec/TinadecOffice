@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Activity, AlertTriangle, CheckCircle2, Layers, RefreshCw, Rows3 } from '@lucide/vue'
+import { Activity, AlertTriangle, CheckCircle2, ExternalLink, Layers, Play, RefreshCw, Rows3 } from '@lucide/vue'
 import { UiButton } from '@/components/ui'
 import {
   BoardKanbanView,
@@ -11,7 +11,9 @@ import {
   BoardSwimlaneView,
   BoardTaskDrawer,
   BoardViewToolbar,
+  buildBoardSwimlanes,
   buildSpatialFocusLocation,
+  groupBoardTasks,
   stashPendingSpatialFocus,
   useProjectBoardView,
   type BoardTaskGroup,
@@ -48,10 +50,35 @@ const drawerOpen = ref(false)
 const drawerMode = ref<'create' | 'edit'>('edit')
 const selectedTaskId = ref<string | null>(null)
 const createDefaultStatus = ref<ProjectBoardTaskStatus>('ready')
+const blockedOnlyFilter = ref(false)
 
 const selectedTask = computed<ProjectBoardTaskDto | null>(() => {
   if (!selectedTaskId.value) return null
   return board.tasks.value.find((item) => item.task_id === selectedTaskId.value) ?? null
+})
+
+const blockedTasks = computed<ProjectBoardTaskDto[]>(() =>
+  board.tasks.value.filter((item) => item.blocked),
+)
+
+const projectNamesMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const p of activeProjects.value) {
+    map.set(p.id, p.name)
+  }
+  return map
+})
+
+const visibleGroups = computed(() => {
+  if (!blockedOnlyFilter.value) return board.groups.value
+  const subset = board.filteredTasks.value.filter((item) => item.blocked)
+  return groupBoardTasks(subset, board.groupBy.value, board.sortBy.value, projectNamesMap.value)
+})
+
+const visibleSwimlanes = computed(() => {
+  if (!blockedOnlyFilter.value) return board.swimlanes.value
+  const subset = board.filteredTasks.value.filter((item) => item.blocked)
+  return buildBoardSwimlanes(subset, board.swimlaneBy.value, board.sortBy.value, projectNamesMap.value)
 })
 
 const headerStats = computed(() => {
@@ -61,10 +88,24 @@ const headerStats = computed(() => {
     totalTasks: s?.total_tasks ?? local.total,
     activeRuns: s?.active_run_count ?? local.inProgress,
     inReview: s?.in_review_count ?? local.inReview,
+    blocked: Math.max(s?.blocked_count ?? 0, local.blocked),
     needsAction: s?.needs_action_count ?? local.needsAction,
     conflicts: s?.conflict_count ?? local.conflicts,
   }
 })
+
+async function handleQuickUnblock(task: ProjectBoardTaskDto) {
+  try {
+    await board.updateTask(task.project_id, task.task_id, {
+      blocked: false,
+      blocked_reason: null,
+      status: task.status === 'done' ? 'done' : 'ready',
+      expected_revision: task.revision,
+    })
+  } catch (err) {
+    notify.error(err, { title: t('board.errors.saveFailed') })
+  }
+}
 
 onMounted(async () => {
   await nextTick()
@@ -225,6 +266,18 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
             <CheckCircle2 :size="13" />
             <span>{{ t('board.global.metricInReview', { count: headerStats.inReview }) }}</span>
           </div>
+          <button
+            v-if="headerStats.blocked > 0 || blockedOnlyFilter"
+            type="button"
+            class="global-preset-btn ui-pressable"
+            :class="{ active: blockedOnlyFilter }"
+            data-testid="global-board-blocked-filter"
+            @click="blockedOnlyFilter = !blockedOnlyFilter"
+          >
+            <AlertTriangle :size="13" />
+            <span>{{ t('board.global.metricBlocked', { count: headerStats.blocked }) }}</span>
+          </button>
+
           <div
             v-if="headerStats.needsAction > 0"
             class="global-metric-pill global-metric-pill--emphasis"
@@ -260,6 +313,51 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         </div>
       </header>
 
+      <!-- Cross-Project Blocked Human Intervention Alert -->
+      <div
+        v-if="blockedTasks.length > 0"
+        class="global-blocked-banner"
+        role="region"
+        :aria-label="t('board.autopilot.blockedBannerAria')"
+        data-testid="global-board-blocked-banner"
+      >
+        <div class="global-blocked-summary">
+          <AlertTriangle :size="13" />
+          <strong>{{ t('board.autopilot.blockedBannerTitle', { count: blockedTasks.length }) }}</strong>
+        </div>
+        <div class="global-blocked-items">
+          <div
+            v-for="bTask in blockedTasks.slice(0, 5)"
+            :key="bTask.task_id"
+            class="global-blocked-chip"
+            :data-testid="`global-blocked-task-${bTask.task_id}`"
+          >
+            <span class="global-blocked-key">{{ bTask.task_key }}</span>
+            <span class="global-blocked-reason">
+              {{ bTask.blocked_reason || bTask.title }}
+            </span>
+            <button
+              type="button"
+              class="global-blocked-action ui-pressable"
+              :title="t('board.autopilot.openInDrawer')"
+              :data-testid="`global-blocked-open-${bTask.task_id}`"
+              @click="openTaskDrawer(bTask)"
+            >
+              <ExternalLink :size="11" />
+            </button>
+            <button
+              type="button"
+              class="global-blocked-action ui-pressable"
+              :title="t('board.autopilot.unblockAndResume')"
+              :data-testid="`global-blocked-unblock-${bTask.task_id}`"
+              @click="handleQuickUnblock(bTask)"
+            >
+              <Play :size="11" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Composable View Toolbar -->
       <BoardViewToolbar
         scope="global"
@@ -285,14 +383,14 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         @save-view="board.saveCurrentAsView($event)"
         @update-active-view="board.updateActiveSavedView()"
         @delete-view="board.deleteSavedView($event)"
-        @clear-filters="board.clearFilters()"
+        @clear-filters="board.clearFilters(); blockedOnlyFilter = false"
         @new-task="openCreateDrawer()"
       />
 
       <!-- Layout Surface -->
       <BoardKanbanView
         v-if="board.layout.value === 'kanban'"
-        :groups="board.groups.value"
+        :groups="visibleGroups"
         :visible-fields="board.visibleFields.value"
         :selected-task-id="selectedTaskId"
         @select-task="openTaskDrawer"
@@ -302,7 +400,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
       />
       <BoardListView
         v-else-if="board.layout.value === 'list'"
-        :groups="board.groups.value"
+        :groups="visibleGroups"
         :visible-fields="board.visibleFields.value"
         :selected-task-id="selectedTaskId"
         @select-task="openTaskDrawer"
@@ -312,7 +410,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
       />
       <BoardSwimlaneView
         v-else
-        :swimlanes="board.swimlanes.value"
+        :swimlanes="visibleSwimlanes"
         :visible-fields="board.visibleFields.value"
         :selected-task-id="selectedTaskId"
         @select-task="openTaskDrawer"
@@ -431,5 +529,76 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   background: var(--bg-primary-button, var(--accent-primary));
   color: var(--text-on-primary, #ffffff);
   border-color: transparent;
+}
+
+.global-blocked-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 16px 2px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border-default, var(--border-muted));
+  background: var(--surface-raised, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.global-blocked-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.global-blocked-items {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.global-blocked-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section, var(--bg-secondary));
+  font-size: 11.5px;
+}
+
+.global-blocked-key {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.global-blocked-reason {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.global-blocked-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.global-blocked-action:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 </style>

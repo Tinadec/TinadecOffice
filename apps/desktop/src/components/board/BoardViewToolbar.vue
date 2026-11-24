@@ -13,6 +13,7 @@ import {
   Rows3,
   Save,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from '@lucide/vue'
@@ -65,6 +66,7 @@ const emit = defineEmits<{
   'update-active-view': []
   'delete-view': [viewId: string]
   'clear-filters': []
+  'plan-tasks': []
   'new-task': []
 }>()
 
@@ -236,6 +238,16 @@ function toggleArrayFilter<T extends string>(current: readonly T[] | undefined, 
         <span v-if="stale" class="board-stale-pill" data-testid="board-stale-indicator">
           {{ t('board.offlineCached') }}
         </span>
+        <button
+          v-if="scope === 'project'"
+          type="button"
+          class="board-control-btn ui-pressable"
+          data-testid="board-plan-tasks-btn"
+          @click="emit('plan-tasks')"
+        >
+          <Sparkles :size="13" />
+          <span>{{ t('board.coordinator.planTasksBtn') }}</span>
+        </button>
         <button
           type="button"
           class="board-primary-btn ui-pressable"

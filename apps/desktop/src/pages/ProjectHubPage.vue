@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Save,
   SlidersHorizontal,
+  Sparkles,
 } from '@lucide/vue'
 import {
   UiButton,
@@ -24,12 +25,15 @@ import {
 } from '@/components/ui'
 import WorkspaceRootsPanel from '@/components/WorkspaceRootsPanel.vue'
 import {
+  BoardAutopilotBar,
   BoardKanbanView,
   BoardListView,
   BoardShellLayout,
   BoardSwimlaneView,
   BoardTaskDrawer,
   BoardViewToolbar,
+  CoordinatorPlanModal,
+  ProjectNotesPanel,
   buildSpatialFocusLocation,
   stashPendingSpatialFocus,
   useProjectBoardView,
@@ -42,10 +46,12 @@ import {
   type ApproveProjectBoardTaskInput,
   type CreateProjectBoardTaskInput,
   type DispatchProjectBoardTaskInput,
+  type ProjectAutopilotStateDto,
   type ProjectBoardConflictResolution,
   type ProjectBoardStorageMode,
   type ProjectBoardTaskDto,
   type ProjectBoardTaskStatus,
+  type ProjectNotesDto,
   type ProjectOverviewDto,
   type UpdateProjectBoardTaskInput,
   type WorkspaceDefaultsDto,
@@ -311,11 +317,43 @@ function handleStartNewChat() {
   void router.push('/')
 }
 
-// ---- Task Drawer & Board Actions ----
+// ---- Task Drawer, Coordinator Planner & Autopilot Actions ----
 const drawerOpen = ref(false)
 const drawerMode = ref<'create' | 'edit'>('edit')
 const selectedTaskId = ref<string | null>(null)
 const createDefaultStatus = ref<ProjectBoardTaskStatus>('ready')
+const planModalOpen = ref(false)
+
+function handleNotesSaved(savedNotes: ProjectNotesDto) {
+  board.notes.value = savedNotes
+}
+
+function handleAutopilotUpdated(nextState: ProjectAutopilotStateDto) {
+  board.autopilot.value = nextState
+  if (board.settings.value) {
+    board.settings.value = {
+      ...board.settings.value,
+      autopilot_enabled: nextState.autopilot_enabled,
+      max_concurrency: nextState.max_concurrency,
+    }
+  }
+  void loadOverview()
+}
+
+function handleUnblockedTask(updatedTask: ProjectBoardTaskDto) {
+  board.upsertTaskLocal(updatedTask)
+  void board.reloadAutopilot().catch(() => undefined)
+}
+
+function handlePlanApplied(createdTasks: ProjectBoardTaskDto[]) {
+  for (const task of createdTasks) {
+    board.upsertTaskLocal(task)
+  }
+  activeTab.value = 'board'
+  void board.reloadNotes().catch(() => undefined)
+  void board.reloadAutopilot().catch(() => undefined)
+  notify.success(t('board.coordinator.appliedSuccess', { count: createdTasks.length }))
+}
 
 const selectedTask = computed<ProjectBoardTaskDto | null>(() => {
   if (!selectedTaskId.value) return null
@@ -516,6 +554,17 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
               type="button"
               variant="outline"
               size="sm"
+              data-testid="hub-plan-tasks-btn"
+              @click="planModalOpen = true"
+            >
+              <Sparkles :size="13" />
+              <span>{{ t('board.coordinator.planTasksBtn') }}</span>
+            </UiButton>
+
+            <UiButton
+              type="button"
+              variant="outline"
+              size="sm"
               data-testid="hub-new-chat-btn"
               @click="handleStartNewChat"
             >
@@ -539,6 +588,18 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
       <div v-if="lastSyncReceipt" class="hub-sync-banner" data-testid="hub-sync-receipt">
         <span>{{ lastSyncReceipt }}</span>
       </div>
+
+      <!-- Phase 3 (#56): Autopilot Control Strip & Blocked Human Intervention Banner -->
+      <BoardAutopilotBar
+        v-if="routeProjectId"
+        :project-id="routeProjectId"
+        :autopilot="board.autopilot.value"
+        :settings="board.settings.value"
+        :tasks="board.tasks.value"
+        @updated="handleAutopilotUpdated"
+        @open-task="openTaskDrawer"
+        @unblocked-task="handleUnblockedTask"
+      />
 
       <!-- 3 Hub Tabs: Board | Context & Settings | Notes -->
       <nav class="hub-tabs-bar" role="tablist" :aria-label="t('board.hub.tabsAria')">
@@ -608,6 +669,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
           @update-active-view="board.updateActiveSavedView()"
           @delete-view="board.deleteSavedView($event)"
           @clear-filters="board.clearFilters()"
+          @plan-tasks="planModalOpen = true"
           @new-task="openCreateDrawer()"
         />
 
@@ -804,35 +866,26 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         </div>
       </div>
 
-      <!-- TAB 3: Living Project Notes Preview Card (Phase 1 -> Phase 3 Ready) -->
-      <div v-else class="hub-scroll-pane" data-testid="hub-notes-panel">
-        <section class="hub-card hub-notes-card">
-          <div class="hub-notes-header">
-            <FileText :size="20" />
-            <div>
-              <h2 class="hub-card-title">{{ t('board.hub.notesTitle') }}</h2>
-              <p class="hub-field-hint">{{ t('board.hub.notesSubtitle') }}</p>
-            </div>
-          </div>
-
-          <div class="hub-notes-meta-grid">
-            <div class="hub-notes-meta-item">
-              <span class="hub-field-label">{{ t('board.hub.notesPathLabel') }}</span>
-              <code data-testid="hub-notes-resolved-path">{{ resolvedNotesPath }}</code>
-            </div>
-            <div class="hub-notes-meta-item">
-              <span class="hub-field-label">{{ t('board.hub.storageRootLabel') }}</span>
-              <code>{{ currentProject?.storage_root || currentProject?.path || '—' }}</code>
-            </div>
-            <div class="hub-notes-meta-item">
-              <span class="hub-field-label">{{ t('board.hub.storageModeTitle') }}</span>
-              <span>{{ t(`board.hub.storageModeBadge.${storageMode}`) }}</span>
-            </div>
-          </div>
-
-          <p class="hub-notes-roadmap">{{ t('board.hub.notesPhase3Hint') }}</p>
-        </section>
+      <!-- TAB 3: Living Project Notes Studio (Phase 3 #56) -->
+      <div v-else class="hub-notes-pane" data-testid="hub-notes-panel">
+        <ProjectNotesPanel
+          :project-id="routeProjectId"
+          :notes="board.notes.value"
+          :fallback-resolved-path="resolvedNotesPath"
+          :fallback-storage-mode="storageMode"
+          @saved="handleNotesSaved"
+          @reloaded="handleNotesSaved"
+        />
       </div>
+
+      <!-- Coordinator Smart Task Planner Modal -->
+      <CoordinatorPlanModal
+        v-model:open="planModalOpen"
+        :project-id="routeProjectId"
+        :existing-tasks="board.tasks.value"
+        :default-assignee-kind="board.settings.value?.default_assignee_kind"
+        @applied="handlePlanApplied"
+      />
 
       <!-- Right Slide-over Task Drawer -->
       <BoardTaskDrawer
@@ -1018,7 +1071,8 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   color: var(--text-muted);
 }
 
-.hub-board-pane {
+.hub-board-pane,
+.hub-notes-pane {
   flex: 1;
   min-height: 0;
   display: flex;

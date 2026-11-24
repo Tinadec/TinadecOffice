@@ -5320,6 +5320,87 @@ export const api = {
       storageId: options.storageId ?? 'user',
     });
   },
+
+  // --- Phase 3 (#56): Project Living Notes, Coordinator Planner & Autopilot ---
+  getProjectNotes(
+    projectId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectNotesDto> {
+    return request<Partial<ProjectNotesDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/notes`,
+      { ...options, cache: 'no-store' },
+    ).then((raw) => normalizeProjectNotesDto(raw, projectId));
+  },
+
+  updateProjectNotes(
+    projectId: string,
+    input: UpdateProjectNotesInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectNotesDto> {
+    return request<Partial<ProjectNotesDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/notes`,
+      {
+        ...options,
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    ).then((raw) => normalizeProjectNotesDto(raw, projectId));
+  },
+
+  planCoordinatorTasks(
+    projectId: string,
+    input: CoordinatorPlanInput,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<CoordinatorPlanResultDto> {
+    return request<Partial<CoordinatorPlanResultDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/coordinator/plan`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then((raw) => normalizeCoordinatorPlanResultDto(raw, projectId));
+  },
+
+  applyCoordinatorPlan(
+    projectId: string,
+    input: CoordinatorApplyPlanInput,
+    options?: { storageId?: string },
+  ): Promise<CoordinatorApplyPlanResultDto> {
+    return request<Partial<CoordinatorApplyPlanResultDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/coordinator/apply-plan`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then((raw) => normalizeCoordinatorApplyPlanResultDto(raw, projectId));
+  },
+
+  getProjectAutopilot(
+    projectId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectAutopilotStateDto> {
+    return request<Partial<ProjectAutopilotStateDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/coordinator/autopilot`,
+      { ...options, cache: 'no-store' },
+    ).then((raw) => normalizeProjectAutopilotStateDto(raw, projectId));
+  },
+
+  updateProjectAutopilot(
+    projectId: string,
+    input: UpdateProjectAutopilotInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectAutopilotStateDto> {
+    return request<Partial<ProjectAutopilotStateDto>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/coordinator/autopilot`,
+      {
+        ...options,
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    ).then((raw) => normalizeProjectAutopilotStateDto(raw, projectId));
+  },
 };
 
 export type ModelProbeResultDto = ReadinessItemDto;
@@ -5709,7 +5790,88 @@ export type ProjectBoardEventType =
   | 'view_upserted'
   | 'view_deleted'
   | 'sync_completed'
+  | 'notes_updated'
+  | 'autopilot_updated'
   | (string & {});
+
+export type CoordinatorPlannerSource = 'llm' | 'heuristic';
+
+export interface ProjectNotesDto {
+  project_id: string;
+  content_md: string;
+  resolved_file_path: string;
+  storage_mode: ProjectBoardStorageMode;
+  revision: number;
+  last_synced_hash: string;
+  updated_at_unix_ms: number;
+}
+
+export interface UpdateProjectNotesInput {
+  content_md: string;
+  expected_revision?: number | null;
+}
+
+export interface CoordinatorTaskDraftDto {
+  draft_id: string;
+  title: string;
+  description_md: string;
+  checklist: ProjectBoardChecklistItemDto[];
+  priority: ProjectBoardTaskPriority;
+  status: ProjectBoardTaskStatus;
+  assignee: ProjectBoardAssigneeDto | null;
+  labels: string[];
+  depends_on_draft_ids: string[];
+  depends_on_task_ids: string[];
+}
+
+export interface CoordinatorPlanInput {
+  goal: string;
+  default_status?: ProjectBoardTaskStatus | null;
+  default_assignee?: ProjectBoardAssigneeDto | null;
+  auto_apply?: boolean;
+  max_tasks?: number | null;
+}
+
+export interface CoordinatorPlanResultDto {
+  project_id: string;
+  goal: string;
+  summary: string;
+  planner_source: CoordinatorPlannerSource;
+  auto_applied: boolean;
+  drafts: CoordinatorTaskDraftDto[];
+  created_tasks: ProjectBoardTaskDto[];
+}
+
+export interface CoordinatorApplyPlanInput {
+  goal?: string | null;
+  update_notes?: boolean | null;
+  drafts: CoordinatorTaskDraftDto[];
+}
+
+export interface CoordinatorApplyPlanResultDto {
+  project_id: string;
+  created_tasks: ProjectBoardTaskDto[];
+}
+
+export interface UpdateProjectAutopilotInput {
+  autopilot_enabled?: boolean | null;
+  max_concurrency?: number | null;
+  cancel_active?: boolean | null;
+}
+
+export interface ProjectAutopilotStateDto {
+  project_id: string;
+  autopilot_enabled: boolean;
+  max_concurrency: number;
+  active_task_count: number;
+  active_task_ids: string[];
+  queued_ready_count: number;
+  blocked_task_count: number;
+  blocked_tasks: ProjectBoardTaskDto[];
+  last_tick_at_unix_ms: number | null;
+  last_error: string | null;
+  updated_at_unix_ms: number;
+}
 
 export interface ProjectBoardSettingsDto {
   project_id: string;
@@ -6025,6 +6187,8 @@ export interface ProjectBoardSseEventDto {
   views?: ProjectBoardViewDto[] | null;
   sync_result?: ProjectBoardSyncResultDto | null;
   summary?: ProjectBoardSummaryDto | null;
+  notes?: ProjectNotesDto | null;
+  autopilot?: ProjectAutopilotStateDto | null;
   occurred_at_unix_ms: number;
 }
 
@@ -6241,6 +6405,12 @@ function openBoardEventStream(
       summary: parsed.summary && typeof parsed.summary === 'object'
         ? normalizeBoardSummaryDto(parsed.summary as Record<string, unknown>)
         : null,
+      notes: parsed.notes && typeof parsed.notes === 'object'
+        ? normalizeProjectNotesDto(parsed.notes as Partial<ProjectNotesDto>)
+        : null,
+      autopilot: parsed.autopilot && typeof parsed.autopilot === 'object'
+        ? normalizeProjectAutopilotStateDto(parsed.autopilot as Partial<ProjectAutopilotStateDto>)
+        : null,
       occurred_at_unix_ms: typeof parsed.occurred_at_unix_ms === 'number' ? parsed.occurred_at_unix_ms : Date.now(),
     };
 
@@ -6378,6 +6548,115 @@ function normalizePromoteFromSpatialResultDto(
   };
 }
 
+function normalizeProjectNotesDto(
+  raw: Partial<ProjectNotesDto> | null | undefined,
+  fallbackProjectId = '',
+): ProjectNotesDto {
+  const storageMode: ProjectBoardStorageMode =
+    raw?.storage_mode === 'repo_tinadec' || raw?.storage_mode === 'app_data' || raw?.storage_mode === 'custom_dir'
+      ? raw.storage_mode
+      : 'repo_tinadec';
+  return {
+    project_id: typeof raw?.project_id === 'string' ? raw.project_id : selectionIdentity(fallbackProjectId).id,
+    content_md: typeof raw?.content_md === 'string' ? raw.content_md : '',
+    resolved_file_path: typeof raw?.resolved_file_path === 'string' ? raw.resolved_file_path : '',
+    storage_mode: storageMode,
+    revision: typeof raw?.revision === 'number' && Number.isFinite(raw.revision) ? raw.revision : 1,
+    last_synced_hash: typeof raw?.last_synced_hash === 'string' ? raw.last_synced_hash : '',
+    updated_at_unix_ms:
+      typeof raw?.updated_at_unix_ms === 'number' && Number.isFinite(raw.updated_at_unix_ms)
+        ? raw.updated_at_unix_ms
+        : Date.now(),
+  };
+}
+
+function normalizeCoordinatorTaskDraftDto(
+  raw: Partial<CoordinatorTaskDraftDto> | null | undefined,
+  fallbackIndex = 0,
+): CoordinatorTaskDraftDto {
+  return {
+    draft_id: typeof raw?.draft_id === 'string' && raw.draft_id ? raw.draft_id : `draft-${fallbackIndex + 1}`,
+    title: typeof raw?.title === 'string' ? raw.title : '',
+    description_md: typeof raw?.description_md === 'string' ? raw.description_md : '',
+    checklist: Array.isArray(raw?.checklist)
+      ? raw.checklist.map((item) => ({
+          id: typeof item?.id === 'string' ? item.id : '',
+          text: typeof item?.text === 'string' ? item.text : '',
+          done: Boolean(item?.done),
+        }))
+      : [],
+    priority: (typeof raw?.priority === 'string' ? raw.priority : 'medium') as ProjectBoardTaskPriority,
+    status: (typeof raw?.status === 'string' ? raw.status : 'ready') as ProjectBoardTaskStatus,
+    assignee: raw?.assignee && typeof raw.assignee === 'object' ? (raw.assignee as ProjectBoardAssigneeDto) : null,
+    labels: Array.isArray(raw?.labels) ? raw.labels.filter((lbl): lbl is string => typeof lbl === 'string') : [],
+    depends_on_draft_ids: Array.isArray(raw?.depends_on_draft_ids)
+      ? raw.depends_on_draft_ids.filter((id): id is string => typeof id === 'string')
+      : [],
+    depends_on_task_ids: Array.isArray(raw?.depends_on_task_ids)
+      ? raw.depends_on_task_ids.filter((id): id is string => typeof id === 'string')
+      : [],
+  };
+}
+
+function normalizeCoordinatorPlanResultDto(
+  raw: Partial<CoordinatorPlanResultDto> | null | undefined,
+  fallbackProjectId = '',
+): CoordinatorPlanResultDto {
+  const plannerSource: CoordinatorPlannerSource = raw?.planner_source === 'llm' ? 'llm' : 'heuristic';
+  return {
+    project_id: typeof raw?.project_id === 'string' ? raw.project_id : selectionIdentity(fallbackProjectId).id,
+    goal: typeof raw?.goal === 'string' ? raw.goal : '',
+    summary: typeof raw?.summary === 'string' ? raw.summary : '',
+    planner_source: plannerSource,
+    auto_applied: Boolean(raw?.auto_applied),
+    drafts: Array.isArray(raw?.drafts)
+      ? raw.drafts.map((item, idx) => normalizeCoordinatorTaskDraftDto(item, idx))
+      : [],
+    created_tasks: Array.isArray(raw?.created_tasks) ? raw.created_tasks.map((item) => normalizeBoardTaskDto(item)) : [],
+  };
+}
+
+function normalizeCoordinatorApplyPlanResultDto(
+  raw: Partial<CoordinatorApplyPlanResultDto> | null | undefined,
+  fallbackProjectId = '',
+): CoordinatorApplyPlanResultDto {
+  return {
+    project_id: typeof raw?.project_id === 'string' ? raw.project_id : selectionIdentity(fallbackProjectId).id,
+    created_tasks: Array.isArray(raw?.created_tasks) ? raw.created_tasks.map((item) => normalizeBoardTaskDto(item)) : [],
+  };
+}
+
+function normalizeProjectAutopilotStateDto(
+  raw: Partial<ProjectAutopilotStateDto> | null | undefined,
+  fallbackProjectId = '',
+): ProjectAutopilotStateDto {
+  const num = (v: unknown, def = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+  const blockedTasks = Array.isArray(raw?.blocked_tasks)
+    ? raw.blocked_tasks.map((item) => normalizeBoardTaskDto(item))
+    : [];
+  return {
+    project_id: typeof raw?.project_id === 'string' ? raw.project_id : selectionIdentity(fallbackProjectId).id,
+    autopilot_enabled: Boolean(raw?.autopilot_enabled),
+    max_concurrency: Math.max(1, Math.min(8, num(raw?.max_concurrency, 2))),
+    active_task_count: num(raw?.active_task_count),
+    active_task_ids: Array.isArray(raw?.active_task_ids)
+      ? raw.active_task_ids.filter((id): id is string => typeof id === 'string')
+      : [],
+    queued_ready_count: num(raw?.queued_ready_count),
+    blocked_task_count:
+      typeof raw?.blocked_task_count === 'number' && Number.isFinite(raw.blocked_task_count)
+        ? raw.blocked_task_count
+        : blockedTasks.length,
+    blocked_tasks: blockedTasks,
+    last_tick_at_unix_ms:
+      typeof raw?.last_tick_at_unix_ms === 'number' && Number.isFinite(raw.last_tick_at_unix_ms)
+        ? raw.last_tick_at_unix_ms
+        : null,
+    last_error: typeof raw?.last_error === 'string' ? raw.last_error : null,
+    updated_at_unix_ms: num(raw?.updated_at_unix_ms, Date.now()),
+  };
+}
+
 export const getProjectOverview = api.getProjectOverview;
 export const getProjectBoardSettings = api.getProjectBoardSettings;
 export const updateProjectBoardSettings = api.updateProjectBoardSettings;
@@ -6402,4 +6681,10 @@ export const updateBoardView = api.updateBoardView;
 export const deleteBoardView = api.deleteBoardView;
 export const subscribeProjectBoardEvents = api.subscribeProjectBoardEvents;
 export const subscribeGlobalBoardEvents = api.subscribeGlobalBoardEvents;
+export const getProjectNotes = api.getProjectNotes;
+export const updateProjectNotes = api.updateProjectNotes;
+export const planCoordinatorTasks = api.planCoordinatorTasks;
+export const applyCoordinatorPlan = api.applyCoordinatorPlan;
+export const getProjectAutopilot = api.getProjectAutopilot;
+export const updateProjectAutopilot = api.updateProjectAutopilot;
 
