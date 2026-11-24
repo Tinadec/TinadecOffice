@@ -49,4 +49,8 @@ test('openapi external contract — serves valid document with host security sch
   assert.equal(valueAt(schemas, 'ContextPolicyParamsOverride', 'additionalProperties'), false);
   assert.equal(valueAt(schemas, 'SpaceOptions', 'additionalProperties'), false);
   assert.deepEqual(valueAt(schemas, 'SpaceOptions', 'properties', 'context_strategy', 'enum'), ['direct', 'managed', 'deep_curator']);
+  assert.ok('ProjectBoardTask' in schemas, 'ProjectBoardTask schema must exist');
+  assert.ok('ProjectBoardSettings' in schemas, 'ProjectBoardSettings schema must exist');
+  assert.ok('ProjectBoardSummary' in schemas, 'ProjectBoardSummary schema must exist');
+  assert.ok('ProjectBoardView' in schemas, 'ProjectBoardView schema must exist');
 });

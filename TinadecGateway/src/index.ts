@@ -55,6 +55,7 @@ import { registerToolsSettingsRoutes, toolsSettingsSchemas } from './toolsSettin
 import { registerStorageRoutes, storageSchemas } from './storageRoutes.js';
 import { contextMemorySchemas, registerContextMemoryRoutes } from './contextMemoryRoutes.js';
 import { liveExplainerSchemas, registerLiveExplainerRoutes } from './liveExplainerRoutes.js';
+import { projectBoardSchemas, registerProjectBoardRoutes } from './projectBoardRoutes.js';
 import { registerTeammateControlRoutes, teammateControlSchemas } from './teammateControlRoutes.js';
 import {
   finalizeRequestTiming,
@@ -349,7 +350,7 @@ const app = new Elysia()
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...companionOpenApiSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas, ...contextMemorySchemas, ...liveExplainerSchemas, ...teammateControlSchemas } as never },
+      components: { securitySchemes: { TinadecHostControl: { type: 'apiKey', in: 'header', name: 'X-Tinadec-Host-Control', description: 'Private trusted host credential required by scope-enabled Core. Never expose it to Agent, renderer JavaScript, TOML, or a public frontend. Gateway only forwards a supplied credential and never signs anonymous local requests.' } }, schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...companionOpenApiSchemas, ...tinaChatSchemas, ...organizationSchemas, ...toolsSettingsSchemas, ...storageSchemas, ...contextMemorySchemas, ...liveExplainerSchemas, ...projectBoardSchemas, ...teammateControlSchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -3130,6 +3131,7 @@ registerToolsSettingsRoutes(app, forwardHeaders);
 registerStorageRoutes(app, forwardHeaders);
 registerContextMemoryRoutes(app, forwardHeaders);
 registerLiveExplainerRoutes(app, forwardHeaders);
+registerProjectBoardRoutes(app, forwardHeaders);
 registerTeammateControlRoutes(app, forwardHeaders);
 registerWebServerPlugin(app, {
   runtime: webAuthRuntime,

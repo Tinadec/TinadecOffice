@@ -82,6 +82,8 @@ const createSessionRequest = t.Object({
   project_id: t.Optional(nullableString()), title: t.Optional(nullableString()),
   view_mode: t.Optional(t.Union([t.Literal('flat'), t.Literal('space')])),
   conversation_node_key: t.Optional(nullableString()),
+  origin: t.Optional(nullableString()),
+  board_task_id: t.Optional(t.Unsafe({ type: 'string', format: 'uuid', nullable: true })),
 }, { additionalProperties: false });
 const updateSessionRequest = t.Object({
   ...sessionPreferenceProperties,
@@ -118,6 +120,8 @@ const session = t.Object({
   space_options: nullableRef('SpaceOptions'),
   settings_revision: t.Integer(),
   meeting_model_override: nullableRef('MeetingModelOverride'),
+  origin: t.Optional(nullableString()),
+  board_task_id: t.Optional(t.Unsafe({ type: 'string', format: 'uuid', nullable: true })),
   summary: nullableString(),
   history_revision: nullableInteger(),
   created_at: nullableString(),

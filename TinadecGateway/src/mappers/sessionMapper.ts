@@ -42,6 +42,8 @@ export interface ExternalSessionDto {
   /** ConversationIdentity (DmaEA graph orchestration), frozen at session creation; null on pre-identity rows. */
   conversation_node_key: string | null;
   conversation_template_slug: string | null;
+  origin: string | null;
+  board_task_id: string | null;
   meeting_model_override: { provider_instance_id: string; model?: string | null } | null;
   summary: string | null;
   history_revision: number | null;
@@ -79,6 +81,8 @@ export function mapSession(core: unknown): ExternalSessionDto | null {
     settings_revision: typeof core.settings_revision === 'number' ? core.settings_revision : 0,
     conversation_node_key: (core.conversation_node_key as string) ?? (core.conversationNodeKey as string) ?? null,
     conversation_template_slug: (core.conversation_template_slug as string) ?? (core.conversationTemplateSlug as string) ?? null,
+    origin: nullableId(core.origin),
+    board_task_id: nullableId(core.board_task_id ?? core.boardTaskId),
     meeting_model_override: override && typeof override.provider_instance_id === 'string'
       ? { provider_instance_id: override.provider_instance_id, model: override.model ?? null }
       : null,

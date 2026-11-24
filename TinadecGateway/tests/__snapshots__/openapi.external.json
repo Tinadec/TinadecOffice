@@ -962,6 +962,20 @@
         ],
         "type": "object"
       },
+      "ApproveProjectBoardTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "merge_or_clean_worktree": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "note": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Assignment": {
         "additionalProperties": true,
         "properties": {
@@ -4174,9 +4188,150 @@
         ],
         "type": "object"
       },
+      "CreateProjectBoardTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocked": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "blocked_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardChecklistItem"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "depends_on": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "description_md": {
+            "nullable": true,
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "sort_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "spatial_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSpatialRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "CreateProjectBoardViewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardViewConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "global",
+              "project"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "sort_order": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateSessionRequest": {
         "additionalProperties": false,
         "properties": {
+          "board_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "conversation_node_key": {
             "nullable": true,
             "type": "string"
@@ -4192,6 +4347,10 @@
             ]
           },
           "mode_version_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "origin": {
             "nullable": true,
             "type": "string"
           },
@@ -4299,6 +4458,30 @@
           "text",
           "highlight"
         ],
+        "type": "object"
+      },
+      "DispatchProjectBoardTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extra_prompt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "use_worktree": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "EnvironmentDto": {
@@ -7436,6 +7619,932 @@
         ],
         "type": "object"
       },
+      "ProjectBoardAssignee": {
+        "properties": {
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "harness_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "human",
+              "native",
+              "cli",
+              "coordinator"
+            ],
+            "type": "string"
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardChecklistItem": {
+        "properties": {
+          "done": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "done"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardDiffFile": {
+        "properties": {
+          "added": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "added",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardDiffStats": {
+        "properties": {
+          "added": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "integer"
+          },
+          "removed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "removed",
+          "files"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardEvent": {
+        "properties": {
+          "event_type": {
+            "enum": [
+              "snapshot",
+              "task_upserted",
+              "task_deleted",
+              "settings_updated",
+              "view_upserted",
+              "view_deleted",
+              "sync_completed"
+            ],
+            "type": "string"
+          },
+          "occurred_at_unix_ms": {
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "event_type",
+          "occurred_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardProjectSummaryItem": {
+        "properties": {
+          "blocked_count": {
+            "type": "integer"
+          },
+          "conflict_count": {
+            "type": "integer"
+          },
+          "in_progress_count": {
+            "type": "integer"
+          },
+          "in_review_count": {
+            "type": "integer"
+          },
+          "needs_action_count": {
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "total_tasks": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "project_name",
+          "total_tasks",
+          "in_progress_count",
+          "in_review_count",
+          "blocked_count",
+          "conflict_count",
+          "needs_action_count"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardSettings": {
+        "properties": {
+          "autopilot_enabled": {
+            "type": "boolean"
+          },
+          "custom_sync_root": {
+            "nullable": true,
+            "type": "string"
+          },
+          "default_assignee_kind": {
+            "enum": [
+              "human",
+              "native",
+              "cli",
+              "coordinator"
+            ],
+            "type": "string"
+          },
+          "key_prefix": {
+            "type": "string"
+          },
+          "max_concurrency": {
+            "type": "integer"
+          },
+          "next_sequence": {
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_instructions": {
+            "type": "string"
+          },
+          "resolved_board_dir": {
+            "type": "string"
+          },
+          "storage_mode": {
+            "enum": [
+              "repo_tinadec",
+              "app_data",
+              "custom_dir"
+            ],
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "key_prefix",
+          "next_sequence",
+          "storage_mode",
+          "custom_sync_root",
+          "resolved_board_dir",
+          "project_instructions",
+          "default_assignee_kind",
+          "max_concurrency",
+          "autopilot_enabled",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardSpatialRef": {
+        "properties": {
+          "object_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "viewport_hint": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "session_id",
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardSummary": {
+        "properties": {
+          "active_run_count": {
+            "type": "integer"
+          },
+          "backlog_count": {
+            "type": "integer"
+          },
+          "blocked_count": {
+            "type": "integer"
+          },
+          "conflict_count": {
+            "type": "integer"
+          },
+          "done_count": {
+            "type": "integer"
+          },
+          "in_progress_count": {
+            "type": "integer"
+          },
+          "in_review_count": {
+            "type": "integer"
+          },
+          "needs_action_count": {
+            "type": "integer"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardProjectSummaryItem"
+            },
+            "type": "array"
+          },
+          "ready_count": {
+            "type": "integer"
+          },
+          "total_tasks": {
+            "type": "integer"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_tasks",
+          "backlog_count",
+          "ready_count",
+          "in_progress_count",
+          "in_review_count",
+          "done_count",
+          "blocked_count",
+          "conflict_count",
+          "active_run_count",
+          "needs_action_count",
+          "projects",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardSyncConflict": {
+        "properties": {
+          "board_snapshot": {
+            "$ref": "#/components/schemas/ProjectBoardTaskSnapshot"
+          },
+          "conflicting_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "detected_at_unix_ms": {
+            "type": "integer"
+          },
+          "file_rel_path": {
+            "type": "string"
+          },
+          "file_snapshot": {
+            "$ref": "#/components/schemas/ProjectBoardTaskSnapshot"
+          }
+        },
+        "required": [
+          "file_rel_path",
+          "detected_at_unix_ms",
+          "file_snapshot",
+          "board_snapshot",
+          "conflicting_fields"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardSyncResult": {
+        "properties": {
+          "conflict_count": {
+            "type": "integer"
+          },
+          "exported_count": {
+            "type": "integer"
+          },
+          "imported_count": {
+            "type": "integer"
+          },
+          "merged_count": {
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resolved_board_dir": {
+            "type": "string"
+          },
+          "storage_mode": {
+            "enum": [
+              "repo_tinadec",
+              "app_data",
+              "custom_dir"
+            ],
+            "type": "string"
+          },
+          "synced_at_unix_ms": {
+            "type": "integer"
+          },
+          "unchanged_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "storage_mode",
+          "resolved_board_dir",
+          "imported_count",
+          "exported_count",
+          "merged_count",
+          "unchanged_count",
+          "conflict_count",
+          "synced_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardTask": {
+        "properties": {
+          "active_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "active_session_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocked": {
+            "type": "boolean"
+          },
+          "blocked_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardChecklistItem"
+            },
+            "type": "array"
+          },
+          "created_at_unix_ms": {
+            "type": "integer"
+          },
+          "depends_on": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description_md": {
+            "type": "string"
+          },
+          "diff_stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardDiffStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "has_sync_conflict": {
+            "type": "boolean"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "live_digest_summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none"
+            ],
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "run_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sort_key": {
+            "type": "string"
+          },
+          "spatial_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSpatialRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "type": "string"
+          },
+          "sync_conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSyncConflict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_key": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          },
+          "worktree_path": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "project_id",
+          "project_name",
+          "task_key",
+          "title",
+          "description_md",
+          "checklist",
+          "status",
+          "priority",
+          "blocked",
+          "blocked_reason",
+          "assignee",
+          "parent_task_id",
+          "depends_on",
+          "labels",
+          "spatial_ref",
+          "sort_key",
+          "active_session_id",
+          "active_run_id",
+          "run_status",
+          "worktree_path",
+          "lease_id",
+          "live_digest_summary",
+          "diff_stats",
+          "has_sync_conflict",
+          "sync_conflict",
+          "revision",
+          "created_at_unix_ms",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardTaskDiff": {
+        "properties": {
+          "diff_text": {
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardDiffFile"
+            },
+            "type": "array"
+          },
+          "worktree_path": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "worktree_path",
+          "diff_text",
+          "files"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardTaskSnapshot": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocked": {
+            "type": "boolean"
+          },
+          "blocked_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardChecklistItem"
+            },
+            "type": "array"
+          },
+          "depends_on": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description_md": {
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "sort_key": {
+            "type": "string"
+          },
+          "spatial_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSpatialRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "title",
+          "description_md",
+          "checklist",
+          "status",
+          "priority",
+          "blocked",
+          "blocked_reason",
+          "assignee",
+          "parent_task_id",
+          "depends_on",
+          "labels",
+          "spatial_ref",
+          "sort_key",
+          "revision",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardView": {
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/ProjectBoardViewConfig"
+          },
+          "created_at_unix_ms": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "global",
+              "project"
+            ],
+            "type": "string"
+          },
+          "sort_order": {
+            "type": "integer"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          },
+          "view_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "view_id",
+          "scope",
+          "project_id",
+          "name",
+          "config",
+          "sort_order",
+          "created_at_unix_ms",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardViewConfig": {
+        "properties": {
+          "filters": {
+            "$ref": "#/components/schemas/ProjectBoardViewFilters"
+          },
+          "group_by": {
+            "enum": [
+              "status",
+              "project",
+              "assignee",
+              "priority",
+              "none"
+            ],
+            "type": "string"
+          },
+          "layout": {
+            "enum": [
+              "kanban",
+              "list",
+              "swimlane"
+            ],
+            "type": "string"
+          },
+          "sort_by": {
+            "enum": [
+              "manual",
+              "priority",
+              "updated_at",
+              "dependency"
+            ],
+            "type": "string"
+          },
+          "swimlane_by": {
+            "enum": [
+              "project",
+              "assignee"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "visible_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "layout",
+          "group_by",
+          "swimlane_by",
+          "sort_by",
+          "filters",
+          "visible_fields"
+        ],
+        "type": "object"
+      },
+      "ProjectBoardViewFilters": {
+        "properties": {
+          "assignee_kinds": {
+            "items": {
+              "enum": [
+                "human",
+                "native",
+                "cli",
+                "coordinator"
+              ],
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "has_conflict": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "needs_my_action": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "priorities": {
+            "items": {
+              "enum": [
+                "urgent",
+                "high",
+                "medium",
+                "low",
+                "none"
+              ],
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "project_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "query": {
+            "nullable": true,
+            "type": "string"
+          },
+          "statuses": {
+            "items": {
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "in_review",
+                "done"
+              ],
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "ProjectList": {
         "items": {
           "$ref": "#/components/schemas/Project"
@@ -7487,6 +8596,34 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "RequestTaskChangesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedback"
+        ],
+        "type": "object"
+      },
+      "ResolveProjectBoardConflictRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "enum": [
+              "keep_file",
+              "keep_board"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "resolution"
+        ],
         "type": "object"
       },
       "RevertMemoryItemRequest": {
@@ -7830,6 +8967,11 @@
       "Session": {
         "additionalProperties": true,
         "properties": {
+          "board_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "created_at": {
             "nullable": true,
             "type": "string"
@@ -7865,6 +9007,10 @@
             "type": "string"
           },
           "mode_version_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "origin": {
             "nullable": true,
             "type": "string"
           },
@@ -12025,6 +13171,174 @@
         ],
         "type": "object"
       },
+      "UpdateProjectBoardSettingsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "autopilot_enabled": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "custom_sync_root": {
+            "nullable": true,
+            "type": "string"
+          },
+          "default_assignee_kind": {
+            "enum": [
+              "human",
+              "native",
+              "cli",
+              "coordinator"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "key_prefix": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_concurrency": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "project_instructions": {
+            "nullable": true,
+            "type": "string"
+          },
+          "storage_mode": {
+            "enum": [
+              "repo_tinadec",
+              "app_data",
+              "custom_dir"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateProjectBoardTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocked": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "blocked_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardChecklistItem"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "depends_on": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "description_md": {
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_revision": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "sort_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "spatial_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardSpatialRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateProjectBoardViewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardViewConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sort_order": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "UpdateSessionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -13793,6 +15107,199 @@
         "summary": "Download attachment bytes",
         "tags": [
           "Attachments"
+        ]
+      }
+    },
+    "/api/v1/board/events": {
+      "get": {
+        "description": "Unbuffered SSE stream for cross-project global board events with Last-Event-ID / ?after_seq resume.",
+        "operationId": "getApiV1BoardEvents",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unbuffered SSE stream for cross-project global board events with Last-Event-ID / ?after_seq resume."
+          }
+        },
+        "summary": "GET /api/v1/board/events",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/board/summary": {
+      "get": {
+        "operationId": "getApiV1BoardSummary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardSummary"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/board/summary",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/board/tasks": {
+      "get": {
+        "operationId": "getApiV1BoardTasks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectBoardTask"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/board/tasks",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/board/views": {
+      "get": {
+        "operationId": "getApiV1BoardViews",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectBoardView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/board/views",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1BoardViews",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectBoardViewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardView"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardView"
+                }
+              }
+            },
+            "description": "Created resource"
+          }
+        },
+        "summary": "POST /api/v1/board/views",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/board/views/{viewId}": {
+      "delete": {
+        "operationId": "deleteApiV1BoardViewsByViewId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "viewId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully"
+          }
+        },
+        "summary": "DELETE /api/v1/board/views/{viewId}",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1BoardViewsByViewId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "viewId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectBoardViewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardView"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "PATCH /api/v1/board/views/{viewId}",
+        "tags": [
+          "Projects"
         ]
       }
     },
@@ -17923,6 +19430,612 @@
           "200": {}
         },
         "summary": "Archive project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/events": {
+      "get": {
+        "description": "Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed).",
+        "operationId": "getApiV1ProjectsByProjectIdBoardEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed)."
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/events",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/settings": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdBoardSettings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardSettings"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/settings",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1ProjectsByProjectIdBoardSettings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectBoardSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardSettings"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "PUT /api/v1/projects/{projectId}/board/settings",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/sync": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardSync",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardSyncResult"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/sync",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdBoardTasks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectBoardTask"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/tasks",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectBoardTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Created resource"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}": {
+      "delete": {
+        "operationId": "deleteApiV1ProjectsByProjectIdBoardTasksByTaskId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully"
+          }
+        },
+        "summary": "DELETE /api/v1/projects/{projectId}/board/tasks/{taskId}",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdBoardTasksByTaskId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/tasks/{taskId}",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1ProjectsByProjectIdBoardTasksByTaskId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectBoardTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "PATCH /api/v1/projects/{projectId}/board/tasks/{taskId}",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/approve": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksByTaskIdApprove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveProjectBoardTaskRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/{taskId}/approve",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/cancel": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksByTaskIdCancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/{taskId}/cancel",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/diff": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdBoardTasksByTaskIdDiff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTaskDiff"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/tasks/{taskId}/diff",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksByTaskIdDispatch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DispatchProjectBoardTaskRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/request-changes": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksByTaskIdRequest-changes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestTaskChangesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/{taskId}/request-changes",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardTasksByTaskIdResolve-conflict",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveProjectBoardConflictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBoardTask"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict",
         "tags": [
           "Projects"
         ]

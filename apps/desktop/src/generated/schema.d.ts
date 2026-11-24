@@ -189,6 +189,33 @@ export interface paths {
     /** Download attachment bytes */
     get: operations["getApiV1AttachmentsByAttachmentIdContent"];
   };
+  "/api/v1/board/events": {
+    /**
+     * GET /api/v1/board/events
+     * @description Unbuffered SSE stream for cross-project global board events with Last-Event-ID / ?after_seq resume.
+     */
+    get: operations["getApiV1BoardEvents"];
+  };
+  "/api/v1/board/summary": {
+    /** GET /api/v1/board/summary */
+    get: operations["getApiV1BoardSummary"];
+  };
+  "/api/v1/board/tasks": {
+    /** GET /api/v1/board/tasks */
+    get: operations["getApiV1BoardTasks"];
+  };
+  "/api/v1/board/views": {
+    /** GET /api/v1/board/views */
+    get: operations["getApiV1BoardViews"];
+    /** POST /api/v1/board/views */
+    post: operations["postApiV1BoardViews"];
+  };
+  "/api/v1/board/views/{viewId}": {
+    /** DELETE /api/v1/board/views/{viewId} */
+    delete: operations["deleteApiV1BoardViewsByViewId"];
+    /** PATCH /api/v1/board/views/{viewId} */
+    patch: operations["patchApiV1BoardViewsByViewId"];
+  };
   "/api/v1/code/tools": {
     /**
      * Code tool catalog (Core registry)
@@ -796,6 +823,61 @@ export interface paths {
   "/api/v1/projects/{projectId}/archive": {
     /** Archive project */
     post: operations["postApiV1ProjectsByProjectIdArchive"];
+  };
+  "/api/v1/projects/{projectId}/board/events": {
+    /**
+     * GET /api/v1/projects/{projectId}/board/events
+     * @description Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed).
+     */
+    get: operations["getApiV1ProjectsByProjectIdBoardEvents"];
+  };
+  "/api/v1/projects/{projectId}/board/settings": {
+    /** GET /api/v1/projects/{projectId}/board/settings */
+    get: operations["getApiV1ProjectsByProjectIdBoardSettings"];
+    /** PUT /api/v1/projects/{projectId}/board/settings */
+    put: operations["putApiV1ProjectsByProjectIdBoardSettings"];
+  };
+  "/api/v1/projects/{projectId}/board/sync": {
+    /** POST /api/v1/projects/{projectId}/board/sync */
+    post: operations["postApiV1ProjectsByProjectIdBoardSync"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks": {
+    /** GET /api/v1/projects/{projectId}/board/tasks */
+    get: operations["getApiV1ProjectsByProjectIdBoardTasks"];
+    /** POST /api/v1/projects/{projectId}/board/tasks */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasks"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}": {
+    /** GET /api/v1/projects/{projectId}/board/tasks/{taskId} */
+    get: operations["getApiV1ProjectsByProjectIdBoardTasksByTaskId"];
+    /** DELETE /api/v1/projects/{projectId}/board/tasks/{taskId} */
+    delete: operations["deleteApiV1ProjectsByProjectIdBoardTasksByTaskId"];
+    /** PATCH /api/v1/projects/{projectId}/board/tasks/{taskId} */
+    patch: operations["patchApiV1ProjectsByProjectIdBoardTasksByTaskId"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/approve": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/approve */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksByTaskIdApprove"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/cancel": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/cancel */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksByTaskIdCancel"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/diff": {
+    /** GET /api/v1/projects/{projectId}/board/tasks/{taskId}/diff */
+    get: operations["getApiV1ProjectsByProjectIdBoardTasksByTaskIdDiff"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksByTaskIdDispatch"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/request-changes": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/request-changes */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksByTaskIdRequest-changes"];
+  };
+  "/api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict": {
+    /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict */
+    post: operations["postApiV1ProjectsByProjectIdBoardTasksByTaskIdResolve-conflict"];
   };
   "/api/v1/projects/{projectId}/exposures": {
     /** List project attachment exposures */
@@ -1797,6 +1879,10 @@ export interface components {
       run_id: string | null;
       status: string;
     };
+    ApproveProjectBoardTaskRequest: {
+      merge_or_clean_worktree?: boolean | null;
+      note?: string | null;
+    };
     Assignment: {
       agent_id: string;
       /** @enum {string} */
@@ -2679,10 +2765,40 @@ export interface components {
       total_matches: number;
       verbatim_snippets: components["schemas"]["RecallVerbatimSnippet"][];
     };
+    CreateProjectBoardTaskRequest: {
+      assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
+      blocked?: boolean | null;
+      blocked_reason?: string | null;
+      checklist?: components["schemas"]["ProjectBoardChecklistItem"][] | null;
+      depends_on?: string[] | null;
+      description_md?: string | null;
+      labels?: string[] | null;
+      /** Format: uuid */
+      parent_task_id?: string | null;
+      /** @enum {string|null} */
+      priority?: "urgent" | "high" | "medium" | "low" | "none" | null;
+      sort_key?: string | null;
+      spatial_ref?: components["schemas"]["ProjectBoardSpatialRef"] | null;
+      /** @enum {string|null} */
+      status?: "backlog" | "ready" | "in_progress" | "in_review" | "done" | null;
+      title: string;
+    };
+    CreateProjectBoardViewRequest: {
+      config?: components["schemas"]["ProjectBoardViewConfig"] | null;
+      name: string;
+      /** Format: uuid */
+      project_id?: string | null;
+      /** @enum {string|null} */
+      scope?: "global" | "project" | null;
+      sort_order?: number | null;
+    };
     CreateSessionRequest: {
+      /** Format: uuid */
+      board_task_id?: string | null;
       conversation_node_key?: string | null;
       meeting_model_override?: components["schemas"]["MeetingModelOverride"] | null;
       mode_version_id?: string | null;
+      origin?: string | null;
       permission_mode?: string | null;
       project_id?: string | null;
       space_options?: components["schemas"]["SpaceOptions"] | null;
@@ -2705,6 +2821,11 @@ export interface components {
       highlight: boolean;
       line_number?: number | null;
       text: string;
+    };
+    DispatchProjectBoardTaskRequest: {
+      assignee_override?: components["schemas"]["ProjectBoardAssignee"] | null;
+      extra_prompt?: string | null;
+      use_worktree?: boolean | null;
     };
     EnvironmentDto: {
       /** Format: int32 */
@@ -3502,6 +3623,214 @@ export interface components {
       updated_at: string | null;
       [key: string]: unknown;
     };
+    ProjectBoardAssignee: {
+      display_name?: string | null;
+      harness_id?: string | null;
+      id?: string | null;
+      /** @enum {string} */
+      kind: "human" | "native" | "cli" | "coordinator";
+      /** Format: uuid */
+      mode_version_id?: string | null;
+    };
+    ProjectBoardChecklistItem: {
+      done: boolean;
+      id: string;
+      text: string;
+    };
+    ProjectBoardDiffFile: {
+      added: number;
+      path: string;
+      removed: number;
+      status: string;
+    };
+    ProjectBoardDiffStats: {
+      added: number;
+      files: number;
+      removed: number;
+    };
+    ProjectBoardEvent: {
+      /** @enum {string} */
+      event_type: "snapshot" | "task_upserted" | "task_deleted" | "settings_updated" | "view_upserted" | "view_deleted" | "sync_completed";
+      occurred_at_unix_ms: number;
+      /** Format: uuid */
+      project_id?: string | null;
+      seq: number;
+      settings?: components["schemas"]["ProjectBoardSettings"] | null;
+      task?: components["schemas"]["ProjectBoardTask"] | null;
+      /** Format: uuid */
+      task_id?: string | null;
+      view?: components["schemas"]["ProjectBoardView"] | null;
+      /** Format: uuid */
+      view_id?: string | null;
+    };
+    ProjectBoardProjectSummaryItem: {
+      blocked_count: number;
+      conflict_count: number;
+      in_progress_count: number;
+      in_review_count: number;
+      needs_action_count: number;
+      /** Format: uuid */
+      project_id: string;
+      project_name: string;
+      total_tasks: number;
+    };
+    ProjectBoardSettings: {
+      autopilot_enabled: boolean;
+      custom_sync_root: string | null;
+      /** @enum {string} */
+      default_assignee_kind: "human" | "native" | "cli" | "coordinator";
+      key_prefix: string;
+      max_concurrency: number;
+      next_sequence: number;
+      /** Format: uuid */
+      project_id: string;
+      project_instructions: string;
+      resolved_board_dir: string;
+      /** @enum {string} */
+      storage_mode: "repo_tinadec" | "app_data" | "custom_dir";
+      updated_at_unix_ms: number;
+    };
+    ProjectBoardSpatialRef: {
+      object_id: string;
+      /** Format: uuid */
+      session_id: string;
+      viewport_hint?: {
+        [key: string]: unknown;
+      } | null;
+    };
+    ProjectBoardSummary: {
+      active_run_count: number;
+      backlog_count: number;
+      blocked_count: number;
+      conflict_count: number;
+      done_count: number;
+      in_progress_count: number;
+      in_review_count: number;
+      needs_action_count: number;
+      projects: components["schemas"]["ProjectBoardProjectSummaryItem"][];
+      ready_count: number;
+      total_tasks: number;
+      updated_at_unix_ms: number;
+    };
+    ProjectBoardSyncConflict: {
+      board_snapshot: components["schemas"]["ProjectBoardTaskSnapshot"];
+      conflicting_fields: string[];
+      detected_at_unix_ms: number;
+      file_rel_path: string;
+      file_snapshot: components["schemas"]["ProjectBoardTaskSnapshot"];
+    };
+    ProjectBoardSyncResult: {
+      conflict_count: number;
+      exported_count: number;
+      imported_count: number;
+      merged_count: number;
+      /** Format: uuid */
+      project_id: string;
+      resolved_board_dir: string;
+      /** @enum {string} */
+      storage_mode: "repo_tinadec" | "app_data" | "custom_dir";
+      synced_at_unix_ms: number;
+      unchanged_count: number;
+    };
+    ProjectBoardTask: {
+      /** Format: uuid */
+      active_run_id: string | null;
+      /** Format: uuid */
+      active_session_id: string | null;
+      assignee: components["schemas"]["ProjectBoardAssignee"] | null;
+      blocked: boolean;
+      blocked_reason: string | null;
+      checklist: components["schemas"]["ProjectBoardChecklistItem"][];
+      created_at_unix_ms: number;
+      depends_on: string[];
+      description_md: string;
+      diff_stats: components["schemas"]["ProjectBoardDiffStats"] | null;
+      has_sync_conflict: boolean;
+      labels: string[];
+      /** Format: uuid */
+      lease_id: string | null;
+      live_digest_summary: string | null;
+      /** Format: uuid */
+      parent_task_id: string | null;
+      /** @enum {string} */
+      priority: "urgent" | "high" | "medium" | "low" | "none";
+      /** Format: uuid */
+      project_id: string;
+      project_name: string;
+      revision: number;
+      run_status: string | null;
+      sort_key: string;
+      spatial_ref: components["schemas"]["ProjectBoardSpatialRef"] | null;
+      /** @enum {string} */
+      status: "backlog" | "ready" | "in_progress" | "in_review" | "done";
+      sync_conflict: components["schemas"]["ProjectBoardSyncConflict"] | null;
+      /** Format: uuid */
+      task_id: string;
+      task_key: string;
+      title: string;
+      updated_at_unix_ms: number;
+      worktree_path: string | null;
+    };
+    ProjectBoardTaskDiff: {
+      diff_text: string;
+      files: components["schemas"]["ProjectBoardDiffFile"][];
+      worktree_path: string | null;
+    };
+    ProjectBoardTaskSnapshot: {
+      assignee: components["schemas"]["ProjectBoardAssignee"] | null;
+      blocked: boolean;
+      blocked_reason: string | null;
+      checklist: components["schemas"]["ProjectBoardChecklistItem"][];
+      depends_on: string[];
+      description_md: string;
+      labels: string[];
+      /** Format: uuid */
+      parent_task_id: string | null;
+      /** @enum {string} */
+      priority: "urgent" | "high" | "medium" | "low" | "none";
+      revision: number;
+      sort_key: string;
+      spatial_ref: components["schemas"]["ProjectBoardSpatialRef"] | null;
+      /** @enum {string} */
+      status: "backlog" | "ready" | "in_progress" | "in_review" | "done";
+      title: string;
+      updated_at_unix_ms: number;
+    };
+    ProjectBoardView: {
+      config: components["schemas"]["ProjectBoardViewConfig"];
+      created_at_unix_ms: number;
+      name: string;
+      /** Format: uuid */
+      project_id: string | null;
+      /** @enum {string} */
+      scope: "global" | "project";
+      sort_order: number;
+      updated_at_unix_ms: number;
+      /** Format: uuid */
+      view_id: string;
+    };
+    ProjectBoardViewConfig: {
+      filters: components["schemas"]["ProjectBoardViewFilters"];
+      /** @enum {string} */
+      group_by: "status" | "project" | "assignee" | "priority" | "none";
+      /** @enum {string} */
+      layout: "kanban" | "list" | "swimlane";
+      /** @enum {string} */
+      sort_by: "manual" | "priority" | "updated_at" | "dependency";
+      /** @enum {string|null} */
+      swimlane_by: "project" | "assignee" | null;
+      visible_fields: string[];
+    };
+    ProjectBoardViewFilters: {
+      assignee_kinds?: (("human" | "native" | "cli" | "coordinator")[]) | null;
+      has_conflict?: boolean | null;
+      labels?: string[] | null;
+      needs_my_action?: boolean | null;
+      priorities?: (("urgent" | "high" | "medium" | "low" | "none")[]) | null;
+      project_ids?: string[] | null;
+      query?: string | null;
+      statuses?: (("backlog" | "ready" | "in_progress" | "in_review" | "done")[]) | null;
+    };
     ProjectList: components["schemas"]["Project"][];
     RecallVerbatimSnippet: {
       /** Format: date-time */
@@ -3517,6 +3846,13 @@ export interface components {
     RejectContextEvolutionProposalRequest: {
       reason?: string | null;
       [key: string]: unknown;
+    };
+    RequestTaskChangesRequest: {
+      feedback: string;
+    };
+    ResolveProjectBoardConflictRequest: {
+      /** @enum {string} */
+      resolution: "keep_file" | "keep_board";
     };
     RevertMemoryItemRequest: {
       reason?: string | null;
@@ -3603,6 +3939,8 @@ export interface components {
       title: string;
     };
     Session: {
+      /** Format: uuid */
+      board_task_id?: string | null;
       created_at: string | null;
       history_revision: number | null;
       /** Format: uuid */
@@ -3612,6 +3950,7 @@ export interface components {
       meeting_model_override: components["schemas"]["MeetingModelOverride"] | null;
       mode: string | null;
       mode_version_id: string | null;
+      origin?: string | null;
       permission_mode: string;
       /** Format: uuid */
       project_id: string | null;
@@ -4618,6 +4957,41 @@ export interface components {
       workspace_root?: string | null;
       [key: string]: unknown;
     };
+    UpdateProjectBoardSettingsRequest: {
+      autopilot_enabled?: boolean | null;
+      custom_sync_root?: string | null;
+      /** @enum {string|null} */
+      default_assignee_kind?: "human" | "native" | "cli" | "coordinator" | null;
+      key_prefix?: string | null;
+      max_concurrency?: number | null;
+      project_instructions?: string | null;
+      /** @enum {string|null} */
+      storage_mode?: "repo_tinadec" | "app_data" | "custom_dir" | null;
+    };
+    UpdateProjectBoardTaskRequest: {
+      assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
+      blocked?: boolean | null;
+      blocked_reason?: string | null;
+      checklist?: components["schemas"]["ProjectBoardChecklistItem"][] | null;
+      depends_on?: string[] | null;
+      description_md?: string | null;
+      expected_revision?: number | null;
+      labels?: string[] | null;
+      /** Format: uuid */
+      parent_task_id?: string | null;
+      /** @enum {string|null} */
+      priority?: "urgent" | "high" | "medium" | "low" | "none" | null;
+      sort_key?: string | null;
+      spatial_ref?: components["schemas"]["ProjectBoardSpatialRef"] | null;
+      /** @enum {string|null} */
+      status?: "backlog" | "ready" | "in_progress" | "in_review" | "done" | null;
+      title?: string | null;
+    };
+    UpdateProjectBoardViewRequest: {
+      config?: components["schemas"]["ProjectBoardViewConfig"] | null;
+      name?: string | null;
+      sort_order?: number | null;
+    };
     UpdateSessionRequest: {
       clear_meeting_model_override?: boolean;
       clear_mode_version?: boolean;
@@ -5556,6 +5930,110 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /**
+   * GET /api/v1/board/events
+   * @description Unbuffered SSE stream for cross-project global board events with Last-Event-ID / ?after_seq resume.
+   */
+  getApiV1BoardEvents: {
+    responses: {
+      /** @description Unbuffered SSE stream for cross-project global board events with Last-Event-ID / ?after_seq resume. */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+    };
+  };
+  /** GET /api/v1/board/summary */
+  getApiV1BoardSummary: {
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardSummary"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/board/tasks */
+  getApiV1BoardTasks: {
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"][];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/board/views */
+  getApiV1BoardViews: {
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardView"][];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/board/views */
+  postApiV1BoardViews: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateProjectBoardViewRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardView"];
+        };
+      };
+      /** @description Created resource */
+      201: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardView"];
+        };
+      };
+    };
+  };
+  /** DELETE /api/v1/board/views/{viewId} */
+  deleteApiV1BoardViewsByViewId: {
+    parameters: {
+      path: {
+        viewId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted successfully */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** PATCH /api/v1/board/views/{viewId} */
+  patchApiV1BoardViewsByViewId: {
+    parameters: {
+      path: {
+        viewId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProjectBoardViewRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardView"];
+        };
       };
     };
   };
@@ -7781,6 +8259,297 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /**
+   * GET /api/v1/projects/{projectId}/board/events
+   * @description Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed).
+   */
+  getApiV1ProjectsByProjectIdBoardEvents: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed). */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/board/settings */
+  getApiV1ProjectsByProjectIdBoardSettings: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardSettings"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/projects/{projectId}/board/settings */
+  putApiV1ProjectsByProjectIdBoardSettings: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProjectBoardSettingsRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardSettings"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/sync */
+  postApiV1ProjectsByProjectIdBoardSync: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardSyncResult"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/board/tasks */
+  getApiV1ProjectsByProjectIdBoardTasks: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"][];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks */
+  postApiV1ProjectsByProjectIdBoardTasks: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateProjectBoardTaskRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+      /** @description Created resource */
+      201: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/board/tasks/{taskId} */
+  getApiV1ProjectsByProjectIdBoardTasksByTaskId: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** DELETE /api/v1/projects/{projectId}/board/tasks/{taskId} */
+  deleteApiV1ProjectsByProjectIdBoardTasksByTaskId: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    responses: {
+      /** @description Deleted successfully */
+      204: {
+        content: never;
+      };
+    };
+  };
+  /** PATCH /api/v1/projects/{projectId}/board/tasks/{taskId} */
+  patchApiV1ProjectsByProjectIdBoardTasksByTaskId: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProjectBoardTaskRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/approve */
+  postApiV1ProjectsByProjectIdBoardTasksByTaskIdApprove: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ApproveProjectBoardTaskRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/cancel */
+  postApiV1ProjectsByProjectIdBoardTasksByTaskIdCancel: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/board/tasks/{taskId}/diff */
+  getApiV1ProjectsByProjectIdBoardTasksByTaskIdDiff: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTaskDiff"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/dispatch */
+  postApiV1ProjectsByProjectIdBoardTasksByTaskIdDispatch: {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["DispatchProjectBoardTaskRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/request-changes */
+  "postApiV1ProjectsByProjectIdBoardTasksByTaskIdRequest-changes": {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RequestTaskChangesRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/tasks/{taskId}/resolve-conflict */
+  "postApiV1ProjectsByProjectIdBoardTasksByTaskIdResolve-conflict": {
+    parameters: {
+      path: {
+        projectId: string;
+        taskId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolveProjectBoardConflictRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectBoardTask"];
+        };
       };
     };
   };
