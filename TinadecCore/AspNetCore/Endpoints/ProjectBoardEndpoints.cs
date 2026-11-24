@@ -9,6 +9,7 @@ using TinadecCore.Memory;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 using TinadecCore.Runtime.ProjectBoard;
+using TinadecCore.Runtime.SpatialBoard;
 
 namespace TinadecCore.AspNetCore.Endpoints;
 
@@ -52,6 +53,13 @@ public static class ProjectBoardEndpoints
         projectGroup.MapPost("/tasks", CreateProjectTaskAsync)
             .Accepts<CreateProjectBoardTaskRequest>("application/json")
             .Produces<ProjectBoardTaskDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        projectGroup.MapPost("/tasks/promote-from-spatial", PromoteFromSpatialAsync)
+            .Accepts<PromoteFromSpatialRequest>("application/json")
+            .Produces<PromoteFromSpatialResultDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
@@ -219,6 +227,29 @@ public static class ProjectBoardEndpoints
             return Results.Created($"/api/v1/projects/{projectId}/board/tasks/{created.TaskId}", created);
         }
         catch (KeyNotFoundException) { return ProjectNotFound(); }
+        catch (ProjectBoardCycleException ex) { return Results.Conflict(new { code = ex.Code, message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+    }
+
+    private static async Task<IResult> PromoteFromSpatialAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        var (request, parseErr) = await ReadRequiredJsonAsync<PromoteFromSpatialRequest>(http.Request, ct).ConfigureAwait(false);
+        if (parseErr is not null) return parseErr;
+
+        try
+        {
+            await using var projectScope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (projectScope is null) return ProjectNotFound();
+
+            await using var spatialScope = await ResolveSpatialServicesForSessionAsync(http, projectScope.Services, request!.SessionId, ct).ConfigureAwait(false);
+            var boardCoordinator = projectScope.Services.GetRequiredService<ProjectBoardCoordinator>();
+            var spatialCoordinator = spatialScope?.Services.GetRequiredService<SpatialBoardCoordinator>()
+                ?? projectScope.Services.GetRequiredService<SpatialBoardCoordinator>();
+
+            var result = await boardCoordinator.PromoteFromSpatialAsync(projectId, request, spatialCoordinator, ct).ConfigureAwait(false);
+            return Results.Ok(result);
+        }
+        catch (KeyNotFoundException ex) { return Results.NotFound(new { code = "not_found", message = ex.Message }); }
         catch (ProjectBoardCycleException ex) { return Results.Conflict(new { code = ex.Code, message = ex.Message }); }
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
@@ -512,6 +543,74 @@ public static class ProjectBoardEndpoints
             return null;
 
         return new ResolvedServicesHandle(http.RequestServices);
+    }
+
+    private static async Task<ResolvedServicesHandle?> ResolveSpatialServicesForSessionAsync(
+        HttpContext http,
+        IServiceProvider projectServices,
+        Guid sessionId,
+        CancellationToken ct)
+    {
+        if (sessionId == Guid.Empty)
+            return null;
+
+        static async Task<bool> HasSessionOrObjectsAsync(IServiceProvider sp, Guid sid, CancellationToken token)
+        {
+            if (sp.GetService<ISessionLocator>() is { } locator
+                && await locator.FindAsync(sid, token).ConfigureAwait(false) is not null)
+            {
+                return true;
+            }
+
+            if (sp.GetService<SpatialBoardCoordinator>() is { } spatial)
+            {
+                var snap = await spatial.GetSnapshotAsync(sid, includeDeleted: false, token).ConfigureAwait(false);
+                if (snap.Objects.Count > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        if (await HasSessionOrObjectsAsync(projectServices, sessionId, ct).ConfigureAwait(false))
+            return new ResolvedServicesHandle(projectServices);
+
+        if (!ReferenceEquals(http.RequestServices, projectServices)
+            && await HasSessionOrObjectsAsync(http.RequestServices, sessionId, ct).ConfigureAwait(false))
+        {
+            return new ResolvedServicesHandle(http.RequestServices);
+        }
+
+        if (http.RequestServices.GetService<IStorageScopeRegistry>() is { } registry)
+        {
+            foreach (var scope in registry.List())
+            {
+                try
+                {
+                    var lease = await registry.AcquireAsync(scope.StorageId, ct).ConfigureAwait(false);
+                    try
+                    {
+                        if (await HasSessionOrObjectsAsync(lease.Services, sessionId, ct).ConfigureAwait(false))
+                        {
+                            return new ResolvedServicesHandle(lease.Services, lease);
+                        }
+                    }
+                    catch
+                    {
+                        await lease.DisposeAsync().ConfigureAwait(false);
+                        throw;
+                    }
+
+                    await lease.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                {
+                    // Skip unavailable scopes during cross-scope session lookup.
+                }
+            }
+        }
+
+        return null;
     }
 
     private static async Task<ResolvedServicesHandle> ResolveHostServicesAsync(HttpContext http, CancellationToken ct)

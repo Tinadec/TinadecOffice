@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -9,6 +10,7 @@ using TinadecCore.Memory;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 using TinadecCore.Runtime.ProjectBoard;
+using TinadecCore.Runtime.SpatialBoard;
 
 namespace TinadecCore.AgentFramework.Tests;
 
@@ -524,6 +526,277 @@ public sealed class ProjectBoardEngineTests : IAsyncLifetime
         Assert.Null(approved.WorktreePath);
         Assert.True(File.Exists(Path.Combine(gitRepo, "feature.ts")), "Integrated file must exist in target repo after approval.");
         Assert.Empty(await leases.ListActiveAsync(createdSession.Id));
+    }
+
+    [Fact]
+    public async Task SpatialBridge_EnforcesZeroPayloadDuplicationOnBoardNodes_AndPromotesAllThreeModesWithConnectorsAndLwwLinks()
+    {
+        var store = _provider!.GetRequiredService<ProjectSessionStore>();
+        var boardCoordinator = _provider!.GetRequiredService<ProjectBoardCoordinator>();
+        var spatialCoordinator = _provider!.GetRequiredService<SpatialBoardCoordinator>();
+        var execution = _provider!.GetRequiredService<ProjectTaskExecutionService>();
+
+        var repoDir = Path.Combine(_tempRoot, "spatial-bridge-repo");
+        Directory.CreateDirectory(repoDir);
+        var project = await store.CreateProjectAsync("BridgeApp", repoDir);
+        var sessionId = Guid.NewGuid();
+
+        // 1. SpatialBoardCoordinator accepts kind = "board" with view metadata and throws SpatialBoardValidationException("board_props_invalid") on task payloads
+        var boardNodeAck = await spatialCoordinator.ApplyOpsAsync(sessionId, new SpatialBoardOpsRequestDto
+        {
+            ClientId = "spatial-test",
+            Ops =
+            [
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "create-board-view",
+                    ObjectId = "board-view-1",
+                    Kind = "board",
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["project_id"] = JsonSerializer.SerializeToElement(project.Id.ToString("D")),
+                        ["layout"] = JsonSerializer.SerializeToElement("swimlane"),
+                        ["swimlane_by"] = JsonSerializer.SerializeToElement("assignee")
+                    }
+                }
+            ]
+        });
+        Assert.Contains("create-board-view", boardNodeAck.AcceptedOpIds);
+
+        var dupEx = await Assert.ThrowsAsync<SpatialBoardValidationException>(() =>
+            spatialCoordinator.ApplyOpsAsync(sessionId, new SpatialBoardOpsRequestDto
+            {
+                ClientId = "spatial-test",
+                Ops =
+                [
+                    new SpatialPropertyOpDto
+                    {
+                        ClientOpId = "dup-tasks",
+                        ObjectId = "board-view-1",
+                        Props = new Dictionary<string, JsonElement>
+                        {
+                            ["tasks"] = JsonSerializer.SerializeToElement(new[] { new { id = 1 } })
+                        }
+                    }
+                ]
+            }));
+        Assert.Equal("board_props_invalid", dupEx.Code);
+
+        // 2. Seed spatial stickies (with high existing Lamport = 250 to prove maxLamport + 1 wins LWW!), sections, and connectors
+        var seedAck = await spatialCoordinator.ApplyOpsAsync(sessionId, new SpatialBoardOpsRequestDto
+        {
+            ClientId = "designer-1",
+            Ops =
+            [
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "m1",
+                    ObjectId = "merge-sticky-1",
+                    Kind = "sticky",
+                    X = 10,
+                    Y = 10,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["text"] = JsonSerializer.SerializeToElement("Unify authentication flow\n- [ ] Add OAuth callback\n- [x] Document token TTL")
+                    },
+                    Timestamps = new Dictionary<string, SpatialLwwTimestampDto>
+                    {
+                        ["props.text"] = new(250, "zzzz-high-writer"),
+                        ["props.board_task_key"] = new(250, "zzzz-high-writer")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "m2",
+                    ObjectId = "merge-sticky-2",
+                    Kind = "sticky",
+                    X = 260,
+                    Y = 10,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["text"] = JsonSerializer.SerializeToElement("Add refresh token rotation")
+                    },
+                    Timestamps = new Dictionary<string, SpatialLwwTimestampDto>
+                    {
+                        ["props.text"] = new(120, "designer-1")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "sec-split",
+                    ObjectId = "sec-architecture",
+                    Kind = "section",
+                    X = 100,
+                    Y = 300,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["title"] = JsonSerializer.SerializeToElement("Backend Pipeline")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "c1",
+                    ObjectId = "child-sticky-1",
+                    Kind = "sticky",
+                    ParentId = "sec-architecture",
+                    HasParentId = true,
+                    X = 120,
+                    Y = 340,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["text"] = JsonSerializer.SerializeToElement("Create SQLite migration\nInclude indexes on project_id.")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "c2",
+                    ObjectId = "child-sticky-2",
+                    Kind = "text",
+                    ParentId = "sec-architecture",
+                    HasParentId = true,
+                    X = 360,
+                    Y = 340,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["text"] = JsonSerializer.SerializeToElement("Expose Fastify proxy route")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "c3",
+                    ObjectId = "child-sticky-3",
+                    Kind = "sticky",
+                    ParentId = "sec-architecture",
+                    HasParentId = true,
+                    X = 600,
+                    Y = 340,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["text"] = JsonSerializer.SerializeToElement("Mount Vue Kanban widget")
+                    }
+                },
+                // Connectors: child-sticky-1 -> child-sticky-2 -> child-sticky-3 (plus a cyclic back-arrow child-sticky-3 -> child-sticky-1 that must be ignored cleanly!)
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "conn-1-2",
+                    ObjectId = "conn-1-2",
+                    Kind = "connector",
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["sourceId"] = JsonSerializer.SerializeToElement("child-sticky-1"),
+                        ["targetId"] = JsonSerializer.SerializeToElement("child-sticky-2")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "conn-2-3",
+                    ObjectId = "conn-2-3",
+                    Kind = "connector",
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["sourceId"] = JsonSerializer.SerializeToElement("child-sticky-2"),
+                        ["targetId"] = JsonSerializer.SerializeToElement("child-sticky-3")
+                    }
+                },
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "conn-cycle-back",
+                    ObjectId = "conn-cycle-back",
+                    Kind = "connector",
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["sourceId"] = JsonSerializer.SerializeToElement("child-sticky-3"),
+                        ["targetId"] = JsonSerializer.SerializeToElement("child-sticky-1")
+                    }
+                }
+            ]
+        });
+        Assert.Empty(seedAck.RejectedOps);
+
+        var viewportHint = JsonSerializer.SerializeToElement(new { x = 120.0, y = 240.0, zoom = 0.85 });
+
+        // 3. Mode 1: merge_single -> 1 task, links BOTH stickies to BRI-1, LWW Lamport 251 beats 250!
+        var merged = await boardCoordinator.PromoteFromSpatialAsync(project.Id, new PromoteFromSpatialRequest
+        {
+            SessionId = sessionId,
+            ObjectIds = ["merge-sticky-1", "merge-sticky-2"],
+            Mode = SpatialPromotionModes.MergeSingle,
+            TargetStatus = ProjectBoardTaskStatuses.Backlog,
+            Priority = ProjectBoardPriorities.High,
+            Labels = ["auth", "spatial"],
+            ViewportHint = viewportHint
+        });
+        Assert.Equal(SpatialPromotionModes.MergeSingle, merged.Mode);
+        Assert.Null(merged.ParentTaskId);
+        var mergedTask = Assert.Single(merged.Tasks);
+        Assert.Equal("BRI-1", mergedTask.TaskKey);
+        Assert.Equal("Unify authentication flow", mergedTask.Title);
+        Assert.Contains("Add refresh token rotation", mergedTask.DescriptionMd);
+        Assert.Equal(3, mergedTask.Checklist.Count);
+        Assert.NotNull(mergedTask.SpatialRef);
+        Assert.Equal(sessionId, mergedTask.SpatialRef!.SessionId);
+        Assert.Equal("merge-sticky-1", mergedTask.SpatialRef.ObjectId);
+        Assert.Equal(2, merged.UpdatedObjectLinks.Count);
+        Assert.All(merged.UpdatedObjectLinks, l => Assert.Equal(mergedTask.TaskId, l.TaskId));
+
+        var snapAfterMerge = await spatialCoordinator.GetSnapshotAsync(sessionId);
+        Assert.Equal(mergedTask.TaskId.ToString("D"), snapAfterMerge.Objects["merge-sticky-1"].Props["board_task_id"].GetString());
+        Assert.Equal("BRI-1", snapAfterMerge.Objects["merge-sticky-1"].Props["board_task_key"].GetString());
+        Assert.Equal(251, snapAfterMerge.Objects["merge-sticky-1"].PropTimestamps["props.board_task_key"].Lamport);
+        Assert.Equal("BRI-1", snapAfterMerge.Objects["merge-sticky-2"].Props["board_task_key"].GetString());
+
+        // 4. Mode 2: split_many on section "sec-architecture" -> expands 3 children as independent tasks + acyclic connector depends_on!
+        var splitResult = await boardCoordinator.PromoteFromSpatialAsync(project.Id, new PromoteFromSpatialRequest
+        {
+            SessionId = sessionId,
+            ObjectIds = ["sec-architecture"],
+            Mode = SpatialPromotionModes.SplitMany,
+            TargetStatus = ProjectBoardTaskStatuses.Ready
+        });
+        Assert.Equal(SpatialPromotionModes.SplitMany, splitResult.Mode);
+        Assert.Null(splitResult.ParentTaskId);
+        Assert.Equal(3, splitResult.Tasks.Count);
+        var splitT1 = splitResult.Tasks[0];
+        var splitT2 = splitResult.Tasks[1];
+        var splitT3 = splitResult.Tasks[2];
+        Assert.Equal("Create SQLite migration", splitT1.Title);
+        Assert.Equal("Include indexes on project_id.", splitT1.DescriptionMd);
+        Assert.Empty(splitT1.DependsOn); // cyclic back-arrow ignored!
+        Assert.Equal([splitT1.TaskId], splitT2.DependsOn);
+        Assert.Equal([splitT2.TaskId], splitT3.DependsOn);
+
+        // 5. Mode 3: parent_with_children on section "sec-architecture" -> 1 parent task + 3 child tasks with parent_task_id & connector depends_on!
+        var hierarchyResult = await boardCoordinator.PromoteFromSpatialAsync(project.Id, new PromoteFromSpatialRequest
+        {
+            SessionId = sessionId,
+            ObjectIds = ["sec-architecture"],
+            Mode = SpatialPromotionModes.ParentWithChildren,
+            TargetStatus = ProjectBoardTaskStatuses.Ready
+        });
+        Assert.Equal(SpatialPromotionModes.ParentWithChildren, hierarchyResult.Mode);
+        Assert.NotNull(hierarchyResult.ParentTaskId);
+        Assert.Equal(4, hierarchyResult.Tasks.Count);
+
+        var parentTask = hierarchyResult.Tasks[0];
+        Assert.Equal(hierarchyResult.ParentTaskId, parentTask.TaskId);
+        Assert.Equal("Backend Pipeline", parentTask.Title);
+        Assert.Equal("sec-architecture", parentTask.SpatialRef!.ObjectId);
+
+        var childTasks = hierarchyResult.Tasks.Skip(1).ToList();
+        Assert.All(childTasks, c => Assert.Equal(parentTask.TaskId, c.ParentTaskId));
+        Assert.Equal([childTasks[0].TaskId], childTasks[1].DependsOn);
+        Assert.Equal([childTasks[1].TaskId], childTasks[2].DependsOn);
+
+        var snapAfterHierarchy = await spatialCoordinator.GetSnapshotAsync(sessionId);
+        Assert.Equal(parentTask.TaskKey, snapAfterHierarchy.Objects["sec-architecture"].Props["board_task_key"].GetString());
+        Assert.Equal(childTasks[0].TaskKey, snapAfterHierarchy.Objects["child-sticky-1"].Props["board_task_key"].GetString());
+
+        // Markdown files synced cleanly to .tinadec/board/tasks/ with spatial_ref and ZERO auto-started runs
+        var parentMdPath = Path.Combine(repoDir, ".tinadec", "board", "tasks", $"{parentTask.TaskKey}.md");
+        Assert.True(File.Exists(parentMdPath));
+        Assert.Contains("spatial_ref:", await File.ReadAllTextAsync(parentMdPath, Encoding.UTF8));
+        Assert.Equal(0, execution.DispatchCount);
+        Assert.Equal(0, _cliExecutor.CallCount);
     }
 
     private static string InitGitRepo(string path)

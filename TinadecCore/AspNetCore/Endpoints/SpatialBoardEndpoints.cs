@@ -103,8 +103,15 @@ public static class SpatialBoardEndpoints
             if (!TryParseOpsRequest(doc.RootElement, fallbackClientId: "http-client", out var opsRequest, out var parseError))
                 return Results.BadRequest(new { code = "invalid_request", message = parseError });
 
-            var response = await coordinator.ApplyOpsAsync(sessionId, opsRequest!, senderConnectionId: null, ct).ConfigureAwait(false);
-            return Results.Ok(response);
+            try
+            {
+                var response = await coordinator.ApplyOpsAsync(sessionId, opsRequest!, senderConnectionId: null, ct).ConfigureAwait(false);
+                return Results.Ok(response);
+            }
+            catch (SpatialBoardValidationException ex)
+            {
+                return Results.BadRequest(new { code = ex.Code, message = ex.Message });
+            }
         }
     }
 
@@ -467,11 +474,26 @@ public static class SpatialBoardEndpoints
                         return;
                     }
 
-                    var result = await coordinator.ApplyOpsAsync(
-                        sessionId,
-                        opsRequest!,
-                        senderConnectionId: peer.ConnectionId,
-                        ct).ConfigureAwait(false);
+                    SpatialBoardOpsResponseDto result;
+                    try
+                    {
+                        result = await coordinator.ApplyOpsAsync(
+                            sessionId,
+                            opsRequest!,
+                            senderConnectionId: peer.ConnectionId,
+                            ct).ConfigureAwait(false);
+                    }
+                    catch (SpatialBoardValidationException ex)
+                    {
+                        await presenceHub.SendToPeerAsync(peer, new
+                        {
+                            type = "error",
+                            request_id = requestId,
+                            code = ex.Code,
+                            message = ex.Message
+                        }, ct).ConfigureAwait(false);
+                        return;
+                    }
 
                     await presenceHub.SendToPeerAsync(peer, new
                     {

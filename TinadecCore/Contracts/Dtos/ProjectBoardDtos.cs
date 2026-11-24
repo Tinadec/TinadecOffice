@@ -779,3 +779,76 @@ public sealed class ProjectBoardEventDto
     [JsonPropertyName("occurred_at_unix_ms")]
     public long OccurredAtUnixMs { get; init; }
 }
+
+public static class SpatialPromotionModes
+{
+    public const string MergeSingle = "merge_single";
+    public const string SplitMany = "split_many";
+    public const string ParentWithChildren = "parent_with_children";
+
+    public static readonly string[] All = [MergeSingle, SplitMany, ParentWithChildren];
+
+    public static bool IsValid(string? mode) =>
+        mode is MergeSingle or SplitMany or ParentWithChildren;
+}
+
+public sealed class PromoteFromSpatialRequest
+{
+    [JsonPropertyName("session_id")]
+    public Guid SessionId { get; init; }
+
+    [JsonPropertyName("object_ids")]
+    public List<string> ObjectIds { get; init; } = [];
+
+    [JsonPropertyName("mode")]
+    public string Mode { get; init; } = SpatialPromotionModes.SplitMany;
+
+    [JsonPropertyName("target_status")]
+    public string TargetStatus { get; init; } = ProjectBoardTaskStatuses.Ready;
+
+    [JsonPropertyName("priority")]
+    public string? Priority { get; init; }
+
+    [JsonPropertyName("assignee")]
+    public ProjectBoardAssigneeDto? Assignee { get; init; }
+
+    [JsonPropertyName("labels")]
+    public List<string>? Labels { get; init; }
+
+    [JsonPropertyName("viewport_hint")]
+    public JsonElement? ViewportHint { get; init; }
+
+    [JsonPropertyName("writer_id")]
+    public string? WriterId { get; init; }
+}
+
+public sealed class SpatialObjectTaskLinkDto
+{
+    [JsonPropertyName("object_id")]
+    public string ObjectId { get; init; } = string.Empty;
+
+    [JsonPropertyName("task_id")]
+    public Guid TaskId { get; init; }
+
+    [JsonPropertyName("task_key")]
+    public string TaskKey { get; init; } = string.Empty;
+}
+
+public sealed class PromoteFromSpatialResultDto
+{
+    [JsonPropertyName("mode")]
+    public string Mode { get; init; } = SpatialPromotionModes.SplitMany;
+
+    [JsonPropertyName("parent_task_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public Guid? ParentTaskId { get; init; }
+
+    [JsonPropertyName("tasks")]
+    public List<ProjectBoardTaskDto> Tasks { get; init; } = [];
+
+    [JsonPropertyName("updated_object_links")]
+    public List<SpatialObjectTaskLinkDto> UpdatedObjectLinks { get; init; } = [];
+
+    [JsonPropertyName("spatial_seq")]
+    public long SpatialSeq { get; init; }
+}

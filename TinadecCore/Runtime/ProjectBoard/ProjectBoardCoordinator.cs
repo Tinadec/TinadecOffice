@@ -9,6 +9,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
+using TinadecCore.Runtime.SpatialBoard;
 
 namespace TinadecCore.Runtime.ProjectBoard;
 
@@ -632,6 +633,247 @@ public sealed class ProjectBoardCoordinator
         }, cancellationToken).ConfigureAwait(false);
 
         return true;
+    }
+
+    public async Task<PromoteFromSpatialResultDto> PromoteFromSpatialAsync(
+        Guid projectId,
+        PromoteFromSpatialRequest request,
+        SpatialBoardCoordinator? spatialCoordinatorOverride = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.SessionId == Guid.Empty)
+            throw new ArgumentException("session_id is required.");
+
+        var requestedIds = (request.ObjectIds ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (requestedIds.Count == 0)
+            throw new ArgumentException("object_ids must contain at least one spatial object id.");
+
+        var mode = request.Mode is null
+            ? SpatialPromotionModes.SplitMany
+            : request.Mode.Trim().ToLowerInvariant();
+        if (!SpatialPromotionModes.IsValid(mode))
+            throw new ArgumentException("mode must be one of: merge_single, split_many, parent_with_children.");
+
+        var targetStatus = request.TargetStatus is null
+            ? ProjectBoardTaskStatuses.Ready
+            : request.TargetStatus.Trim().ToLowerInvariant();
+        if (!ProjectBoardTaskStatuses.IsValid(targetStatus) || targetStatus == ProjectBoardTaskStatuses.Done)
+            throw new ArgumentException("target_status must be a valid non-terminal board status (backlog, ready, in_progress, or in_review).");
+
+        var priority = request.Priority is null
+            ? ProjectBoardPriorities.None
+            : NormalizePriority(request.Priority);
+        var assignee = NormalizeAssignee(request.Assignee);
+        var labels = NormalizeLabels(request.Labels);
+        JsonElement? viewportHint = request.ViewportHint is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } vh
+            ? vh.Clone()
+            : null;
+        var writerId = !string.IsNullOrWhiteSpace(request.WriterId)
+            ? request.WriterId.Trim()
+            : "board_promoter";
+
+        await EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        var project = await RequireActiveProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+        var spatialCoordinator = spatialCoordinatorOverride ?? _services.GetRequiredService<SpatialBoardCoordinator>();
+        var snapshot = await spatialCoordinator.GetSnapshotAsync(request.SessionId, includeDeleted: false, cancellationToken).ConfigureAwait(false);
+
+        var selectedObjects = new List<SpatialBoardObjectDto>(requestedIds.Count);
+        foreach (var id in requestedIds)
+        {
+            if (!snapshot.Objects.TryGetValue(id, out var obj) || obj.Deleted)
+                throw new KeyNotFoundException($"Spatial object '{id}' was not found on session '{request.SessionId}'.");
+            selectedObjects.Add(obj);
+        }
+
+        var gate = GetProjectGate(projectId);
+        ProjectBoardSpatialPromoter.PromotionPlan plan;
+        var createdDtos = new List<ProjectBoardTaskDto>();
+        var updatedLinks = new List<SpatialObjectTaskLinkDto>();
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var settings = await GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
+            var existingRows = await db.BoardTasks
+                .Where(x => x.ProjectId == projectId && !x.Deleted)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var existingGraph = BuildGraphMap(existingRows);
+            plan = ProjectBoardSpatialPromoter.BuildPlan(mode, selectedObjects, snapshot, existingGraph);
+
+            var combinedGraph = new Dictionary<Guid, (Guid? ParentId, List<Guid> DependsOn)>(existingGraph);
+            foreach (var planned in plan.Tasks)
+                combinedGraph[planned.TaskId] = (planned.ParentTaskId, [.. planned.DependsOn]);
+
+            foreach (var planned in plan.Tasks)
+            {
+                ValidateNoCyclesOrThrow(
+                    planned.TaskId,
+                    planned.ParentTaskId,
+                    planned.DependsOn,
+                    combinedGraph,
+                    requireExistingReferences: true);
+            }
+
+            var allRows = new List<ProjectBoardTaskRecord>(existingRows);
+            var statusSortKeys = existingRows
+                .Where(r => r.Status == targetStatus)
+                .Select(r => r.SortKey)
+                .ToList();
+            var seenLinkedObjects = new HashSet<string>(StringComparer.Ordinal);
+            var nowMs = NowUnixMs();
+
+            foreach (var planned in plan.Tasks)
+            {
+                var taskKey = AllocateNextTaskKey(settings, allRows);
+                var sortKey = ProjectBoardFractionalIndex.Normalize(null, statusSortKeys);
+                statusSortKeys.Add(sortKey);
+
+                var normalizedChecklist = NormalizeChecklist(planned.Checklist);
+                var spatialRef = NormalizeSpatialRef(new ProjectBoardSpatialRefDto
+                {
+                    SessionId = request.SessionId,
+                    ObjectId = planned.PrimaryObjectId,
+                    ViewportHint = viewportHint
+                });
+
+                var record = new ProjectBoardTaskRecord
+                {
+                    TaskId = planned.TaskId,
+                    ProjectId = projectId,
+                    TaskKey = taskKey,
+                    Title = planned.Title,
+                    DescriptionMd = ProjectBoardMarkdownCodec.NormalizeLineEndings(planned.DescriptionMd).Trim(),
+                    ChecklistJson = JsonSerializer.Serialize(normalizedChecklist, ProjectBoardMarkdownCodec.CanonicalJson),
+                    Status = targetStatus,
+                    Priority = priority,
+                    Blocked = false,
+                    BlockedReason = null,
+                    AssigneeJson = assignee is null ? null : JsonSerializer.Serialize(assignee, ProjectBoardMarkdownCodec.CanonicalJson),
+                    ParentTaskId = planned.ParentTaskId,
+                    DependsOnJson = JsonSerializer.Serialize(planned.DependsOn, ProjectBoardMarkdownCodec.CanonicalJson),
+                    LabelsJson = JsonSerializer.Serialize(labels, ProjectBoardMarkdownCodec.CanonicalJson),
+                    SpatialRefJson = spatialRef is null ? null : JsonSerializer.Serialize(spatialRef, ProjectBoardMarkdownCodec.CanonicalJson),
+                    SortKey = sortKey,
+                    Revision = 1,
+                    CreatedAtUnixMs = nowMs,
+                    UpdatedAtUnixMs = nowMs,
+                    Deleted = false
+                };
+
+                db.BoardTasks.Add(record);
+                allRows.Add(record);
+                createdDtos.Add(ToTaskDto(record, project.Name, syncRow: null));
+
+                foreach (var linkedObjId in planned.LinkedObjectIds)
+                {
+                    if (seenLinkedObjects.Add(linkedObjId))
+                    {
+                        updatedLinks.Add(new SpatialObjectTaskLinkDto
+                        {
+                            ObjectId = linkedObjId,
+                            TaskId = record.TaskId,
+                            TaskKey = record.TaskKey
+                        });
+                    }
+                }
+            }
+
+            settings.UpdatedAtUnixMs = nowMs;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        var syncHook = GetSyncHook();
+        var finalDtos = new List<ProjectBoardTaskDto>(createdDtos.Count);
+        foreach (var dto in createdDtos)
+        {
+            var current = dto;
+            if (syncHook is not null)
+            {
+                await syncHook.ExportTaskToMarkdownAsync(projectId, dto.TaskId, cancellationToken).ConfigureAwait(false);
+                current = (await GetTaskAsync(projectId, dto.TaskId, cancellationToken).ConfigureAwait(false)) ?? dto;
+            }
+
+            finalDtos.Add(current);
+
+            await PublishEventAsync(new ProjectBoardEventDto
+            {
+                EventType = "task_upserted",
+                ProjectId = projectId,
+                TaskId = current.TaskId,
+                Task = current,
+                OccurredAtUnixMs = current.UpdatedAtUnixMs
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        var latestSnapshot = await spatialCoordinator
+            .GetSnapshotAsync(request.SessionId, includeDeleted: true, cancellationToken)
+            .ConfigureAwait(false);
+
+        var spatialOps = new List<SpatialPropertyOpDto>(updatedLinks.Count);
+        foreach (var link in updatedLinks)
+        {
+            long maxLamport = 0;
+            if (latestSnapshot.Objects.TryGetValue(link.ObjectId, out var spatialObj))
+            {
+                if (spatialObj.DeletedTs is { } delTs && delTs.Lamport > maxLamport)
+                    maxLamport = delTs.Lamport;
+                foreach (var ts in spatialObj.PropTimestamps.Values)
+                {
+                    if (ts.Lamport > maxLamport)
+                        maxLamport = ts.Lamport;
+                }
+            }
+
+            var nextTs = new SpatialLwwTimestampDto(maxLamport + 1, writerId);
+            spatialOps.Add(new SpatialPropertyOpDto
+            {
+                ClientOpId = $"promote-{link.ObjectId}-{link.TaskKey}",
+                ObjectId = link.ObjectId,
+                Props = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+                {
+                    ["board_task_id"] = JsonSerializer.SerializeToElement(link.TaskId.ToString("D")),
+                    ["board_task_key"] = JsonSerializer.SerializeToElement(link.TaskKey)
+                },
+                Timestamps = new Dictionary<string, SpatialLwwTimestampDto>(StringComparer.Ordinal)
+                {
+                    ["props.board_task_id"] = nextTs,
+                    ["props.board_task_key"] = nextTs
+                }
+            });
+        }
+
+        var opsResult = await spatialCoordinator.ApplyOpsAsync(
+            request.SessionId,
+            new SpatialBoardOpsRequestDto
+            {
+                ClientId = writerId,
+                BaseSeq = latestSnapshot.Seq,
+                Ops = spatialOps
+            },
+            senderConnectionId: null,
+            cancellationToken).ConfigureAwait(false);
+
+        return new PromoteFromSpatialResultDto
+        {
+            Mode = mode,
+            ParentTaskId = plan.ParentTaskId,
+            Tasks = finalDtos,
+            UpdatedObjectLinks = updatedLinks,
+            SpatialSeq = opsResult.Seq
+        };
     }
 
     internal async Task<ProjectBoardTaskDto?> MutateTaskRuntimeStateAsync(
@@ -1440,11 +1682,15 @@ public sealed class ProjectBoardCoordinator
         if (spatialRef.SessionId == Guid.Empty || string.IsNullOrWhiteSpace(spatialRef.ObjectId))
             throw new ArgumentException("spatial_ref requires a valid session_id and non-empty object_id.");
 
+        JsonElement? viewportHint = spatialRef.ViewportHint is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } vh
+            ? vh.Clone()
+            : null;
+
         return new ProjectBoardSpatialRefDto
         {
             SessionId = spatialRef.SessionId,
             ObjectId = spatialRef.ObjectId.Trim(),
-            ViewportHint = spatialRef.ViewportHint?.Clone()
+            ViewportHint = viewportHint
         };
     }
 

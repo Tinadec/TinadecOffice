@@ -267,6 +267,117 @@ public sealed class SpatialBoardEndpointsTests : IAsyncLifetime
         await sockB.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", cts.Token);
     }
 
+    [Fact]
+    public async Task SpatialBoard_AcceptsBoardKindWithViewProjectionMetadata_AndRejectsTaskPayloadDuplicationWith400()
+    {
+        using var client = _factory!.CreateClient();
+
+        var workspaceDir = Path.Combine(_root, "board-widget-workspace");
+        Directory.CreateDirectory(workspaceDir);
+        var projResp = await client.PostAsJsonAsync("/api/v1/projects", new { name = "BoardWidgetProj", path = workspaceDir });
+        projResp.EnsureSuccessStatusCode();
+        var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var sessResp = await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = projectId, title = "Spatial Board Widget Session" });
+        sessResp.EnsureSuccessStatusCode();
+        var sessionId = (await sessResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        // 1. Valid kind = "board" with view projection metadata props succeeds with default 780x480 size
+        var validBoardOps = new SpatialBoardOpsRequestDto
+        {
+            ClientId = "canvas-ui",
+            BaseSeq = 0,
+            Ops =
+            [
+                new SpatialPropertyOpDto
+                {
+                    ClientOpId = "op-board-1",
+                    ObjectId = "board-widget-1",
+                    Kind = "board",
+                    X = 160,
+                    Y = 120,
+                    Props = new Dictionary<string, JsonElement>
+                    {
+                        ["project_id"] = JsonSerializer.SerializeToElement(projectId.ToString("D")),
+                        ["title"] = JsonSerializer.SerializeToElement("Frontend Sprint View"),
+                        ["layout"] = JsonSerializer.SerializeToElement("kanban"),
+                        ["group_by"] = JsonSerializer.SerializeToElement("status"),
+                        ["swimlane_by"] = JsonSerializer.SerializeToElement((string?)null),
+                        ["sort_by"] = JsonSerializer.SerializeToElement("manual"),
+                        ["filters"] = JsonSerializer.SerializeToElement(new { labels = new[] { "frontend" }, needs_my_action = true }),
+                        ["visible_fields"] = JsonSerializer.SerializeToElement(new[] { "live_digest", "spatial_ref" }),
+                        ["compact"] = JsonSerializer.SerializeToElement(true),
+                        ["saved_view_id"] = JsonSerializer.SerializeToElement((string?)null)
+                    }
+                }
+            ]
+        };
+
+        var validResp = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/spatial-board/ops", validBoardOps);
+        Assert.Equal(HttpStatusCode.OK, validResp.StatusCode);
+        var validBody = (await validResp.Content.ReadFromJsonAsync<SpatialBoardOpsResponseDto>())!;
+        Assert.Contains("op-board-1", validBody.AcceptedOpIds);
+        var boardObj = validBody.Objects["board-widget-1"];
+        Assert.Equal("board", boardObj.Kind);
+        Assert.Equal(780, boardObj.Width);
+        Assert.Equal(480, boardObj.Height);
+        Assert.Equal("kanban", boardObj.Props["layout"].GetString());
+
+        // 2. Forbidden task-payload keys (tasks, cards, items, columns_data, task_list) on kind = "board" return 400 board_props_invalid
+        foreach (var forbiddenKey in new[] { "tasks", "cards", "items", "columns_data", "task_list" })
+        {
+            var badCreateResp = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/spatial-board/ops", new
+            {
+                client_id = "canvas-ui",
+                base_seq = validBody.Seq,
+                ops = new[]
+                {
+                    new
+                    {
+                        client_op_id = $"bad-{forbiddenKey}",
+                        object_id = $"bad-board-{forbiddenKey}",
+                        kind = "board",
+                        props = new Dictionary<string, object>
+                        {
+                            ["project_id"] = projectId.ToString("D"),
+                            [forbiddenKey] = new[] { new { title = "Duplicated task payload" } }
+                        }
+                    }
+                }
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, badCreateResp.StatusCode);
+            var errJson = await badCreateResp.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("board_props_invalid", errJson.GetProperty("code").GetString());
+        }
+
+        // 3. Patching an existing kind = "board" object (omitting kind in op) with tasks/cards is also rejected with 400 board_props_invalid
+        var badPatchResp = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/spatial-board/ops", new
+        {
+            client_id = "canvas-ui",
+            base_seq = validBody.Seq,
+            ops = new[]
+            {
+                new
+                {
+                    client_op_id = "bad-patch-existing-board",
+                    object_id = "board-widget-1",
+                    props = new Dictionary<string, object>
+                    {
+                        ["cards"] = new[] { new { id = "TIN-1" } }
+                    }
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, badPatchResp.StatusCode);
+        var patchErrJson = await badPatchResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("board_props_invalid", patchErrJson.GetProperty("code").GetString());
+
+        // Verify snapshot was not polluted by any rejected batch
+        var afterSnap = (await client.GetFromJsonAsync<SpatialBoardSnapshotDto>($"/api/v1/sessions/{sessionId}/spatial-board"))!;
+        Assert.Single(afterSnap.Objects);
+        Assert.False(afterSnap.Objects["board-widget-1"].Props.ContainsKey("cards"));
+    }
+
     private static async Task SendJsonAsync(WebSocket socket, object payload, CancellationToken ct)
     {
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));

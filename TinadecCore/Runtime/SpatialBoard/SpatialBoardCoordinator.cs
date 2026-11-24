@@ -25,7 +25,19 @@ public sealed class SpatialBoardCoordinator
         "text",
         "drawing",
         "media",
-        "connector"
+        "connector",
+        "board"
+    };
+
+    private static readonly HashSet<string> ForbiddenBoardPropKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tasks",
+        "items",
+        "cards",
+        "columns_data",
+        "columnsdata",
+        "task_list",
+        "tasklist"
     };
 
     private static readonly JsonSerializerOptions StorageJson = new()
@@ -188,6 +200,8 @@ public sealed class SpatialBoardCoordinator
                     Objects = new Dictionary<string, SpatialBoardObjectDto>(StringComparer.Ordinal)
                 };
             }
+
+            ValidateBoardObjectPropsOrThrow(ops, state.Objects, writerId);
 
             var nowMs = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
             var dirtyObjectIds = new HashSet<string>(StringComparer.Ordinal);
@@ -1130,8 +1144,101 @@ public sealed class SpatialBoardCoordinator
         return trimmed + "V";
     }
 
+    private static void ValidateBoardObjectPropsOrThrow(
+        IReadOnlyList<SpatialPropertyOpDto> ops,
+        IReadOnlyDictionary<string, MutableBoardObject> existingObjects,
+        string writerId)
+    {
+        var simulatedKinds = new Dictionary<string, (string Kind, SpatialLwwTimestampDto? KindTs)>(StringComparer.Ordinal);
+
+        foreach (var op in ops)
+        {
+            var objectId = op.ObjectId?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(objectId) || objectId.Length > 128)
+                continue;
+
+            string? normalizedKind = null;
+            if (!string.IsNullOrWhiteSpace(op.Kind))
+            {
+                normalizedKind = op.Kind.Trim().ToLowerInvariant();
+                if (!AllowedObjectKinds.Contains(normalizedKind))
+                    continue;
+            }
+
+            existingObjects.TryGetValue(objectId, out var existingObj);
+
+            string currentKind;
+            SpatialLwwTimestampDto? currentKindTs;
+            if (simulatedKinds.TryGetValue(objectId, out var sim))
+            {
+                currentKind = sim.Kind;
+                currentKindTs = sim.KindTs;
+            }
+            else if (existingObj is not null)
+            {
+                currentKind = existingObj.Kind;
+                currentKindTs = GetExistingFieldTimestamp(existingObj, "kind", null);
+            }
+            else
+            {
+                currentKind = normalizedKind ?? "sticky";
+                currentKindTs = null;
+            }
+
+            var effectiveKind = currentKind;
+            var effectiveKindTs = currentKindTs;
+            if (normalizedKind is not null)
+            {
+                var fallbackTs = existingObj is not null
+                    ? BuildFallbackTimestamp(existingObj, op, writerId)
+                    : new SpatialLwwTimestampDto(1, writerId);
+                var incomingKindTs = ResolveFieldTimestamp(op.Timestamps, "kind", null, writerId, fallbackTs);
+                if (ShouldWinLww(incomingKindTs, currentKindTs))
+                {
+                    effectiveKind = normalizedKind;
+                    effectiveKindTs = incomingKindTs;
+                }
+            }
+
+            simulatedKinds[objectId] = (effectiveKind, effectiveKindTs);
+
+            if (!string.Equals(effectiveKind, "board", StringComparison.Ordinal))
+                continue;
+
+            if (op.Props is not null)
+            {
+                foreach (var propKey in op.Props.Keys)
+                {
+                    if (string.IsNullOrWhiteSpace(propKey)) continue;
+                    var trimmedKey = propKey.Trim();
+                    if (ForbiddenBoardPropKeys.Contains(trimmedKey))
+                    {
+                        throw new SpatialBoardValidationException(
+                            "board_props_invalid",
+                            $"Spatial object '{objectId}' of kind 'board' must only store view projection metadata in props; forbidden task payload key '{trimmedKey}' is not allowed.");
+                    }
+                }
+            }
+
+            if (existingObj is not null && !string.Equals(existingObj.Kind, "board", StringComparison.Ordinal))
+            {
+                foreach (var existingKey in existingObj.Props.Keys)
+                {
+                    var trimmedExisting = existingKey.Trim();
+                    if (ForbiddenBoardPropKeys.Contains(trimmedExisting))
+                    {
+                        throw new SpatialBoardValidationException(
+                            "board_props_invalid",
+                            $"Spatial object '{objectId}' cannot be converted to kind 'board' while props contain forbidden task payload key '{trimmedExisting}'.");
+                    }
+                }
+            }
+        }
+    }
+
     private static (double Width, double Height) DefaultDimensionsForKind(string kind) => kind switch
     {
+        "board" => (780, 480),
         "section" => (640, 420),
         "work" => (320, 180),
         "sticky" => (220, 220),

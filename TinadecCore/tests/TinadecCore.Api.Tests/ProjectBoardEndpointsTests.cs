@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
@@ -118,6 +119,7 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
         Assert.Contains("/api/v1/board/summary", openApiJson);
         Assert.Contains("/api/v1/board/views", openApiJson);
         Assert.Contains("/board/tasks", openApiJson);
+        Assert.Contains("/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", openApiJson);
 
         // 2. Create two projects for cross-project global board verification
         var repoA = Path.Combine(_root, "project-alpha");
@@ -391,6 +393,45 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
 
             var patchWithoutHeader = await client.PatchAsJsonAsync($"/api/v1/board/views/{createdView.ViewId}", new { name = "Renamed View" }, sseCts.Token);
             Assert.Equal(HttpStatusCode.OK, patchWithoutHeader.StatusCode);
+
+            // Promote spatial objects inside managed project scope -> creates tasks & stamps board_task_id/board_task_key
+            Guid scopedSessionId;
+            using (var createSess = new HttpRequestMessage(HttpMethod.Post, "/api/v1/sessions")
+            {
+                Content = JsonContent.Create(new { project_id = projectOneId, title = "Scoped Canvas" })
+            })
+            {
+                createSess.Headers.Add("X-Tinadec-Storage-Id", storageOneId);
+                var sessResp = await client.SendAsync(createSess, sseCts.Token);
+                sessResp.EnsureSuccessStatusCode();
+                scopedSessionId = (await sessResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: sseCts.Token)).GetProperty("id").GetGuid();
+            }
+
+            using (var opsReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{scopedSessionId}/spatial-board/ops")
+            {
+                Content = JsonContent.Create(new
+                {
+                    client_id = "scoped-ui",
+                    ops = new[]
+                    {
+                        new { client_op_id = "s-op-1", object_id = "scoped-sticky-1", kind = "sticky", props = new { text = "Scoped promoted sticky" } }
+                    }
+                })
+            })
+            {
+                opsReq.Headers.Add("X-Tinadec-Storage-Id", storageOneId);
+                var opsResp = await client.SendAsync(opsReq, sseCts.Token);
+                Assert.Equal(HttpStatusCode.OK, opsResp.StatusCode);
+            }
+
+            var scopedPromoteResp = await client.PostAsJsonAsync(
+                $"/api/v1/projects/{projectOneId}/board/tasks/promote-from-spatial",
+                new { session_id = scopedSessionId, object_ids = new[] { "scoped-sticky-1" }, mode = "split_many", target_status = "ready" },
+                sseCts.Token);
+            Assert.Equal(HttpStatusCode.OK, scopedPromoteResp.StatusCode);
+            var scopedPromoted = (await scopedPromoteResp.Content.ReadFromJsonAsync<PromoteFromSpatialResultDto>(cancellationToken: sseCts.Token))!;
+            Assert.Single(scopedPromoted.Tasks);
+            Assert.Null(scopedPromoted.ParentTaskId);
         }
         finally
         {
@@ -398,6 +439,150 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
             SqliteConnection.ClearAllPools();
             try { if (Directory.Exists(managedRoot)) Directory.Delete(managedRoot, recursive: true); } catch { }
         }
+    }
+
+    [Fact]
+    public async Task PromoteFromSpatialEndpoint_ValidatesInputs_SupportsAllModes_AndBroadcastsLiveTaskLinksOverSpatialWebSocket()
+    {
+        using var client = _factory!.CreateClient();
+
+        var repoDir = Path.Combine(_root, "spatial-promote-http");
+        Directory.CreateDirectory(repoDir);
+        var projResp = await client.PostAsJsonAsync("/api/v1/projects", new { name = "TinadecStudio", path = repoDir });
+        projResp.EnsureSuccessStatusCode();
+        var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var sessResp = await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = projectId, title = "Architecture Jam" });
+        sessResp.EnsureSuccessStatusCode();
+        var sessionId = (await sessResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        // 1. Validation: empty object_ids -> 400, invalid mode -> 400, terminal target_status "done" -> 400, missing object -> 404
+        var emptyIdsResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyIdsResp.StatusCode);
+
+        var badModeResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = new[] { "s1" },
+            mode = "unknown_mode"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, badModeResp.StatusCode);
+
+        var doneStatusResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = new[] { "s1" },
+            target_status = "done"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, doneStatusResp.StatusCode);
+
+        var missingObjResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = new[] { "does-not-exist" }
+        });
+        Assert.Equal(HttpStatusCode.NotFound, missingObjResp.StatusCode);
+
+        // 2. Seed spatial section + stickies + connector
+        var seedResp = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/spatial-board/ops", new
+        {
+            client_id = "jam-user",
+            ops = new object[]
+            {
+                new { client_op_id = "op-sec", object_id = "sec-1", kind = "section", x = 50, y = 50, props = new { title = "Phase 2 Bridge" } },
+                new { client_op_id = "op-s1", object_id = "s-1", kind = "sticky", parent_id = "sec-1", has_parent_id = true, x = 80, y = 100, props = new { text = "Implement Split Button" } },
+                new { client_op_id = "op-s2", object_id = "s-2", kind = "sticky", parent_id = "sec-1", has_parent_id = true, x = 320, y = 100, props = new { text = "Render Live Status Pill" } },
+                new { client_op_id = "op-conn", object_id = "conn-1", kind = "connector", props = new { sourceId = "s-1", targetId = "s-2" } }
+            }
+        });
+        Assert.Equal(HttpStatusCode.OK, seedResp.StatusCode);
+
+        // 3. Connect a live spatial WebSocket peer to verify promotion broadcasts board_task_id/board_task_key in real time!
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var wsClient = _factory.Server.CreateWebSocketClient();
+        var wsUri = new Uri(_factory.Server.BaseAddress, $"/api/v1/sessions/{sessionId}/spatial-board/ws?client_id=observer-1");
+        using var ws = await wsClient.ConnectAsync(wsUri, cts.Token);
+        _ = await ReadWsFrameOfTypeAsync(ws, "snapshot", cts.Token);
+
+        // 4. Promote via parent_with_children and verify parent_task_id JSON serialization, links, and WS broadcast
+        var promoteResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = new[] { "sec-1" },
+            mode = "parent_with_children",
+            target_status = "ready",
+            priority = "high",
+            labels = new[] { "bridge" },
+            viewport_hint = new { x = 50, y = 50, zoom = 1.0 }
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, promoteResp.StatusCode);
+        var rawJson = await promoteResp.Content.ReadAsStringAsync(cts.Token);
+        using (var doc = JsonDocument.Parse(rawJson))
+        {
+            Assert.True(doc.RootElement.TryGetProperty("parent_task_id", out var ptEl));
+            Assert.Equal(JsonValueKind.String, ptEl.ValueKind);
+        }
+
+        var promoted = JsonSerializer.Deserialize<PromoteFromSpatialResultDto>(rawJson, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        })!;
+        Assert.Equal("parent_with_children", promoted.Mode);
+        Assert.NotNull(promoted.ParentTaskId);
+        Assert.Equal(3, promoted.Tasks.Count);
+        Assert.Equal(3, promoted.UpdatedObjectLinks.Count);
+        Assert.Contains(promoted.Tasks[1].TaskId, promoted.Tasks[2].DependsOn);
+
+        var broadcast = await ReadWsFrameOfTypeAsync(ws, "ops_broadcast", cts.Token);
+        var broadcastObjects = broadcast.GetProperty("objects");
+        Assert.Equal(promoted.Tasks[0].TaskKey, broadcastObjects.GetProperty("sec-1").GetProperty("props").GetProperty("board_task_key").GetString());
+        Assert.Equal(promoted.Tasks[1].TaskKey, broadcastObjects.GetProperty("s-1").GetProperty("props").GetProperty("board_task_key").GetString());
+        Assert.Equal(promoted.Tasks[2].TaskKey, broadcastObjects.GetProperty("s-2").GetProperty("props").GetProperty("board_task_key").GetString());
+
+        // Also verify merge_single serializes "parent_task_id": null explicitly
+        var mergeResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", new
+        {
+            session_id = sessionId,
+            object_ids = new[] { "s-1", "s-2" },
+            mode = "merge_single",
+            target_status = "backlog"
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, mergeResp.StatusCode);
+        var mergeJson = await mergeResp.Content.ReadAsStringAsync(cts.Token);
+        using (var mergeDoc = JsonDocument.Parse(mergeJson))
+        {
+            Assert.True(mergeDoc.RootElement.TryGetProperty("parent_task_id", out var nullParentEl));
+            Assert.Equal(JsonValueKind.Null, nullParentEl.ValueKind);
+        }
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", cts.Token);
+    }
+
+    private static async Task<JsonElement> ReadWsFrameOfTypeAsync(WebSocket socket, string expectedType, CancellationToken ct)
+    {
+        var buffer = new byte[64 * 1024];
+        for (var i = 0; i < 16; i++)
+        {
+            using var ms = new MemoryStream();
+            WebSocketReceiveResult result;
+            do
+            {
+                result = await socket.ReceiveAsync(buffer, ct);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    throw new InvalidOperationException($"WebSocket closed before receiving '{expectedType}'.");
+                ms.Write(buffer, 0, result.Count);
+            }
+            while (!result.EndOfMessage);
+
+            var root = JsonDocument.Parse(ms.ToArray()).RootElement.Clone();
+            if (root.TryGetProperty("type", out var t) && t.GetString() == expectedType)
+                return root;
+        }
+        throw new TimeoutException($"Did not observe '{expectedType}' frame.");
     }
 
     private static async Task<(string EventType, string Data)> ReadNextSseEventAsync(StreamReader reader, CancellationToken ct)

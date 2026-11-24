@@ -26,7 +26,7 @@ public sealed class SpatialBoardObjectDto
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
-    /// <summary>Supported kinds: <c>work</c>, <c>section</c>, <c>sticky</c>, <c>text</c>, <c>drawing</c>, <c>media</c>, <c>connector</c>.</summary>
+    /// <summary>Supported kinds: <c>work</c>, <c>section</c>, <c>sticky</c>, <c>text</c>, <c>drawing</c>, <c>media</c>, <c>connector</c>, <c>board</c>.</summary>
     [JsonPropertyName("kind")]
     public string Kind { get; init; } = "sticky";
 
