@@ -27,6 +27,8 @@ public sealed class CreateSessionRequest
     // request fails with conversation_identity_invalid. Frozen after creation —
     // immutable across mode switches.
     public string? ConversationNodeKey { get; set; }
+    public string? Origin { get; set; }
+    public Guid? BoardTaskId { get; set; }
 }
 
 public sealed class UpdateSessionRequest

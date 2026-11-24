@@ -51,6 +51,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapFilesystemBrowseEndpoints();
         endpoints.MapApprovalRuleEndpoints();
         endpoints.MapProjectOverviewEndpoints();
+        endpoints.MapProjectBoardEndpoints();
         endpoints.MapStubEndpoints();
         endpoints.MapAuthEndpoints();
         return endpoints;

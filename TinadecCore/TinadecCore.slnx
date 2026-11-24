@@ -35,6 +35,7 @@
     <Project Path="tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj" />
     <Project Path="tests/TinadecCore.AgentFramework.Tests/TinadecCore.AgentFramework.Tests.csproj" />
     <Project Path="tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj" />
+    <Project Path="tests/TinadecCore.Context.Tests/TinadecCore.Context.Tests.csproj" />
     <Project Path="tests/TinadecCore.Governance.Tests/TinadecCore.Governance.Tests.csproj" />
   </Folder>
 </Solution>

@@ -17,6 +17,7 @@ using TinadecCore.Tenancy;
 using TinadecCore.AgentGraph;
 using TinadecCore.Companion;
 using TinadecCore.Exploration;
+using TinadecCore.Runtime.ProjectBoard;
 using TinadecCore.Runtime.SpatialBoard;
 using TinadecCore.TinaChat;
 using TinadecCore.Tools;
@@ -87,6 +88,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // because only the host reads across those modules. Serves graph_view and the topology endpoint.
         services.AddSingleton<ISessionTopology, SessionTopologyService>();
         services.AddTinadecSpatialBoard();
+        services.AddTinadecProjectBoard();
         // The tinadec_* workbench tools: Tools only knows the port, Runtime owns the
         // implementation because configuration, skills, MCP and market all meet here.
         services.AddSingleton<TinadecConfigToolGateway>();

@@ -101,9 +101,14 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         Guid? stableSessionId = null,
         string viewMode = "flat",
         string? permissionMode = null,
-        SpaceRunOptions? spaceOptions = null)
+        SpaceRunOptions? spaceOptions = null,
+        string? origin = null,
+        Guid? boardTaskId = null)
     {
         if (viewMode is not ("flat" or "space")) throw new ArgumentException("view_mode must be flat or space.", nameof(viewMode));
+        var normalizedOrigin = string.IsNullOrWhiteSpace(origin) ? null : origin.Trim();
+        if (normalizedOrigin is { Length: > 64 }) throw new ArgumentException("origin must be at most 64 characters.", nameof(origin));
+        if (boardTaskId == Guid.Empty) throw new ArgumentException("board_task_id must not be empty.", nameof(boardTaskId));
         ValidateSessionSettings(viewMode, permissionMode, spaceOptions);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
@@ -127,6 +132,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             ModeVersionId = modeVersionId,
             ViewMode = viewMode,
             PermissionMode = permissionMode ?? "default",
+            Origin = normalizedOrigin,
+            BoardTaskId = boardTaskId,
             SpaceOptionsJson = spaceOptions is not null
                 ? JsonSerializer.Serialize(SpaceRunOptions.Normalize(spaceOptions), JsonOptions)
                 : viewMode == "space"
@@ -157,6 +164,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             if (existing.TenantId != scope.TenantId || existing.WorkspaceId != scope.WorkspaceId
                 || existing.ProjectId != projectId || existing.ModeVersionId != modeVersionId
                 || (existing.ViewMode ?? "flat") != viewMode
+                || existing.Origin != normalizedOrigin || existing.BoardTaskId != boardTaskId
                 || existing.ConversationNodeKey != conversationNodeKey || existing.ConversationTemplateSlug != conversationTemplateSlug
                 || existing.LifecycleStatus != LifecycleStatuses.Active)
                 throw new InvalidOperationException("The stable session identifier is already bound to different inputs.");

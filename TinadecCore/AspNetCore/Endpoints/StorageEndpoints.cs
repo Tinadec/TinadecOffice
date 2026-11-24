@@ -212,7 +212,8 @@ public static class StorageEndpoints
                     modelOverride = new SessionModelOverride(requestedOverride.ProviderInstanceId, requestedOverride.Model);
                 }
                 var session = await store.CreateSessionAsync(projectId, request.Title, modeVersionId.Value, modelOverride, conversationNodeKey, conversationTemplateSlug, ct,
-                    viewMode: request.ViewMode ?? "flat", permissionMode: request.PermissionMode, spaceOptions: spaceOptions).ConfigureAwait(false);
+                    viewMode: request.ViewMode ?? "flat", permissionMode: request.PermissionMode, spaceOptions: spaceOptions,
+                    origin: request.Origin, boardTaskId: request.BoardTaskId).ConfigureAwait(false);
                 return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, globalConfig, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "PROJECT_NOT_FOUND" }); }
@@ -538,6 +539,7 @@ public static class StorageEndpoints
         id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status,
         mode_version_id = session.ModeVersionId,
         view_mode = session.ViewMode ?? "flat",
+        origin = session.Origin, board_task_id = session.BoardTaskId,
         permission_mode = session.PermissionMode ?? "default", space_options = ToSpaceOptionsDto(ProjectSessionStore.ReadSpaceOptions(session)), settings_revision = session.SettingsRevision,
         meeting_model_override = ToMeetingModelOverride(session), summary = session.Summary,
         history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt,
@@ -607,7 +609,7 @@ public static class StorageEndpoints
             latestModeVersionId = resolvedDefault;
             hasUpdate = session.ModeVersionId != resolvedDefault;
         }
-        return new { id = session.Id, storage_id = storageId, project_id = session.ProjectId, title = session.Title, status = session.Status, view_mode = session.ViewMode ?? "flat", mode_version_id = session.ModeVersionId, conversation_node_key = session.ConversationNodeKey, conversation_template_slug = session.ConversationTemplateSlug, meeting_model_override = ToMeetingModelOverride(session), permission_mode = session.PermissionMode ?? "default", space_options = ToSpaceOptionsDto(ProjectSessionStore.ReadSpaceOptions(session)), settings_revision = session.SettingsRevision, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, lifecycle_status = session.LifecycleStatus, trashed_at = session.TrashedAt };
+        return new { id = session.Id, storage_id = storageId, project_id = session.ProjectId, title = session.Title, status = session.Status, view_mode = session.ViewMode ?? "flat", origin = session.Origin, board_task_id = session.BoardTaskId, mode_version_id = session.ModeVersionId, conversation_node_key = session.ConversationNodeKey, conversation_template_slug = session.ConversationTemplateSlug, meeting_model_override = ToMeetingModelOverride(session), permission_mode = session.PermissionMode ?? "default", space_options = ToSpaceOptionsDto(ProjectSessionStore.ReadSpaceOptions(session)), settings_revision = session.SettingsRevision, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, lifecycle_status = session.LifecycleStatus, trashed_at = session.TrashedAt };
     }
 
     internal static SpaceRunOptions? ToSpaceOptions(SpaceRunOptionsDto? options) => options is null ? null
