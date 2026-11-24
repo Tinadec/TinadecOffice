@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, Cpu, Dna, ThumbsDown, Workflow } from '@lucide/vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   api as baseApi,
@@ -11,14 +11,14 @@ import {
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSelectField, UiSheet, UiSkeleton } from '@/components/ui'
-import { useNotifications } from '@/composables/useNotifications'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
 import { pickLocalized } from '@/lib/packI18n'
 
 const emit = defineEmits<{ changed: [] }>()
 
 const { t, locale } = useI18n()
-const { notify, status, confirm, dismissByKey } = useNotifications()
+const { notify, confirm, dismissByKey } = useNotifications()
 const { canAccessBackend } = useHostAccess()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
@@ -117,12 +117,13 @@ async function loadProposals() {
     }
     dismissByKey('evolution')
   } catch (err) {
-    status.error({
+    notify.error({
       key: 'evolution',
+      category: isConnectionLevelError(err) ? 'connection' : 'general',
       title: t('app.loadFailed'),
       message: err instanceof Error ? err.message : String(err),
       source: 'evolution',
-      action: { label: t('app.retry'), run: loadProposals }
+      action: { label: t('app.retry'), run: loadProposals },
     })
   } finally {
     loading.value = false
@@ -250,7 +251,14 @@ onMounted(() => {
 })
 
 watch(canAccessBackend, (ready) => {
-  if (ready) void loadProposals()
+  if (ready) {
+    dismissByKey('evolution')
+    void loadProposals()
+  }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey('evolution')
 })
 
 defineExpose({ loadProposals })

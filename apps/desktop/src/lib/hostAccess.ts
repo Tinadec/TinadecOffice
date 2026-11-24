@@ -4,8 +4,22 @@ import i18n from '@/i18n'
 import { isElectronHost, readHostStatus, type HostConnectionStatus } from './hostConnection'
 
 const status = shallowRef<HostConnectionStatus | null>(null)
+const gatewayConnectionTracked = shallowRef(false)
+const gatewayConnected = shallowRef(true)
 let revision = 0
 const accessInvalidators: Array<() => void> = []
+
+function computeCanAccessBackend(
+  currentStatus: HostConnectionStatus | null,
+  tracked: boolean,
+  connected: boolean,
+): boolean {
+  return (!currentStatus || currentStatus.state === 'ready') && (!tracked || connected)
+}
+
+const canAccessBackend = computed(() =>
+  computeCanAccessBackend(status.value, gatewayConnectionTracked.value, gatewayConnected.value),
+)
 
 /** Derived read caches subscribe here instead of polling the gate on every hit. */
 export function onHostAccessChanged(callback: () => void): void { accessInvalidators.push(callback) }
@@ -15,20 +29,46 @@ export function hostAccessState(): string | null { return status.value?.state ??
 
 export function setHostAccessStatus(next: HostConnectionStatus): void {
   const previous = status.value
+  const prevAccess = computeCanAccessBackend(previous, gatewayConnectionTracked.value, gatewayConnected.value)
   revision++
   status.value = next
+  const nextAccess = computeCanAccessBackend(next, gatewayConnectionTracked.value, gatewayConnected.value)
   // Same state arriving again is the normal per-request revalidation; only a real move
-  // (revoked, restart required, preview, auth_required) may retire what was already read.
-  if (previous?.state === next.state && previous?.error?.code === next.error?.code) return
+  // (revoked, restart required, preview, auth_required, or effective access transition) may retire what was already read.
+  if (previous?.state === next.state && previous?.error?.code === next.error?.code && prevAccess === nextAccess) return
   for (const invalidate of accessInvalidators) invalidate()
 }
+
+/**
+ * Bridges `useConnection` public Gateway liveness into `canAccessBackend`.
+ * Isolated component unit tests that never start `useConnection` keep `(false, true)`
+ * so `canAccessBackend` remains `true` when `status.value` is `null` or `'ready'`.
+ */
+export function setGatewayConnectionLiveness(tracked: boolean, connected: boolean): void {
+  const prevAccess = computeCanAccessBackend(status.value, gatewayConnectionTracked.value, gatewayConnected.value)
+  gatewayConnectionTracked.value = tracked
+  gatewayConnected.value = connected
+  const nextAccess = computeCanAccessBackend(status.value, tracked, connected)
+  if (prevAccess !== nextAccess) {
+    for (const invalidate of accessInvalidators) invalidate()
+  }
+}
+
+/** Test-only: reset host access status and gateway liveness tracking. */
+export function resetHostAccessForTests(): void {
+  revision++
+  status.value = null
+  gatewayConnectionTracked.value = false
+  gatewayConnected.value = true
+}
+
 export function useHostAccess() {
   return {
     status,
     isPreview: computed(() => status.value?.state === 'preview'),
     isAuthRequired: computed(() => status.value?.state === 'auth_required'),
     isElectron: computed(() => isElectronHost() && !status.value?.webAuth),
-    canAccessBackend: computed(() => !status.value || status.value.state === 'ready'),
+    canAccessBackend,
     reason: computed(() => status.value?.state === 'preview'
       ? i18n.global.t('host.previewReason')
       : status.value?.state === 'auth_required'

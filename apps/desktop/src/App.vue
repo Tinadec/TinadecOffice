@@ -5,16 +5,14 @@ import { useI18n } from 'vue-i18n'
 import { useBackground } from '@/composables/useBackground'
 import {
   useConnection,
-  CONNECTION_BANNER_KEY,
   retryConnection,
 } from '@/composables/useConnection'
-import { useNotifications, startStatusSync } from '@/composables/useNotifications'
+import { startStatusSync } from '@/composables/useNotifications'
 import { initPlatform } from '@/composables/usePlatform'
 import { setHostAccessStatus, useHostAccess } from '@/lib/hostAccess'
 import { ensureGraphSeedPack, setGraphSeedPackTranslator } from '@/agentPacks/graphSeedPackBootstrap'
 import { evaluateOobeAdmission } from '@/composables/useOobe'
 import AppSplash from '@/components/AppSplash.vue'
-import HostAvailabilityBanner from '@/components/HostAvailabilityBanner.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
@@ -46,9 +44,9 @@ watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true
 // The shell mounts on the first frame, whatever the backend is doing. Main no longer blocks the
 // window on backend startup, so waiting for "connected" here would park the splash for up to the
 // 30 s timeout on a slow or broken host. What the user gets instead is the real interface plus
-// HostAvailabilityBanner, which names the state and offers the retry. Business reads stay gated on
-// host access (useHostAccess / assertHostAccess), so an unverified host still refuses them; the
-// splash itself still leaves only when the mounted route reports its prepared frame.
+// NotificationIslandHost (`backend-connection` status capsule), which names the state and offers
+// the retry even during cold start. Business reads stay gated on host access (useHostAccess /
+// assertHostAccess), and the splash leaves when the mounted route reports its prepared frame.
 // 子窗口（?splash=0，如 Debug Studio / Detached Panel）跳过 splash：
 // 它们复用主窗口已建立的后端连接，不应重播首次启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -66,9 +64,16 @@ const isCompanionWindow = hashRoutePath(window.location.hash) === '#/companion'
 const isStandaloneWindow = isPetWindow || isCompanionWindow
 const { t } = useI18n()
 setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))
-const { connectionState, start: startConnection } = useConnection()
+const {
+  connectionState,
+  hostStatus,
+  businessReady,
+  start: startConnection,
+  syncConnectionNotifications,
+  clearConnectionNotificationTimers,
+} = useConnection()
 let graphSeedBootstrapped = false
-const { status, dismissByKey } = useNotifications()
+let graphSeedBootstrapping = false
 let unsubscribeStatusSync: (() => void) | undefined
 let uninstallPaletteKeys: (() => void) | undefined
 let unsubscribeFocusSession: (() => void) | undefined
@@ -91,8 +96,7 @@ function onOpenRecoveryCheck(event: Event) {
 // The gate starts empty, and an empty gate reads as "no host has refused anything yet" — every
 // business read would then go out before the host was verified. Publishing "checking" here (App's
 // setup runs before the routed page's) keeps those reads closed until useConnection reports the real
-// state, and it is what makes HostAvailabilityBanner visible during startup. A preview renderer
-// already published "preview" before mount, so it keeps its own reason.
+// state. A preview renderer already published "preview" before mount, so it keeps its own reason.
 const hostAccess = useHostAccess()
 const { status: hostAccessStatus } = hostAccess
 const isAuthRequired = computed(
@@ -109,7 +113,9 @@ const isElectron = computed(() => {
       typeof bridge.minimizeWindow === 'function',
   )
 })
-if (!isStandaloneWindow && hostAccessStatus.value === null) setHostAccessStatus({ state: 'checking', managed: true })
+if (!isStandaloneWindow && hostAccessStatus.value === null) {
+  setHostAccessStatus({ state: 'checking', managed: true })
+}
 
 watch(
   isElectron,
@@ -121,10 +127,6 @@ watch(
   { immediate: true },
 )
 
-watch(isAuthRequired, (required) => {
-  if (required) dismissByKey(CONNECTION_BANNER_KEY)
-})
-
 function onPageReady() {
   entryReady.value = true
 }
@@ -132,62 +134,51 @@ function onPageReady() {
 function onRouteMounted() {
   // UIE routes report readiness after selecting and measuring their layouts.
   // Other routes have their own entry animations and are ready on mount.
-  if (route.name !== 'home' && route.name !== 'market' && route.name !== 'marketSkills'
-    && route.name !== 'marketMcp' && route.name !== 'space') onPageReady()
+  if (
+    !route.meta?.homeSurface &&
+    route.name !== 'home' &&
+    route.name !== 'board' &&
+    route.name !== 'project-hub' &&
+    route.name !== 'market' &&
+    route.name !== 'marketSkills' &&
+    route.name !== 'marketMcp' &&
+    route.name !== 'space'
+  ) {
+    onPageReady()
+  }
 }
 
 // OOBE admission runs ONLY after AppSplash has left (entryReady) AND backend is connected.
 watch(
-  [entryReady, connectionState],
-  ([ready, state]) => {
+  [entryReady, businessReady],
+  ([ready, backendReady]) => {
     if (isStandaloneWindow || isChildWindow) return
-    if (ready && state === 'connected') {
+    if (ready && backendReady) {
       void evaluateOobeAdmission()
     }
   },
 )
 
-watch(connectionState, (state) => {
-  if (isStandaloneWindow || isChildWindow) return
-  if (state === 'connected') {
-    dismissByKey(CONNECTION_BANNER_KEY)
-    if (!graphSeedBootstrapped) {
-      graphSeedBootstrapped = true
+watch(
+  [businessReady, isAuthRequired, connectionState, hostStatus],
+  ([ready, authRequired]) => {
+    if (isStandaloneWindow || isChildWindow) return
+    syncConnectionNotifications({ isAuthRequired: authRequired })
+    if (ready && !authRequired && !graphSeedBootstrapped && !graphSeedBootstrapping) {
+      graphSeedBootstrapping = true
       void ensureGraphSeedPack()
+        .then((completed) => {
+          if (completed) {
+            graphSeedBootstrapped = true
+          }
+        })
+        .finally(() => {
+          graphSeedBootstrapping = false
+        })
     }
-    return
-  }
-  if (
-    state === 'host_unavailable' ||
-    state === 'host_rejected' ||
-    state === 'host_restart_required' ||
-    (state as string) === 'auth_required' ||
-    isAuthRequired.value
-  ) {
-    dismissByKey(CONNECTION_BANNER_KEY)
-    return
-  }
-  if (state === 'preview') { dismissByKey(CONNECTION_BANNER_KEY); return }
-  if (state === 'timeout') {
-    status.error({
-      key: CONNECTION_BANNER_KEY,
-      title: t('app.backendNotConnected'),
-      message: t('app.backendNotConnectedMessage'),
-      source: 'gateway',
-      action: { label: t('app.retryConnection'), run: () => retryConnection() },
-    })
-    return
-  }
-  if (state === 'disconnected') {
-    status.error({
-      key: CONNECTION_BANNER_KEY,
-      title: t('app.backendDisconnected'),
-      message: t('app.backendDisconnectedMessage'),
-      source: 'gateway',
-      action: { label: t('app.retryConnection'), run: () => retryConnection() },
-    })
-  }
-})
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   if (!isStandaloneWindow) void startConnection()
@@ -226,6 +217,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearConnectionNotificationTimers()
   disposePlatform()
   unsubscribeStatusSync?.()
   uninstallPaletteKeys?.()
@@ -309,9 +301,8 @@ onBeforeUnmount(() => {
       <component :is="Component" @ready="onPageReady" @vue:mounted="onRouteMounted" />
     </RouterView>
   </div>
-  <HostAvailabilityBanner v-if="!isChildWindow && !isAuthRequired" />
-  <NotificationIslandHost v-if="entryReady" />
-  <NotificationDetailDialog v-if="entryReady" />
+  <NotificationIslandHost />
+  <NotificationDetailDialog />
   <SelectionContextMenu />
   <CommandPalette />
   <RecoveryCheckDialog

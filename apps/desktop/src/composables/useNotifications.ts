@@ -1,7 +1,21 @@
-import { computed, ref } from 'vue'
-import { ApiError, apiErrorDetails, type ApiErrorActionKind } from '@/lib/apiError'
+import {
+  computed,
+  getCurrentInstance,
+  getCurrentScope,
+  onBeforeUnmount,
+  onScopeDispose,
+  ref,
+} from 'vue'
+import {
+  ApiError,
+  UNAVAILABLE_STORAGE_CODES,
+  apiErrorDetails,
+  type ApiErrorActionKind,
+} from '@/lib/apiError'
 
 export type NotificationLevel = 'info' | 'success' | 'warning' | 'error'
+
+export type NotificationCategory = 'connection' | 'general'
 
 /**
  * Presentation class — decides which island zone owns the item and how it expires.
@@ -9,7 +23,8 @@ export type NotificationLevel = 'info' | 'success' | 'warning' | 'error'
  * - `transient`  short-lived feedback; auto-expires; queued in the right zone.
  * - `status`     state-driven condition (backend down, API unavailable); keyed,
  *                never auto-expires, owned by the state source, pinned to the
- *                left zone, and broadcast to every renderer window.
+ *                left zone, and optionally broadcast to sibling windows when
+ *                `broadcast: true` is explicitly set.
  * - `task`       long-running operation; starts `pending`, later resolves to
  *                success/error in place without losing its slot.
  */
@@ -29,16 +44,6 @@ export type NotificationKind = 'transient' | 'status' | 'task'
  *             source (keyed `status.*` conditions, via `dismissByKey` or a
  *             remote broadcast) or the task handle (pending tasks) may clear
  *             it. Assigned internally — callers cannot request it.
- *
- * Dismissal & persistence contract:
- *
- * | class                    | auto-expires | user-closable | cleared by                       |
- * | ------------------------ | ------------ | ------------- | -------------------------------- |
- * | transient (default)      | yes          | yes           | timer / user                     |
- * | transient `sticky`       | no           | yes           | user only                        |
- * | task pending             | no           | no            | TaskHandle settle/dismiss        |
- * | task settled             | yes          | yes           | timer / user                     |
- * | status (source-owned)    | no           | no            | source `dismissByKey` / broadcast |
  */
 export type NotificationPersistence = 'auto' | 'sticky' | 'source'
 
@@ -47,7 +52,7 @@ export type TaskState = 'pending' | 'settled'
 
 export interface NotificationAction {
   label: string
-  run: () => void | Promise<void>
+  run: () => unknown
 }
 
 export interface NotificationOptions {
@@ -76,6 +81,17 @@ export interface NotificationOptions {
    * @default true
    */
   dismissible?: boolean
+  /**
+   * Domain category used for centralized connection-avalanche suppression and
+   * recovery cleanup. Connection-level errors are auto-tagged `'connection'`.
+   */
+  category?: NotificationCategory
+  /**
+   * Whether a keyed `status.*` condition replicates across renderer windows via IPC.
+   * Defaults to `false` so local or detached-panel statuses never leak ghost cards.
+   * @default false
+   */
+  broadcast?: boolean
 }
 
 export interface ErrorNotificationOptions extends Omit<NotificationOptions, 'message'> {
@@ -164,6 +180,24 @@ const MAX_ITEMS = 50
 /** Retained dismissed items, newest first. */
 const MAX_HISTORY = 50
 
+/** Canonical key of the single global host/gateway connection status capsule. */
+const GLOBAL_CONNECTION_KEY = 'backend-connection'
+
+const CONNECTION_ERROR_CODES = new Set([
+  'backend_network_unavailable',
+  'backend_write_outcome_unknown',
+  'host_unavailable',
+  'host_bridge_unavailable',
+  'host_connection_unavailable',
+  'host_identity_unavailable',
+  'desktop_restart_required',
+  'desktop_host_required',
+  'web_auth_required',
+])
+
+const NETWORK_MESSAGE_PATTERN =
+  /(failed to fetch|networkerror|network request failed|load failed|econnrefused|econnreset|etimedout|err_connection_refused|fetch failed|cannot connect to backend)/i
+
 const DEFAULT_DURATION: Record<NotificationLevel, number> = {
   info: 5000,
   success: 5000,
@@ -183,10 +217,83 @@ const overflowOpen = ref(false)
 const stackZone = ref<'status' | 'transient' | null>(null)
 const currentConfirmation = ref<ConfirmationRequest | null>(null)
 const actionStates = ref<Record<string, { running: boolean; error: string | null }>>({})
+const globalConnectionBlocked = ref(false)
 const timers = new Map<string, Timer>()
 const confirmations: QueuedConfirmation[] = []
 let activeConfirmation: QueuedConfirmation | null = null
 let nextId = 1
+let nextScopedKey = 1
+
+/**
+ * Classifies errors caused by an unreachable backend, disconnected Gateway, or
+ * unverified desktop host so callers and the notification engine can coalesce
+ * derived sub-module errors into the single `'backend-connection'` status capsule.
+ */
+export function isConnectionLevelError(error: unknown): boolean {
+  if (!error) return false
+  if (typeof error === 'string') {
+    return CONNECTION_ERROR_CODES.has(error.trim()) || NETWORK_MESSAGE_PATTERN.test(error)
+  }
+  if (typeof error === 'object') {
+    const record = error as {
+      code?: unknown
+      status?: unknown
+      message?: unknown
+      error?: unknown
+      detail?: unknown
+      cause?: unknown
+    }
+    const code = typeof record.code === 'string' ? record.code : undefined
+    if (code && CONNECTION_ERROR_CODES.has(code)) return true
+    if (code && UNAVAILABLE_STORAGE_CODES.has(code)) return false
+
+    const status = typeof record.status === 'number' ? record.status : undefined
+    if (status === 502 || status === 503 || status === 504) return true
+
+    if (error instanceof TypeError) {
+      const msg = error.message ?? ''
+      if (/(fetch|network|load failed|connect)/i.test(msg)) return true
+    }
+
+    for (const candidate of [record.message, record.error, record.detail]) {
+      if (typeof candidate === 'string' && NETWORK_MESSAGE_PATTERN.test(candidate)) {
+        return true
+      }
+    }
+    if (record.cause && record.cause !== error && isConnectionLevelError(record.cause)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isGlobalConnectionActive(): boolean {
+  return (
+    globalConnectionBlocked.value ||
+    items.value.some((candidate) => candidate.key === GLOBAL_CONNECTION_KEY)
+  )
+}
+
+function coalesceDerivedConnectionItems(): void {
+  for (const item of [...items.value]) {
+    if (item.category === 'connection' && item.key !== GLOBAL_CONNECTION_KEY) {
+      if (item.key && item.kind === 'status') dismissByKey(item.key)
+      else dismiss(item.id)
+    }
+  }
+}
+
+/**
+ * Marks whether global host/gateway connectivity is currently blocked.
+ * When `true`, derived `category: 'connection'` notifications from sub-modules
+ * are suppressed and any existing derived connection items are coalesced.
+ */
+export function setGlobalConnectionBlocked(blocked: boolean): void {
+  globalConnectionBlocked.value = blocked
+  if (blocked) {
+    coalesceDerivedConnectionItems()
+  }
+}
 
 /**
  * i18n-supplied fallback for errors carrying no usable message. Injected once at
@@ -245,7 +352,15 @@ export function setErrorActionLabels(labels: Partial<Record<ApiErrorActionKind, 
 }
 
 export function getErrorActionLabel(kind: ApiErrorActionKind): string {
-  const defaults: Record<ApiErrorActionKind, string> = { retry: 'Retry', reload: 'Reload', open_settings: 'Open settings', open_storage_settings: 'Storage settings', open_tool_settings: 'Tool settings', unregister_workspace: 'Unregister', choose_folder: 'Choose folder' }
+  const defaults: Record<ApiErrorActionKind, string> = {
+    retry: 'Retry',
+    reload: 'Reload',
+    open_settings: 'Open settings',
+    open_storage_settings: 'Storage settings',
+    open_tool_settings: 'Tool settings',
+    unregister_workspace: 'Unregister',
+    choose_folder: 'Choose folder',
+  }
   return actionLabels[kind] ?? defaults[kind]
 }
 
@@ -262,7 +377,9 @@ function recoveryActionFor(error: unknown): NotificationAction | undefined {
     return {
       label: actionLabels[kind] ?? kind.replace(/_/g, ' '),
       run: () => {
-        if (kind === 'unregister_workspace') return (run as (id?: string) => void | Promise<void>)(error.storageId)
+        if (kind === 'unregister_workspace') {
+          return (run as (id?: string) => void | Promise<void>)(error.storageId)
+        }
         return (run as (error?: ApiError) => void | Promise<void>)(error)
       },
     }
@@ -353,11 +470,24 @@ function dismiss(targetId: string): void {
 function dismissByKey(key: string): void {
   const owned = items.value.filter((candidate) => candidate.key === key)
   for (const item of owned) dismiss(item.id)
-  // Only an explicit owner clear replicates to other windows. Incidental
-  // removal (cap eviction, programmatic dismiss) must never broadcast a
-  // "condition recovered" signal for a condition that may still be true.
-  if (owned.some((item) => item.kind === 'status' && !item.remote)) {
+  // Only an explicit owner clear of an opted-in broadcast status replicates across windows.
+  if (owned.some((item) => item.kind === 'status' && item.broadcast === true && !item.remote)) {
     publishStatus({ op: 'clear', key })
+  }
+}
+
+/**
+ * Dismisses every live notification matching `category` (including keyed status
+ * items owned by that category). Used on connection recovery to clear 100% of
+ * connection-derived notifications in one pass.
+ */
+export function dismissByCategory(category: NotificationCategory): void {
+  for (const item of [...items.value]) {
+    const itemCategory = item.category ?? 'general'
+    if (itemCategory === category) {
+      if (item.key && item.kind === 'status') dismissByKey(item.key)
+      else dismiss(item.id)
+    }
   }
 }
 
@@ -493,24 +623,54 @@ function add(
   extra: Partial<NotificationItem> = {},
 ): string {
   const options: NotificationOptions = typeof input === 'string' ? { message: input } : input
+  const resolvedCategory: NotificationCategory =
+    extra.category ??
+    options.category ??
+    (options.key === GLOBAL_CONNECTION_KEY || isConnectionLevelError(options.message)
+      ? 'connection'
+      : 'general')
+  const resolvedBroadcast = extra.broadcast ?? options.broadcast ?? false
+
+  // Avalanche suppression: while `'backend-connection'` is active or global
+  // connection is blocked, sub-modules never stack derived connection cards.
+  if (
+    resolvedCategory === 'connection' &&
+    options.key !== GLOBAL_CONNECTION_KEY &&
+    isGlobalConnectionActive()
+  ) {
+    if (options.key) {
+      dismissByKey(options.key)
+    }
+    const globalItem = items.value.find((candidate) => candidate.key === GLOBAL_CONNECTION_KEY)
+    return globalItem?.id ?? `suppressed:${GLOBAL_CONNECTION_KEY}`
+  }
+
   const print = fingerprintOf(kind, level, options.title, options.message, options.key)
   const existing = findByFingerprint(print)
 
   if (existing) {
     // Merge in place so the capsule keeps its slot, animation, and hover target
     // instead of flashing a fresh item for a repeating condition.
+    const sameSignal = existing.message === options.message && existing.level === level
     const merged: NotificationItem = {
       ...existing,
       ...options,
+      details: options.details,
+      action: options.action,
       ...extra,
       id: existing.id,
       kind,
       level,
+      category: resolvedCategory,
+      broadcast: resolvedBroadcast,
       persistence: kind === 'transient' ? (options.persistence ?? existing.persistence) : 'source',
-      count: existing.count + 1,
+      count: sameSignal ? existing.count + 1 : 1,
       createdAt: Date.now(),
     }
     items.value = items.value.map((item) => (item.id === existing.id ? merged : item))
+    if (options.key === GLOBAL_CONNECTION_KEY) {
+      coalesceDerivedConnectionItems()
+    }
     scheduleExpiry(merged)
     selectPrimary()
     syncTimerVisibility()
@@ -522,6 +682,8 @@ function add(
     id: id('notification'),
     kind,
     level,
+    category: resolvedCategory,
+    broadcast: resolvedBroadcast,
     // Status conditions and tasks are source-owned while live; only transient
     // feedback honors a caller-requested lifecycle.
     persistence: kind === 'transient' ? (options.persistence ?? 'auto') : 'source',
@@ -531,6 +693,9 @@ function add(
     ...extra,
   }
   items.value = [...items.value, item]
+  if (options.key === GLOBAL_CONNECTION_KEY) {
+    coalesceDerivedConnectionItems()
+  }
   scheduleExpiry(item)
   enforceCap()
   selectPrimary()
@@ -547,8 +712,13 @@ function add(
 function isErrorOptions(input: unknown): input is ErrorNotificationOptions {
   if (!input || typeof input !== 'object' || input instanceof Error) return false
   const record = input as Record<string, unknown>
-  return (['key', 'title', 'details', 'action', 'duration', 'dismissible', 'source'] as const).some(
-    (field) => field in record,
+  if ('code' in record || 'trace_id' in record || 'status' in record) return false
+  return (
+    (['key', 'title', 'details', 'action', 'duration', 'dismissible', 'source', 'broadcast'] as const).some(
+      (field) => field in record,
+    ) ||
+    record.category === 'connection' ||
+    record.category === 'general'
   )
 }
 
@@ -558,13 +728,19 @@ function addError(
   options: Omit<NotificationOptions, 'message'> = {},
 ): string {
   if (isErrorOptions(input)) {
+    const inferredCategory =
+      input.category ?? (isConnectionLevelError(input.message) ? 'connection' : undefined)
     return add(kind, 'error', {
       ...input,
+      ...(inferredCategory ? { category: inferredCategory } : {}),
       message: normalizeError(input.message, input.title),
     })
   }
+  const inferredCategory =
+    options.category ?? (isConnectionLevelError(input) ? 'connection' : undefined)
   return add(kind, 'error', {
     ...options,
+    ...(inferredCategory ? { category: inferredCategory } : {}),
     // A classified failure carries its own recovery path; the caller can still override it.
     action: options.action ?? recoveryActionFor(input),
     details: options.details ?? apiErrorDetails(input),
@@ -657,7 +833,7 @@ function addStatus(level: NotificationLevel, input: MessageOptions): string {
   const options: NotificationOptions = typeof input === 'string' ? { message: input } : input
   const itemId = add('status', level, options)
   const item = items.value.find((candidate) => candidate.id === itemId)
-  if (item?.key && !item.remote) {
+  if (item?.key && item.broadcast === true && !item.remote) {
     publishStatus({
       op: 'raise',
       key: item.key,
@@ -670,6 +846,89 @@ function addStatus(level: NotificationLevel, input: MessageOptions): string {
     })
   }
   return itemId
+}
+
+/**
+ * Component/effect-scoped status helper. Tracks every key raised through this
+ * handle (defaulting `broadcast` to `false`) and automatically calls
+ * `dismissByKey` when the enclosing Vue component or effectScope disposes.
+ */
+export function useScopedStatus(defaultKey?: string) {
+  const trackedKeys = new Set<string>(defaultKey ? [defaultKey] : [])
+  const fallbackKey = defaultKey ?? `scoped-status-${nextScopedKey++}`
+
+  const resolveScopedOptions = (
+    input: MessageOptions,
+    options?: Omit<NotificationOptions, 'message'>,
+  ): NotificationOptions => {
+    const base: NotificationOptions =
+      typeof input === 'string'
+        ? options
+          ? { ...options, message: input }
+          : { message: input }
+        : { ...options, ...input }
+    const key = base.key ?? fallbackKey
+    trackedKeys.add(key)
+    return {
+      ...base,
+      key,
+      broadcast: base.broadcast ?? false,
+    }
+  }
+
+  const cleanup = () => {
+    for (const key of trackedKeys) {
+      dismissByKey(key)
+    }
+    trackedKeys.clear()
+  }
+
+  if (getCurrentScope()) {
+    onScopeDispose(cleanup)
+  } else if (getCurrentInstance()) {
+    onBeforeUnmount(cleanup)
+  }
+
+  return {
+    info: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+      addStatus('info', resolveScopedOptions(input, options)),
+    success: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+      addStatus('success', resolveScopedOptions(input, options)),
+    warning: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+      addStatus('warning', resolveScopedOptions(input, options)),
+    error: (input: unknown, options?: Omit<NotificationOptions, 'message'>) => {
+      if (isErrorOptions(input)) {
+        const scoped = resolveScopedOptions({
+          ...input,
+          message: normalizeError(input.message, input.title),
+        })
+        return status.error(scoped)
+      }
+      const key = options?.key ?? fallbackKey
+      trackedKeys.add(key)
+      return status.error(input, {
+        ...options,
+        key,
+        broadcast: options?.broadcast ?? false,
+      })
+    },
+    clear: (key?: string) => {
+      if (key) {
+        dismissByKey(key)
+        trackedKeys.delete(key)
+        return
+      }
+      cleanup()
+    },
+    dismiss: (key?: string) => {
+      if (key) {
+        dismissByKey(key)
+        trackedKeys.delete(key)
+        return
+      }
+      cleanup()
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +952,11 @@ function startTask(input: string | TaskOptions): TaskHandle {
     succeed: (result) =>
       settle('success', typeof result === 'string' ? { message: result } : (result ?? {})),
     fail: (error, failOptions = {}) =>
-      settle('error', { ...failOptions, details: failOptions.details ?? apiErrorDetails(error), message: normalizeError(error, failOptions.title) }),
+      settle('error', {
+        ...failOptions,
+        details: failOptions.details ?? apiErrorDetails(error),
+        message: normalizeError(error, failOptions.title),
+      }),
     dismiss: () => dismiss(taskId),
   }
 }
@@ -757,15 +1020,6 @@ function toggleStack(zone: 'status' | 'transient'): void {
 // ---------------------------------------------------------------------------
 // 通知打开 interaction model (Apple Dynamic Island desktop equivalent):
 // hover auto-expands the enlarged island window; click opens the detail dialog.
-//
-// - Hovering a capsule arms a short intent delay before the expanded card
-//   opens, so passing the pointer over the title bar never flashes UI.
-// - Leaving the capsule starts a longer grace period before the card closes,
-//   letting the pointer cross the gap into the card (which cancels the close).
-// - Once a card is open, gliding onto a sibling capsule re-targets it faster —
-//   the user is already browsing the island strip.
-// - Clicking a capsule is the 通知打开 gesture: the detail dialog opens
-//   directly and the hover-expanded card closes behind it.
 // ---------------------------------------------------------------------------
 
 const HOVER_OPEN_DELAY_MS = 240
@@ -934,15 +1188,28 @@ const transientFoldedCount = computed(() => Math.max(0, transientZone.value.leng
 
 /** Rows shown in the open fold-stack panel, by zone. */
 const stackItems = computed(() =>
-  stackZone.value === 'status' ? statusZone.value
-  : stackZone.value === 'transient' ? transientZone.value
-  : [],
+  stackZone.value === 'status'
+    ? statusZone.value
+    : stackZone.value === 'transient'
+      ? transientZone.value
+      : [],
 )
 
+function mergeMessageOptions(
+  input: MessageOptions,
+  options?: Omit<NotificationOptions, 'message'>,
+): MessageOptions {
+  if (!options) return input
+  return typeof input === 'string' ? { ...options, message: input } : { ...options, ...input }
+}
+
 const notify = {
-  info: (input: MessageOptions) => add('transient', 'info', input),
-  success: (input: MessageOptions) => add('transient', 'success', input),
-  warning: (input: MessageOptions) => add('transient', 'warning', input),
+  info: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    add('transient', 'info', mergeMessageOptions(input, options)),
+  success: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    add('transient', 'success', mergeMessageOptions(input, options)),
+  warning: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    add('transient', 'warning', mergeMessageOptions(input, options)),
   error: (input: unknown, options?: Omit<NotificationOptions, 'message'>) =>
     addError('transient', input, options),
   task: startTask,
@@ -950,21 +1217,35 @@ const notify = {
 }
 
 /**
- * Persistent, state-driven conditions. Keyed items replicate to every window;
- * the owning state source must clear them with `dismissByKey` on recovery.
+ * Persistent, state-driven conditions. Keyed items replicate to sibling windows
+ * only when `broadcast: true` is explicitly passed; the owning state source must
+ * clear them with `dismissByKey` on recovery.
  */
 const status = {
-  info: (input: MessageOptions) => addStatus('info', input),
-  success: (input: MessageOptions) => addStatus('success', input),
-  warning: (input: MessageOptions) => addStatus('warning', input),
+  info: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    addStatus('info', mergeMessageOptions(input, options)),
+  success: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    addStatus('success', mergeMessageOptions(input, options)),
+  warning: (input: MessageOptions, options?: Omit<NotificationOptions, 'message'>) =>
+    addStatus('warning', mergeMessageOptions(input, options)),
   error: (input: unknown, options?: Omit<NotificationOptions, 'message'>) => {
     if (isErrorOptions(input)) {
+      const inferredCategory =
+        input.category ?? (isConnectionLevelError(input.message) ? 'connection' : undefined)
       return addStatus('error', {
         ...input,
+        ...(inferredCategory ? { category: inferredCategory } : {}),
         message: normalizeError(input.message, input.title),
       })
     }
-    return addStatus('error', { ...options, details: options?.details ?? apiErrorDetails(input), message: normalizeError(input, options?.title) })
+    const inferredCategory =
+      options?.category ?? (isConnectionLevelError(input) ? 'connection' : undefined)
+    return addStatus('error', {
+      ...options,
+      ...(inferredCategory ? { category: inferredCategory } : {}),
+      details: options?.details ?? apiErrorDetails(input),
+      message: normalizeError(input, options?.title),
+    })
   },
 }
 
@@ -983,6 +1264,7 @@ export function __resetNotificationsForTests(): void {
   timers.clear()
   clearHoverOpenTimer()
   clearHoverCloseTimer()
+  globalConnectionBlocked.value = false
   items.value = []
   history.value = []
   primaryId.value = null
@@ -1023,6 +1305,7 @@ export function useNotifications() {
     banner,
     dismiss,
     dismissByKey,
+    dismissByCategory,
     dismissAll,
     clearHistory,
     openDetail,
@@ -1046,6 +1329,8 @@ export function useNotifications() {
     pause,
     resume,
     confirm,
+    isConnectionLevelError,
+    setGlobalConnectionBlocked,
     // Errors surfaced outside a component can still offer recovery when the
     // caller passes the ApiError straight through.
     recover: (error: unknown) => recoveryActionFor(error),

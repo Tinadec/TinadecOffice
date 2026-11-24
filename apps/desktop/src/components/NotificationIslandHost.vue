@@ -89,7 +89,12 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => { document.addEventListener('mousedown', onOutsideClick); document.addEventListener('keydown', onKeydown) })
-onBeforeUnmount(() => { document.removeEventListener('mousedown', onOutsideClick); document.removeEventListener('keydown', onKeydown); hoverCapsuleLeave() })
+onBeforeUnmount(() => {
+  clearAttentionTimer()
+  document.removeEventListener('mousedown', onOutsideClick)
+  document.removeEventListener('keydown', onKeydown)
+  hoverCapsuleLeave()
+})
 
 /* announce region — capped at 50 via FIFO */
 const announcedItem = ref<NotificationItem | null>(null)
@@ -109,13 +114,25 @@ watch(
 
 /* Activity pulse — a transient hero change briefly draws attention. */
 const attentionId = ref<string | null>(null)
+let attentionTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearAttentionTimer() {
+  if (attentionTimer !== null) {
+    clearTimeout(attentionTimer)
+    attentionTimer = null
+  }
+}
+
 watch(
   () => transientHero.value?.id,
   (next, prev) => {
     if (next && next !== prev) {
       attentionId.value = next
-      const timer = setTimeout(() => { attentionId.value = null }, 800)
-      onBeforeUnmount(() => clearTimeout(timer))
+      clearAttentionTimer()
+      attentionTimer = setTimeout(() => {
+        attentionTimer = null
+        attentionId.value = null
+      }, 800)
     }
   },
 )

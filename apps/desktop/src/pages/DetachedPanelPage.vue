@@ -9,7 +9,7 @@ import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useHostAccess } from '@/lib/hostAccess'
-import { useNotifications } from '@/composables/useNotifications'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
 import { usePlatform } from '@/composables/usePlatform'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
@@ -25,8 +25,8 @@ import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userTo
 
 const route = useRoute()
 const { t } = useI18n()
-const { notify, status, dismissByKey } = useNotifications()
-const { isElectron } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+const { canAccessBackend, isElectron } = useHostAccess()
 const { isMac, isElectronMac, isFullScreen } = usePlatform()
 
 // ---- Parse query params ----
@@ -96,12 +96,14 @@ async function loadData() {
     toolExecutions.value = toolTimeline
     dismissByKey('detached-panel')
   } catch (err) {
-    status.error({
+    notify.error({
       key: 'detached-panel',
+      broadcast: false,
+      category: isConnectionLevelError(err) ? 'connection' : 'general',
       title: t('context.loadError'),
       message: err instanceof Error ? err.message : String(err),
       source: 'panel',
-      action: { label: t('context.retry'), run: loadData }
+      action: { label: t('context.retry'), run: loadData },
     })
   } finally {
     loading.value = false
@@ -237,8 +239,16 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  dismissByKey('detached-panel')
   unsubscribeEvents?.()
   removeThemeListener?.()
+})
+
+watch(canAccessBackend, (ready) => {
+  if (ready) {
+    dismissByKey('detached-panel')
+    void loadData()
+  }
 })
 
 watch(sessionId, () => {

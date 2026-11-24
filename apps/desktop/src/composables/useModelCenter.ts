@@ -110,7 +110,7 @@ export interface UseModelCenterOptions {
  */
 export function useModelCenter(options: UseModelCenterOptions = {}) {
   const { t } = useI18n()
-  const { notify, status, confirm, dismissByKey } = useNotifications()
+  const { notify, confirm } = useNotifications()
   const api = scopedApi(baseApi, () => 'user')
 
   const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
@@ -128,8 +128,9 @@ export function useModelCenter(options: UseModelCenterOptions = {}) {
 
   const modelCenterRead = useRecoverableRead(loadModelCenterData, {
     lazy: true,
-    onSuccess: () => dismissByKey('model-center'),
-    onFailure: error => status.error(error, { key: 'model-center', source: 'models', action: { label: t('settings.retry'), run: loadModelCenter } }),
+    notificationKey: 'model-center',
+    notificationSource: 'models',
+    retryLabel: t('settings.retry'),
   })
   const modelCenterLoading = modelCenterRead.loading
   const modelCenterFailure = modelCenterRead.failure.error

@@ -150,7 +150,7 @@ const panelSources = import.meta.glob(
     // banner (its words used to live in a component-local message table) and the workspace dialog.
     './../controllers/HomeController.ts',
     './../composables/useAgentActivity.ts',
-    './../components/HostAvailabilityBanner.vue',
+    './../composables/useConnection.ts',
     './../components/WorkspaceEditorDialog.vue',
     // The workspace card's body: its refusal sentences, drop outcomes and access block all speak,
     // and nothing else would notice a dead key there (the card shell translates nothing).
@@ -166,6 +166,7 @@ const panelSources = import.meta.glob(
     './../components/canvas/PromptPipelineCanvas.vue',
     './../components/liveDigest/*.vue',
     './../components/board/*.vue',
+    '!./../components/board/BoardShellLayout.vue',
     './../components/board/ProjectNotesPanel.vue',
     './../components/board/CoordinatorPlanModal.vue',
     './../components/board/BoardAutopilotBar.vue',

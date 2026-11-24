@@ -197,7 +197,7 @@ describe('useNotifications', () => {
     expect(n.items.value.some((item) => item.key === 'cond')).toBe(true)
   })
 
-  it('programmatic dismiss of a status item never broadcasts clear; dismissByKey does', () => {
+  it('programmatic dismiss of a status item never broadcasts clear; dismissByKey does when broadcast is opted in', () => {
     const originalWindow = (globalThis as any).window
     const mockBroadcast = vi.fn()
     ;(globalThis as any).window = {
@@ -205,13 +205,19 @@ describe('useNotifications', () => {
     }
 
     try {
-      const id = n.status.error({ key: 'k1', message: 'down' })
+      // Default broadcast: false never leaks local status items across windows.
+      n.status.error({ key: 'k-local', message: 'local only' })
+      expect(mockBroadcast).not.toHaveBeenCalled()
+      n.dismissByKey('k-local')
+      expect(mockBroadcast).not.toHaveBeenCalled()
+
+      const id = n.status.error({ key: 'k1', message: 'down', broadcast: true })
       mockBroadcast.mockClear()
       // Incidental removal must not tell other windows the condition recovered.
       n.dismiss(id)
       expect(mockBroadcast).not.toHaveBeenCalled()
 
-      n.status.error({ key: 'k2', message: 'down' })
+      n.status.error({ key: 'k2', message: 'down', broadcast: true })
       mockBroadcast.mockClear()
       n.dismissByKey('k2')
       expect(mockBroadcast).toHaveBeenCalledTimes(1)
@@ -493,8 +499,8 @@ describe('useNotifications', () => {
       })
       expect(mockBroadcast).not.toHaveBeenCalled()
 
-      // Local raise SHOULD call the spy with op:'raise'.
-      n.status.error({ key: 'local-key', message: 'local msg' })
+      // Local raise with broadcast: true SHOULD call the spy with op:'raise'.
+      n.status.error({ key: 'local-key', message: 'local msg', broadcast: true })
       expect(mockBroadcast).toHaveBeenCalledTimes(1)
       expect(mockBroadcast).toHaveBeenCalledWith(
         expect.objectContaining({ op: 'raise', key: 'local-key' }),

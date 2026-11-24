@@ -38,7 +38,7 @@ import { interfaceLocale } from '@/lib/interfaceLocale'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useConversationFeed } from '@/composables/useConversationFeed'
 import { projectRunReply } from '@/lib/runReply'
-import { setErrorRecoveryHandlers, useNotifications } from '@/composables/useNotifications'
+import { isConnectionLevelError, setErrorRecoveryHandlers, useNotifications } from '@/composables/useNotifications'
 import type { PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { ComposerSubmitOptions, DispatchMode, MeetingModelOverrideDto, SessionSettingsUpdate, SpaceOptionsDto } from '@/api'
@@ -261,7 +261,7 @@ const {
 // Window lifetime, like the controller itself; a detached scope keeps its watchers owned.
 const conversationFeed = effectScope(true).run(() => useConversationFeed(sessionIdRef))!
 
-const { notify, banner, dismissByKey } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
 
 function generateTitle(content: string, attachmentNames: readonly string[] = []): string {
   const trimmed = content.trim()
@@ -302,12 +302,19 @@ async function loadInitial() {
   busy.value = true
   const failure = (reason: unknown, key: string, title: string) => {
     if (read !== initialRead || isAbortError(reason)) return
-    if (reason instanceof ApiError && (reason.code === 'desktop_restart_required' || reason.code === 'host_bridge_unavailable')) {
+    if (isConnectionLevelError(reason) || !canAccessBackend.value) {
       dismissByKey(key)
-      return // The shared host banner owns recovery; these reads never reached the backend.
+      return // The unified backend-connection island capsule owns recovery; suppress duplicate cards.
     }
     const error = toErrorState(reason, t('home.loadFailed'))
-    banner.error({ key, title, message: error.message, details: [error.details, error.traceId ? 'trace_id: ' + error.traceId : ''].filter(Boolean).join('\n'), action: { label: t('common.retry'), run: () => loadInitial() } })
+    notify.error({
+      key,
+      category: 'general',
+      title,
+      message: error.message,
+      details: [error.details, error.traceId ? 'trace_id: ' + error.traceId : ''].filter(Boolean).join('\n'),
+      action: { label: t('common.retry'), run: () => loadInitial() },
+    })
   }
   try {
     await Promise.allSettled([
@@ -1555,12 +1562,13 @@ watch([selectedSessionId, selectedStorage], ([, storageId], [, previousStorage])
 
 /** Start the controller's data pipeline (idempotent). */
 let started = false
-const { canAccessBackend, status: hostAccessStatus } = useHostAccess()
+const { canAccessBackend } = useHostAccess()
 let recoveryRead = 0
 watch(canAccessBackend, ready => {
   if (!started) return
   const recovery = ++recoveryRead
   if (ready) {
+    for (const key of ['home-load', 'home-readiness']) dismissByKey(key)
     void loadInitial().then(async () => {
       if (recovery !== recoveryRead || !canAccessBackend.value || !currentSession.value) return
       const key = selectionKey(currentSession.value)
@@ -1569,9 +1577,7 @@ watch(canAccessBackend, ready => {
     }).catch(error => { if (recovery === recoveryRead && !isAbortError(error)) notify.error(error, { title: t('home.sessionRecoverFailed') }) })
     return
   }
-  if (hostAccessStatus.value?.error?.code === 'desktop_restart_required' || hostAccessStatus.value?.error?.code === 'host_bridge_unavailable') {
-    for (const key of ['home-load', 'home-readiness']) dismissByKey(key)
-  }
+  for (const key of ['home-load', 'home-readiness']) dismissByKey(key)
   initialRead++; sessionListRead++; sessionListAbort?.abort(); sessionLoadAbort?.abort()
   for (const stream of runStreams.values()) stream.disconnect()
   suspendFollowingSession(currentSession.value ? selectionKey(currentSession.value) : selectedSessionId.value ?? '')

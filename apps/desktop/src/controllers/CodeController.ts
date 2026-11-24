@@ -1,7 +1,8 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import i18n from '@/i18n'
 import { api as baseApi, type ApprovalDto, type ProjectDto } from '@/api'
-import { useNotifications } from '@/composables/useNotifications'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 import { projectStorageId, scopedApi, selectionKey } from '@/lib/storageScope'
 
 // ---------------------------------------------------------------------------
@@ -39,9 +40,14 @@ const activeTab = computed(() =>
   openTabs.value.find((t) => t.path === activeTabPath.value) ?? null,
 )
 
-const { notify, banner, dismissByKey } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
+const { canAccessBackend } = useHostAccess()
 
 async function loadProjects(): Promise<void> {
+  if (!canAccessBackend.value) {
+    dismissByKey('code-load')
+    return
+  }
   busy.value = true
   try {
     projects.value = await api.listProjects()
@@ -51,8 +57,14 @@ async function loadProjects(): Promise<void> {
     await loadSession()
     dismissByKey('code-load')
   } catch (err) {
-    banner.error({
+    if (isConnectionLevelError(err) || !canAccessBackend.value) {
+      dismissByKey('code-load')
+      return
+    }
+    notify.error({
       key: 'code-load',
+      category: 'general',
+      source: 'code',
       title: t('code.loadProjectsFailed'),
       message: t('code.projectsUnavailable'),
       details: err instanceof Error ? err.message : t('code.loadProjectsFailed'),
@@ -175,6 +187,10 @@ function start() {
   if (started) return
   started = true
   void loadProjects()
+  watch(canAccessBackend, (ready) => {
+    dismissByKey('code-load')
+    if (ready) void loadProjects()
+  })
 }
 
 export const codeController = {

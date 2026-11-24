@@ -148,7 +148,7 @@ const { t } = useI18n()
 const { canAccessBackend, isElectron } = useHostAccess()
 const { isMac, isElectronMac, isFullScreen } = usePlatform()
 const router = useRouter()
-const { notify, status, dismissByKey } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
 
 // Background management moved to settings/sections/AppearanceSection.vue (D7.2)
 
@@ -301,6 +301,7 @@ onBeforeUnmount(() => {
   agentNavigationGeneration++
   providerNavigationGeneration++
   pendingProviderFocus.value = null
+  dismissByKey('graph-seed-pack-clone')
   agentsPanelRef.value?.flushAgentDraft()
 })
 const agentPermissionRequests = ref<PermissionRequestDto[]>([])
@@ -341,8 +342,9 @@ const manifestToolList = computed(() => manifestTools(harnessManifest.value, ava
 
 const agentCenterRead = useRecoverableRead(loadAgentCenterData, {
   lazy: true,
-  onSuccess: () => dismissByKey('agent-center'),
-  onFailure: error => status.error(error, { key: 'agent-center', source: 'agents', action: { label: t('settings.retry'), run: loadAgentCenter } }),
+  notificationKey: 'agent-center',
+  notificationSource: 'agents',
+  retryLabel: t('settings.retry'),
 })
 const agentCenterLoading = agentCenterRead.loading
 const agentCenterLoaded = agentCenterRead.loaded
@@ -476,13 +478,14 @@ async function openGraphSeedPackCloneFlow(requestedSlug?: string) {
     : undefined)
     ?? agents.value.find((agent) => agent.is_built_in && packSlugs.has(agent.slug ?? agent.name))
   if (!managedAgent) {
-    status.warning({
+    notify.warning({
       key: 'graph-seed-pack-clone',
       source: 'GraphSeedPack',
       message: t('agentPack.managedReadOnly'),
     })
     return
   }
+  dismissByKey('graph-seed-pack-clone')
   await openAgentConfigFromDirectory(managedAgent.id)
 }
 
