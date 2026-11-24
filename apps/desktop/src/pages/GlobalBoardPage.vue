@@ -7,7 +7,6 @@ import { UiButton } from '@/components/ui'
 import {
   BoardKanbanView,
   BoardListView,
-  BoardShellLayout,
   BoardSwimlaneView,
   BoardTaskDrawer,
   BoardViewToolbar,
@@ -244,8 +243,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
 </script>
 
 <template>
-  <BoardShellLayout>
-    <div class="global-board-page" data-testid="global-board-page">
+  <div class="global-board-page" data-testid="global-board-page">
       <!-- Cross-Project Command Header -->
       <header class="global-board-header">
         <div class="global-board-title-block">
@@ -438,8 +436,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         @open-session="handleOpenSession"
         @jump-spatial="handleJumpSpatial"
       />
-    </div>
-  </BoardShellLayout>
+  </div>
 </template>
 
 <style scoped>

@@ -512,9 +512,6 @@ describe('Spatial <-> Flat Project Board Bridge (Phase 2 #55)', () => {
     const page = mount(GlobalBoardPage, {
       global: {
         plugins: [i18n, router],
-        stubs: {
-          BoardShellLayout: { template: '<div><slot /></div>' },
-        },
       },
     })
     await flushPromises()

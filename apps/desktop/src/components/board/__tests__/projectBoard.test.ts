@@ -1,13 +1,17 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
-import { readFileSync } from 'node:fs'
+import { defineComponent, h, nextTick } from 'vue'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@/i18n'
-import { setHostAccessStatus } from '@/lib/hostAccess'
+import { resetHostAccessForTests, setHostAccessStatus } from '@/lib/hostAccess'
+import { useNotifications } from '@/composables/useNotifications'
+import { homeController } from '@/controllers/HomeController'
+import { appRoutes } from '@/router'
+import HomePage from '@/pages/HomePage.vue'
 import {
   api,
   type ProjectBoardTaskDto,
@@ -76,7 +80,12 @@ function makeTask(overrides: Partial<ProjectBoardTaskDto> = {}): ProjectBoardTas
 describe('Project Board View Engine & Components (Phase 1 #54)', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    resetHostAccessForTests()
     setHostAccessStatus({ state: 'ready', managed: true })
+    const notifications = useNotifications()
+    notifications.setGlobalConnectionBlocked(false)
+    notifications.dismissAll()
+    notifications.clearHistory()
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 })),
@@ -614,21 +623,266 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
       ['proj-alpha', 'task-7', { merge_or_clean_worktree: true, note: null }],
     ])
 
+    // Steer error routes to unified notification center without rendering inline .board-drawer-error
+    createInteractionSpy.mockRejectedValueOnce(new Error('Steer channel busy'))
+    steerInput.value = 'Retry steer when ready'
+    steerInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    steerBtn.click()
+    await flushPromises()
+    expect(document.body.querySelector('.board-drawer-error')).toBeNull()
+    expect(useNotifications().items.value.some((item) => item.key === 'board-task-drawer')).toBe(true)
+
     drawer.unmount()
   })
 
-  it('respects strict monochrome & .tinadec/ guardrails across all board UI files (zero border-left stripes, zero .agent/ paths)', () => {
+  it('keeps HomePage & AppSidebar mounted with stable scrollTop while switching ChatCard in-place across /, /board, and /projects/:projectId', async () => {
+    // Provide non-zero `.uie-canvas` bounds & Web Animations stub for happy-dom layout measurement
+    const origGetAnimations = HTMLElement.prototype.getAnimations
+    HTMLElement.prototype.getAnimations = () => []
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList?.contains('uie-canvas')) {
+        return new DOMRect(0, 0, 1360, 860)
+      }
+      return new DOMRect(0, 0, 0, 0)
+    })
+
+    vi.spyOn(homeController, 'start').mockImplementation(() => undefined)
+    homeController.projects.value = [
+      {
+        id: 'proj-alpha',
+        name: 'Alpha Repo',
+        path: '/workspace/alpha',
+        created_at: '2026-11-24T00:00:00Z',
+        lifecycle_status: 'active',
+      },
+      {
+        id: 'proj-beta',
+        name: 'Beta Repo',
+        path: '/workspace/beta',
+        created_at: '2026-11-24T00:05:00Z',
+        lifecycle_status: 'active',
+      },
+    ]
+    homeController.sessions.value = [
+      {
+        id: 'sess-alpha-1',
+        project_id: 'proj-alpha',
+        title: 'Alpha Main Thread',
+        status: 'active',
+        permission_mode: 'default',
+        space_options: null,
+        settings_revision: 1,
+        created_at: '2026-11-24T01:00:00Z',
+        updated_at: '2026-11-24T01:05:00Z',
+        origin: null,
+      },
+    ]
+    homeController.selectedProjectId.value = 'proj-alpha'
+    homeController.selectedSessionId.value = 'sess-alpha-1'
+
+    vi.spyOn(api, 'listGlobalBoardTasks').mockResolvedValue([
+      makeTask({ task_id: 't-global-1', task_key: 'TIN-1', title: 'Global Board Card' }),
+    ])
+    vi.spyOn(api, 'getGlobalBoardSummary').mockResolvedValue({
+      total_tasks: 1,
+      backlog_count: 0,
+      ready_count: 1,
+      in_progress_count: 0,
+      in_review_count: 0,
+      done_count: 0,
+      blocked_count: 0,
+      conflict_count: 0,
+      active_run_count: 0,
+      needs_action_count: 1,
+      projects: [],
+      updated_at_unix_ms: Date.now(),
+    })
+    vi.spyOn(api, 'listBoardViews').mockResolvedValue([])
+    vi.spyOn(api, 'subscribeGlobalBoardEvents').mockReturnValue({
+      close: vi.fn(),
+      closed: false,
+      lastSeq: 0,
+    })
+    vi.spyOn(api, 'subscribeProjectBoardEvents').mockReturnValue({
+      close: vi.fn(),
+      closed: false,
+      lastSeq: 0,
+    })
+    const listProjectTasksSpy = vi.spyOn(api, 'listProjectBoardTasks').mockImplementation(async (pid) => [
+      makeTask({
+        task_id: `task-${pid}`,
+        project_id: pid,
+        project_name: pid === 'proj-beta' ? 'Beta Repo' : 'Alpha Repo',
+        task_key: pid === 'proj-beta' ? 'BET-1' : 'ALP-1',
+        title: `Task for ${pid}`,
+      }),
+    ])
+    vi.spyOn(api, 'getProjectBoardSettings').mockImplementation(async (pid) => ({
+      project_id: pid,
+      key_prefix: pid === 'proj-beta' ? 'BET' : 'ALP',
+      next_sequence: 2,
+      storage_mode: 'repo_tinadec',
+      resolved_board_dir: `/workspace/${pid}/.tinadec/board`,
+      project_instructions: '',
+      default_assignee_kind: 'native',
+      max_concurrency: 2,
+      autopilot_enabled: false,
+      updated_at_unix_ms: Date.now(),
+    }))
+    vi.spyOn(api, 'getProjectNotes').mockResolvedValue(null as never)
+    vi.spyOn(api, 'getProjectAutopilot').mockResolvedValue(null as never)
+    const overviewSpy = vi.spyOn(api, 'getProjectOverview').mockImplementation(async (pid) => ({
+      project_id: pid,
+      name: pid === 'proj-beta' ? 'Beta Repo' : 'Alpha Repo',
+      path: `/workspace/${pid}`,
+      board_summary: {
+        total_tasks: 1,
+        backlog_count: 0,
+        ready_count: 1,
+        in_progress_count: 0,
+        in_review_count: 0,
+        done_count: 0,
+        blocked_count: 0,
+        conflict_count: 0,
+        active_run_count: 0,
+        needs_action_count: 0,
+      },
+      resolved_board_dir: `/workspace/${pid}/.tinadec/board`,
+      resolved_notes_path: `/workspace/${pid}/.tinadec/project/notes.md`,
+      storage_mode: 'repo_tinadec',
+      ordinary_session_count: 1,
+    } as never))
+    vi.spyOn(api, 'syncProjectBoard').mockResolvedValue({
+      imported_count: 2,
+      exported_count: 1,
+      conflict_count: 0,
+    } as never)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: appRoutes,
+    })
+    // Cold-boot directly on `/board` first to verify HomePage entrance `ready` event works on child board routes
+    await router.push('/board')
+    await router.isReady()
+
+    let homeReadyCount = 0
+    const ShellHost = defineComponent({
+      name: 'PersistentShellTestHost',
+      setup() {
+        return () =>
+          h(RouterView, null, {
+            default: ({ Component }: { Component?: unknown }) =>
+              Component ? h(Component as never, { onReady: () => { homeReadyCount += 1 } }) : null,
+          })
+      },
+    })
+
+    const shell = mount(ShellHost, {
+      attachTo: document.body,
+      global: {
+        plugins: [i18n, router],
+        stubs: {
+          ChatPanel: { template: '<div data-testid="chat-panel-stub">Chat Stream</div>' },
+          LiveDigestHeartbeatStrip: { template: '<div data-testid="live-digest-strip-stub" />' },
+          BrandLogo: true,
+          TinadecCalligraphy: true,
+          PersonalAvatar: true,
+          SidebarActivityCard: true,
+          BoardTaskDrawer: true,
+          CoordinatorPlanModal: true,
+        },
+      },
+    })
+
+    await flushPromises()
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    await flushPromises()
+
+    expect(homeReadyCount).toBe(1)
+    const homeEl = shell.findComponent(HomePage).element
+    const homeUid = (shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid
+    const sidebarEl = shell.get('.sidebar').element
+    const workspacesEl = shell.get('#sidebar-workspaces').element as HTMLElement
+    workspacesEl.scrollTop = 148
+    await shell.get('#sidebar-workspaces').trigger('scroll')
+
+    // On `/board`: GlobalBoardPage renders inside ChatCard workspace surface, chat-only strip is hidden
+    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('board')
+    expect(shell.find('[data-testid="global-board-page"]').exists()).toBe(true)
+    expect(shell.find('[data-testid="chat-panel-stub"]').exists()).toBe(false)
+    expect(shell.find('[data-testid="live-digest-strip-stub"]').exists()).toBe(false)
+
+    // Navigate `/board` -> `/projects/proj-alpha`: zero HomePage/AppSidebar remount, scrollTop stays 148
+    await router.push('/projects/proj-alpha')
+    await flushPromises()
+    expect(shell.findComponent(HomePage).element).toBe(homeEl)
+    expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
+    expect(shell.get('.sidebar').element).toBe(sidebarEl)
+    expect(workspacesEl.scrollTop).toBe(148)
+    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('project-hub')
+    expect(shell.find('[data-testid="project-hub-page"]').exists()).toBe(true)
+    expect(overviewSpy).toHaveBeenCalledWith('proj-alpha')
+    expect(listProjectTasksSpy).toHaveBeenCalledWith('proj-alpha')
+
+    // Trigger `.tinadec/` sync -> transient notification via useNotifications, zero inline `.hub-sync-banner`
+    await shell.get('[data-testid="hub-sync-tinadec-btn"]').trigger('click')
+    await flushPromises()
+    expect(shell.find('.hub-sync-banner').exists()).toBe(false)
+    expect(
+      useNotifications().items.value.some(
+        (item) => item.key === 'board-tinadec-sync' && item.level === 'success',
+      ),
+    ).toBe(true)
+
+    // Navigate `/projects/proj-alpha` -> `/projects/proj-beta`: HomePage stays mounted, scrollTop preserved across project scope, overview & tasks reload in-place
+    await router.push('/projects/proj-beta')
+    await flushPromises()
+    expect(shell.findComponent(HomePage).element).toBe(homeEl)
+    expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
+    const betaSidebarEl = shell.get('.sidebar').element
+    expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
+    expect(overviewSpy).toHaveBeenCalledWith('proj-beta')
+    expect(listProjectTasksSpy).toHaveBeenCalledWith('proj-beta')
+
+    // Navigate `/projects/proj-beta` -> `/` -> `/board`: zero HomePage/AppSidebar remount, scrollTop stays 148
+    await router.push('/')
+    await flushPromises()
+    expect(shell.findComponent(HomePage).element).toBe(homeEl)
+    expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
+    expect(shell.get('.sidebar').element).toBe(betaSidebarEl)
+    expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
+    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('chat')
+    expect(shell.find('[data-testid="chat-panel-stub"]').exists()).toBe(true)
+    expect(shell.find('[data-testid="project-hub-page"]').exists()).toBe(false)
+
+    await router.push('/board')
+    await flushPromises()
+    expect(shell.findComponent(HomePage).element).toBe(homeEl)
+    expect(shell.get('.sidebar').element).toBe(betaSidebarEl)
+    expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
+    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('board')
+
+    shell.unmount()
+    HTMLElement.prototype.getAnimations = origGetAnimations
+  })
+
+  it('respects strict monochrome & .tinadec/ guardrails across all board UI files (BoardShellLayout deleted, zero border-left stripes, zero .agent/ paths)', () => {
     const dir = path.dirname(fileURLToPath(import.meta.url))
+    expect(existsSync(path.resolve(dir, '../BoardShellLayout.vue'))).toBe(false)
+
     const filesToCheck = [
-      path.resolve(dir, '../BoardShellLayout.vue'),
       path.resolve(dir, '../BoardViewToolbar.vue'),
       path.resolve(dir, '../BoardTaskCard.vue'),
       path.resolve(dir, '../BoardKanbanView.vue'),
       path.resolve(dir, '../BoardListView.vue'),
       path.resolve(dir, '../BoardSwimlaneView.vue'),
       path.resolve(dir, '../BoardTaskDrawer.vue'),
+      path.resolve(dir, '../../../pages/HomePage.vue'),
       path.resolve(dir, '../../../pages/GlobalBoardPage.vue'),
       path.resolve(dir, '../../../pages/ProjectHubPage.vue'),
+      path.resolve(dir, '../../../../../TinadecUI/src/components/cards/home/ChatCard.vue'),
     ]
 
     for (const filePath of filesToCheck) {

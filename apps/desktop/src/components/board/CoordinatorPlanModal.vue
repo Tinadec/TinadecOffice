@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  AlertTriangle,
   ArrowLeft,
   Check,
   GitBranch,
@@ -19,9 +18,9 @@ import {
   type CoordinatorTaskDraftDto,
   type ProjectBoardAssigneeKind,
   type ProjectBoardTaskDto,
-  type ProjectBoardTaskPriority,
   type ProjectBoardTaskStatus,
 } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
 import { ApiError } from '@/lib/apiError'
 import { BOARD_TASK_PRIORITIES } from './useProjectBoardView'
 
@@ -38,6 +37,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { notify, dismissByKey } = useNotifications()
+
+const COORDINATOR_ERROR_KEY = 'board-coordinator-plan'
 
 type PlannerStep = 'goal' | 'review'
 const step = ref<PlannerStep>('goal')
@@ -58,7 +60,6 @@ let customDraftCounter = 1
 
 const planning = ref(false)
 const applying = ref(false)
-const errorMessage = ref<string | null>(null)
 
 const statusChoices: readonly ('ready' | 'backlog')[] = ['ready', 'backlog']
 const assigneeChoices: readonly ('native' | 'cli' | 'coordinator')[] = ['native', 'cli', 'coordinator']
@@ -83,13 +84,14 @@ function resetModalState() {
   planSummary.value = ''
   plannerSource.value = 'heuristic'
   updateNotes.value = true
-  errorMessage.value = null
+  dismissByKey(COORDINATOR_ERROR_KEY)
   planning.value = false
   applying.value = false
 }
 
 function close() {
   if (planning.value || applying.value) return
+  dismissByKey(COORDINATOR_ERROR_KEY)
   emit('update:open', false)
 }
 
@@ -107,6 +109,7 @@ watch(
       resetModalState()
       window.addEventListener('keydown', onWindowKeydown)
     } else {
+      dismissByKey(COORDINATOR_ERROR_KEY)
       window.removeEventListener('keydown', onWindowKeydown)
     }
   },
@@ -114,6 +117,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  dismissByKey(COORDINATOR_ERROR_KEY)
   window.removeEventListener('keydown', onWindowKeydown)
 })
 
@@ -137,14 +141,21 @@ function clampMaxTasks(value: number): number {
   return Math.max(1, Math.min(20, Math.round(value)))
 }
 
-function resolveErrorText(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'cycle_detected') {
-    return t('board.coordinator.cycleDetectedError')
+function reportCoordinatorError(err: unknown) {
+  const isCycle =
+    (err instanceof ApiError && err.code === 'cycle_detected') ||
+    Boolean(err && typeof err === 'object' && (err as { code?: unknown }).code === 'cycle_detected')
+  if (isCycle) {
+    notify.error(t('board.coordinator.cycleDetectedError'), {
+      title: t('board.coordinator.modalTitle'),
+      key: COORDINATOR_ERROR_KEY,
+    })
+    return
   }
-  if (err && typeof err === 'object' && (err as { code?: unknown }).code === 'cycle_detected') {
-    return t('board.coordinator.cycleDetectedError')
-  }
-  return err instanceof Error ? err.message : String(err)
+  notify.error(err, {
+    title: t('board.coordinator.modalTitle'),
+    key: COORDINATOR_ERROR_KEY,
+  })
 }
 
 async function handleGeneratePlan() {
@@ -152,7 +163,7 @@ async function handleGeneratePlan() {
   if (!trimmedGoal || !props.projectId || planning.value) return
 
   planning.value = true
-  errorMessage.value = null
+  dismissByKey(COORDINATOR_ERROR_KEY)
   const boundedMax = clampMaxTasks(maxTasks.value)
   maxTasks.value = boundedMax
 
@@ -177,7 +188,7 @@ async function handleGeneratePlan() {
     drafts.value = result.drafts.map(cloneDraft)
     step.value = 'review'
   } catch (err) {
-    errorMessage.value = resolveErrorText(err)
+    reportCoordinatorError(err)
   } finally {
     planning.value = false
   }
@@ -244,7 +255,7 @@ async function handleApplyPlan() {
   if (!cleanDrafts.length || !props.projectId || applying.value) return
 
   applying.value = true
-  errorMessage.value = null
+  dismissByKey(COORDINATOR_ERROR_KEY)
   try {
     const res = await api.applyCoordinatorPlan(props.projectId, {
       goal: goalText.value.trim() || null,
@@ -254,7 +265,7 @@ async function handleApplyPlan() {
     emit('applied', res.created_tasks)
     emit('update:open', false)
   } catch (err) {
-    errorMessage.value = resolveErrorText(err)
+    reportCoordinatorError(err)
   } finally {
     applying.value = false
   }
@@ -295,16 +306,6 @@ async function handleApplyPlan() {
             <X :size="15" />
           </button>
         </header>
-
-        <div
-          v-if="errorMessage"
-          class="coordinator-error-banner"
-          role="alert"
-          data-testid="coordinator-error-banner"
-        >
-          <AlertTriangle :size="14" />
-          <span>{{ errorMessage }}</span>
-        </div>
 
         <!-- STEP 1: Goal / PRD Input & Planner Parameters -->
         <div v-if="step === 'goal'" class="coordinator-step-body" data-testid="coordinator-step-goal">
@@ -641,18 +642,6 @@ async function handleApplyPlan() {
 .coordinator-close-btn:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-.coordinator-error-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 11px;
-  border-radius: 8px;
-  border: 1px solid var(--border-default, var(--border-muted));
-  background: var(--surface-section, var(--bg-secondary));
-  color: var(--text-primary);
-  font-size: 12px;
 }
 
 .coordinator-step-body {

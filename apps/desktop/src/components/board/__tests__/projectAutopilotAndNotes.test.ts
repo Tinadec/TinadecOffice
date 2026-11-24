@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@/i18n'
 import { ApiError } from '@/lib/apiError'
-import { setHostAccessStatus } from '@/lib/hostAccess'
+import { resetHostAccessForTests, setHostAccessStatus } from '@/lib/hostAccess'
+import { useNotifications } from '@/composables/useNotifications'
 import {
   api,
   type CoordinatorPlanResultDto,
@@ -90,7 +91,12 @@ function makeAutopilot(overrides: Partial<ProjectAutopilotStateDto> = {}): Proje
 describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot UI', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    resetHostAccessForTests()
     setHostAccessStatus({ state: 'ready', managed: true })
+    const notifications = useNotifications()
+    notifications.setGlobalConnectionBlocked(false)
+    notifications.dismissAll()
+    notifications.clearHistory()
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 })),
@@ -515,7 +521,6 @@ describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot U
       global: {
         plugins: [i18n, router],
         stubs: {
-          BoardShellLayout: { template: '<div><slot /></div>' },
           BoardTaskDrawer: true,
         },
       },
@@ -530,6 +535,87 @@ describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot U
     expect(globalPage.find('[data-testid="board-task-card-t-normal"]').exists()).toBe(false)
 
     globalPage.unmount()
+  })
+
+  it('routes non-conflict Notes, Coordinator, and Autopilot errors to useNotifications and silently recovers on canAccessBackend false -> true', async () => {
+    const notifications = useNotifications()
+
+    // Start offline (`canAccessBackend = false`) -> recover to `'ready'` (`false -> true`)
+    setHostAccessStatus({ state: 'checking', managed: true })
+
+    const getNotesSpy = vi.spyOn(api, 'getProjectNotes').mockResolvedValue(
+      makeNotes({ revision: 7, content_md: '# Recovered after reconnect' }),
+    )
+    const listTasksSpy = vi.spyOn(api, 'listProjectBoardTasks').mockResolvedValue([
+      makeTask({ task_id: 't-rec-1', task_key: 'TIN-77', title: 'Recovered Task' }),
+    ])
+    vi.spyOn(api, 'getProjectBoardSettings').mockResolvedValue(null as never)
+    vi.spyOn(api, 'listBoardViews').mockResolvedValue([])
+    vi.spyOn(api, 'getProjectAutopilot').mockResolvedValue(makeAutopilot())
+    const subscribeSpy = vi.spyOn(api, 'subscribeProjectBoardEvents').mockReturnValue({
+      close: vi.fn(),
+      closed: false,
+      lastSeq: 0,
+    })
+
+    const board = useProjectBoardView({ scope: 'project', projectId: 'proj-alpha' })
+    const notesWrapper = mount(ProjectNotesPanel, {
+      global: { plugins: [i18n] },
+      props: { projectId: 'proj-alpha' },
+    })
+    await flushPromises()
+    expect(listTasksSpy).not.toHaveBeenCalled()
+
+    // Transition `canAccessBackend`: false -> true
+    setHostAccessStatus({ state: 'ready', managed: true })
+    await flushPromises()
+    expect(listTasksSpy).toHaveBeenCalledWith('proj-alpha')
+    expect(subscribeSpy).toHaveBeenCalled()
+    expect(getNotesSpy).toHaveBeenCalledWith('proj-alpha')
+    expect(notesWrapper.get('[data-testid="notes-revision-badge"]').text()).toBe('r7')
+
+    // Non-409 save failure routes to `useNotifications` with zero inline `notes-error-banner`
+    vi.spyOn(api, 'updateProjectNotes').mockRejectedValueOnce(new ApiError('Disk write error', 500, 'io_error'))
+    await notesWrapper.get('[data-testid="notes-save-btn"]').trigger('click')
+    await flushPromises()
+    expect(notesWrapper.find('[data-testid="notes-error-banner"]').exists()).toBe(false)
+    expect(notifications.items.value.some((item) => item.key === 'project-notes-studio')).toBe(true)
+
+    // CoordinatorPlanModal error routes to `useNotifications` with zero inline `coordinator-error-banner`
+    vi.spyOn(api, 'planCoordinatorTasks').mockRejectedValueOnce(
+      new ApiError('Cycle detected', 422, 'cycle_detected'),
+    )
+    const modal = mount(CoordinatorPlanModal, {
+      attachTo: document.body,
+      global: { plugins: [i18n] },
+      props: { open: true, projectId: 'proj-alpha' },
+    })
+    await nextTick()
+    const goalArea = document.body.querySelector<HTMLTextAreaElement>('[data-testid="coordinator-goal-input"]')!
+    goalArea.value = 'Trigger cycle validation'
+    goalArea.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="coordinator-generate-btn"]')!.click()
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="coordinator-error-banner"]')).toBeNull()
+    expect(notifications.items.value.some((item) => item.key === 'board-coordinator-plan')).toBe(true)
+
+    // BoardAutopilotBar action error routes to `useNotifications` with zero inline error alert
+    vi.spyOn(api, 'updateProjectAutopilot').mockRejectedValueOnce(new Error('Scheduler unavailable'))
+    const autopilotBar = mount(BoardAutopilotBar, {
+      global: { plugins: [i18n] },
+      props: { projectId: 'proj-alpha', autopilot: makeAutopilot() },
+    })
+    await autopilotBar.get('[data-testid="autopilot-instant-toggle-btn"]').trigger('click')
+    await flushPromises()
+    expect(autopilotBar.find('.autopilot-inline-error').exists()).toBe(false)
+    expect(autopilotBar.find('[data-testid="autopilot-last-error"]').exists()).toBe(false)
+    expect(notifications.items.value.some((item) => item.key === 'board-autopilot-action')).toBe(true)
+
+    autopilotBar.unmount()
+    modal.unmount()
+    notesWrapper.unmount()
+    board.disconnectStream()
   })
 
   it('enforces monochrome CSS & .tinadec/ guardrails across all Phase 3 Vue components', () => {

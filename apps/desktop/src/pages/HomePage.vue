@@ -28,6 +28,22 @@ const emit = defineEmits<{ ready: [] }>()
 const root = ref<HTMLElement | null>(null)
 const { contentReady, phase } = useHomeEntrance(root, uie.ready, () => emit('ready'))
 
+const currentHomeSurface = computed<'chat' | 'board' | 'project-hub'>(() => {
+  const current = router?.currentRoute?.value
+  if (!current) return 'chat'
+  if (current.meta?.homeSurface === 'board' || current.name === 'board' || current.path === '/board') {
+    return 'board'
+  }
+  if (
+    current.meta?.homeSurface === 'project-hub' ||
+    current.name === 'project-hub' ||
+    (typeof current.path === 'string' && current.path.startsWith('/projects/'))
+  ) {
+    return 'project-hub'
+  }
+  return 'chat'
+})
+
 // Spatial transition state — declarative, class-driven.
 // Same mechanism as the Settings page: toggling container classes
 // (.home-entering / .home-exiting) drives CSS @keyframes in
@@ -103,6 +119,9 @@ function onLiveDigestFillSteerEvent(event: Event): void {
   const prompt = typeof detail?.prompt === 'string' ? detail.prompt.trim() : ''
   if (!prompt) return
   homeController.updateDraft(prompt)
+  if (router?.currentRoute?.value && router.currentRoute.value.path !== '/') {
+    void router.push('/')
+  }
   window.dispatchEvent(new CustomEvent('tinadec:focus-composer', { detail: { draft: prompt } }))
   void nextTick(() => {
     const container = root.value ?? document
@@ -260,6 +279,7 @@ watch(
     ref="root"
     class="home-page-container"
     :class="pageTransitionClasses"
+    :data-home-surface="currentHomeSurface"
     :data-dock-focused-card="highlightedDockCard ?? undefined"
     :data-dock-focused-worker="focusedWorkerAttr"
   >

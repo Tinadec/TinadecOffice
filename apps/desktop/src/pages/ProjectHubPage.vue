@@ -28,7 +28,6 @@ import {
   BoardAutopilotBar,
   BoardKanbanView,
   BoardListView,
-  BoardShellLayout,
   BoardSwimlaneView,
   BoardTaskDrawer,
   BoardViewToolbar,
@@ -102,18 +101,26 @@ const board = useProjectBoardView({
 // ---- Commander Strip: Project Overview ----
 const overview = ref<ProjectOverviewDto | null>(null)
 const overviewLoading = ref(false)
-const lastSyncReceipt = ref<string | null>(null)
+let overviewGeneration = 0
 
 async function loadOverview() {
   const pid = routeProjectId.value
   if (!pid || !canAccessBackend.value) return
+  const gen = ++overviewGeneration
   overviewLoading.value = true
   try {
-    overview.value = await baseApi.getProjectOverview(pid)
+    const res = await baseApi.getProjectOverview(pid)
+    if (gen === overviewGeneration && routeProjectId.value === pid) {
+      overview.value = res
+    }
   } catch {
-    overview.value = null
+    if (gen === overviewGeneration && routeProjectId.value === pid) {
+      overview.value = null
+    }
   } finally {
-    overviewLoading.value = false
+    if (gen === overviewGeneration) {
+      overviewLoading.value = false
+    }
   }
 }
 
@@ -130,11 +137,18 @@ const agentsCatalog = ref<AgentDirectoryItemDto[]>([])
 const defaultModeId = ref('')
 const defaultAgentId = ref('')
 const savingDefaults = ref(false)
+let defaultsGeneration = 0
 
 watch(
   () => board.settings.value,
   (s) => {
-    if (!s) return
+    if (!s) {
+      keyPrefix.value = 'TIN'
+      projectInstructions.value = ''
+      storageMode.value = 'repo_tinadec'
+      customSyncRoot.value = ''
+      return
+    }
     keyPrefix.value = s.key_prefix || 'TIN'
     projectInstructions.value = s.project_instructions ?? ''
     storageMode.value = s.storage_mode || 'repo_tinadec'
@@ -146,6 +160,7 @@ watch(
 async function loadProjectWorkspaceDefaults() {
   const pid = routeProjectId.value
   if (!pid || !canAccessBackend.value) return
+  const gen = ++defaultsGeneration
   const pStorage = currentProject.value?.storage_id ?? projectStorageId(pid)
   const pApi = scopedApi(baseApi, () => pStorage)
   try {
@@ -154,6 +169,7 @@ async function loadProjectWorkspaceDefaults() {
       pApi.listAgentModes().catch(() => [] as AgentModeDto[]),
       pApi.listAgents().catch(() => [] as AgentDirectoryItemDto[]),
     ])
+    if (gen !== defaultsGeneration || routeProjectId.value !== pid) return
     workspaceDefaults.value = defs
     modesCatalog.value = modes.filter(
       (m) => m.status === 'published' && Boolean(m.latest_published_mode_version_id),
@@ -167,9 +183,23 @@ async function loadProjectWorkspaceDefaults() {
 }
 
 watch(
+  routeProjectId,
+  (pid, prevPid) => {
+    if (prevPid !== undefined && pid !== prevPid) {
+      overview.value = null
+      workspaceDefaults.value = null
+      defaultModeId.value = ''
+      defaultAgentId.value = ''
+      drawerOpen.value = false
+      selectedTaskId.value = null
+      planModalOpen.value = false
+    }
+  },
+)
+
+watch(
   [routeProjectId, canAccessBackend],
   ([pid, ready]) => {
-    lastSyncReceipt.value = null
     if (pid && ready) {
       void loadOverview()
       void loadProjectWorkspaceDefaults()
@@ -300,14 +330,17 @@ async function handleSyncTinadec() {
   try {
     const res = await board.syncBoard()
     if (res) {
-      lastSyncReceipt.value = t('board.hub.syncCompletedSummary', {
-        imported: res.imported_count,
-        exported: res.exported_count,
-        conflicts: res.conflict_count,
-      })
+      notify.success(
+        t('board.hub.syncCompletedSummary', {
+          imported: res.imported_count,
+          exported: res.exported_count,
+          conflicts: res.conflict_count,
+        }),
+        { key: 'board-tinadec-sync' },
+      )
     }
   } catch (err) {
-    notify.error(err, { title: t('board.errors.syncFailed') })
+    notify.error(err, { title: t('board.errors.syncFailed'), key: 'board-tinadec-sync' })
   }
 }
 
@@ -492,8 +525,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
 </script>
 
 <template>
-  <BoardShellLayout>
-    <div class="project-hub-page" data-testid="project-hub-page">
+  <div class="project-hub-page" data-testid="project-hub-page">
       <!-- Top Commander Strip -->
       <header class="hub-commander-strip" data-testid="hub-commander-strip">
         <div class="hub-title-area">
@@ -584,10 +616,6 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
           </div>
         </div>
       </header>
-
-      <div v-if="lastSyncReceipt" class="hub-sync-banner" data-testid="hub-sync-receipt">
-        <span>{{ lastSyncReceipt }}</span>
-      </div>
 
       <!-- Phase 3 (#56): Autopilot Control Strip & Blocked Human Intervention Banner -->
       <BoardAutopilotBar
@@ -906,8 +934,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         @open-session="handleOpenSession"
         @jump-spatial="handleJumpSpatial"
       />
-    </div>
-  </BoardShellLayout>
+  </div>
 </template>
 
 <style scoped>
@@ -1019,15 +1046,6 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
 .hub-primary-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.hub-sync-banner {
-  margin: 0 16px 6px;
-  padding: 6px 10px;
-  border-radius: 7px;
-  background: var(--surface-section, var(--bg-tertiary));
-  color: var(--text-secondary);
-  font-size: 11.5px;
 }
 
 .hub-tabs-bar {

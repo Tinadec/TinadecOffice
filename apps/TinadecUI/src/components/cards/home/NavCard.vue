@@ -37,6 +37,12 @@ function openCompanionCenter() {
   void router.push('/companion-center')
 }
 
+function openGlobalBoard() {
+  if (route.path !== '/board') {
+    void router.push('/board')
+  }
+}
+
 /** The companion nav only re-aims the centre; it never touches the work selection. */
 function handleCompanionNav(target: 'all' | 'attention' | 'settings') {
   if (target === 'settings') {
@@ -74,6 +80,7 @@ function toggleCollapse() {
     :busy="c.busy.value"
     :workspace-load-states="companionDomain ? {} : c.workspaceLoadStates.value"
     :collapsed="uie.snapshot.value.columns.left?.collapsed"
+    @select-project="c.setSelectedProject($event)"
     @select-session="openSession($event)"
     @create-session="createSession($event)"
     @open-project="c.openProject()"
@@ -83,6 +90,7 @@ function toggleCollapse() {
     @go-settings="router.push('/settings')"
     @go-companion-center="openCompanionCenter"
     @go-personal="openPersonal"
+    @go-board="openGlobalBoard"
     @companion-nav="handleCompanionNav"
     @change-view="router.push($event === 'space' ? '/space' : '/')"
     @toggle-collapse="toggleCollapse"

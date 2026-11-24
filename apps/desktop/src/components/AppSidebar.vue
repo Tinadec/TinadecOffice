@@ -1,3 +1,7 @@
+<script lang="ts">
+let preservedSidebarScrollTop = 0
+</script>
+
 <script setup lang="ts">
 import { computed, getCurrentInstance, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -627,7 +631,9 @@ watch(
 
 function handleOpenGlobalBoard() {
   emit('go-board')
-  void injectedRouter?.push('/board')
+  if (!instance?.vnode.props?.onGoBoard && currentRoutePath.value !== '/board') {
+    void injectedRouter?.push('/board')
+  }
 }
 
 function getProjectSessions(projectKey: string): SessionDto[] {
@@ -649,7 +655,11 @@ function handleProjectRowClick(workspace: WorkspaceRow) {
     return
   }
   emit('select-project', workspace.key)
-  void injectedRouter?.push(`/projects/${encodeURIComponent(workspace.project.id)}`)
+  const encodedPath = `/projects/${encodeURIComponent(workspace.project.id)}`
+  const rawPath = `/projects/${workspace.project.id}`
+  if (currentRoutePath.value !== encodedPath && currentRoutePath.value !== rawPath) {
+    void injectedRouter?.push(encodedPath)
+  }
 }
 
 function handleSessionClick(sessionId: string) {
@@ -670,11 +680,38 @@ function handleNewThread() {
 // 'Tinadec session' title until its first message generates one, so hiding that
 // title made every fresh free conversation invisible.
 
+const sidebarListRef = ref<HTMLElement | null>(null)
+let lastSidebarListEl: HTMLElement | null = null
+let isSidebarScrollReady = false
+watch(
+  sidebarListRef,
+  (el) => {
+    if (el) lastSidebarListEl = el
+  },
+  { flush: 'sync' },
+)
+
+function onSidebarListScroll(event: Event) {
+  if (!isSidebarScrollReady) return
+  const el = sidebarListRef.value ?? (event.currentTarget as HTMLElement | null) ?? lastSidebarListEl
+  if (el) preservedSidebarScrollTop = el.scrollTop
+}
+
+function restoreSidebarScrollTop() {
+  const el = sidebarListRef.value ?? lastSidebarListEl
+  if (el && preservedSidebarScrollTop > 0) {
+    el.scrollTop = preservedSidebarScrollTop
+  }
+}
+
 onMounted(() => {
   // An option that is already on when the window opens still needs its first read; the clock
   // only exists while the view does.
   syncActivityClock(list.state.value.activity)
   if (list.state.value.activity) void refreshActivity()
+  restoreSidebarScrollTop()
+  isSidebarScrollReady = true
+  void nextTick(restoreSidebarScrollTop)
   window.addEventListener('tinadec:board-summary-changed', onBoardSummaryEvent)
 })
 watch(() => props.busy, (busy, wasBusy) => {
@@ -770,6 +807,11 @@ onMounted(() => {
   document.fonts?.ready.then(measureProfileName, () => {})
 })
 onBeforeUnmount(() => {
+  isSidebarScrollReady = false
+  const listEl = sidebarListRef.value ?? lastSidebarListEl
+  if (listEl && listEl.scrollTop > 0) {
+    preservedSidebarScrollTop = listEl.scrollTop
+  }
   footerResizeObserver?.disconnect()
   footerResizeObserver = null
   if (activityClock) { clearInterval(activityClock); activityClock = null }
@@ -891,7 +933,7 @@ watch([displayName, () => props.collapsed], async () => {
         ><SlidersHorizontal :size="14" /></button>
         <button type="button" class="workspace-section-action workspace-section-add sidebar-extra" :aria-label="t('sidebar.newWorkspace')" :title="t('sidebar.newWorkspace')" @click.stop="emit('open-project')"><Plus :size="14" /></button>
       </div>
-      <div id="sidebar-workspaces" class="sidebar-list" :class="{ 'sidebar-list--group-collapsed': list.state.value.collapsed }">
+      <div id="sidebar-workspaces" ref="sidebarListRef" class="sidebar-list" :class="{ 'sidebar-list--group-collapsed': list.state.value.collapsed }" @scroll.passive="onSidebarListScroll">
         <!-- One entry per visible block. The four option rows are siblings in this scrollport, so
              the order the options menu holds is literally the order rendered here. -->
         <template v-if="!list.state.value.collapsed">

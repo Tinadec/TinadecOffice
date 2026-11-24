@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   type ProjectBoardStorageMode,
   type ProjectNotesDto,
 } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
 import { ApiError } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 
@@ -37,6 +38,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const NOTES_ERROR_KEY = 'project-notes-studio'
 
 const viewMode = ref<NotesViewMode>('split')
 const serverContent = ref('')
@@ -50,7 +54,6 @@ const hasLoadedOnce = ref(false)
 const externalSyncedFlag = ref(false)
 const conflictDetected = ref(false)
 const pendingExternalNotes = ref<ProjectNotesDto | null>(null)
-const errorMessage = ref<string | null>(null)
 const editorRef = ref<HTMLTextAreaElement | null>(null)
 
 const isDirty = computed(() => draftContent.value !== serverContent.value)
@@ -72,7 +75,7 @@ function applyAuthoritativeNotes(incoming: ProjectNotesDto, isExternalSync = fal
   hasLoadedOnce.value = true
   conflictDetected.value = false
   pendingExternalNotes.value = null
-  errorMessage.value = null
+  dismissByKey(NOTES_ERROR_KEY)
   if (isExternalSync) {
     externalSyncedFlag.value = true
   }
@@ -103,7 +106,7 @@ watch(
 async function loadNotes(markReloaded = false) {
   if (!props.projectId || !canAccessBackend.value) return
   loading.value = true
-  errorMessage.value = null
+  dismissByKey(NOTES_ERROR_KEY)
   try {
     const loaded = await api.getProjectNotes(props.projectId)
     applyAuthoritativeNotes(loaded, false)
@@ -112,7 +115,10 @@ async function loadNotes(markReloaded = false) {
       emit('reloaded', loaded)
     }
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, {
+      title: t('board.notes.title'),
+      key: NOTES_ERROR_KEY,
+    })
   } finally {
     loading.value = false
   }
@@ -126,6 +132,7 @@ watch(
       externalSyncedFlag.value = false
       conflictDetected.value = false
       pendingExternalNotes.value = null
+      dismissByKey(NOTES_ERROR_KEY)
       if (!props.notes || props.notes.project_id !== nextId) {
         void loadNotes(false)
       }
@@ -133,10 +140,35 @@ watch(
   },
 )
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && wasReady === false && props.projectId) {
+    dismissByKey(NOTES_ERROR_KEY)
+    if (!hasLoadedOnce.value || !isDirty.value) {
+      void loadNotes(false)
+    } else {
+      void api
+        .getProjectNotes(props.projectId)
+        .then((loaded) => {
+          if (
+            loaded.revision !== currentRevision.value ||
+            loaded.content_md !== serverContent.value
+          ) {
+            pendingExternalNotes.value = loaded
+          }
+        })
+        .catch(() => undefined)
+    }
+  }
+})
+
 onMounted(() => {
   if (!props.notes && props.projectId) {
     void loadNotes(false)
   }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(NOTES_ERROR_KEY)
 })
 
 function isRevisionConflictError(err: unknown): boolean {
@@ -154,7 +186,7 @@ function isRevisionConflictError(err: unknown): boolean {
 async function handleSave(forceOverwrite = false) {
   if (!props.projectId || saving.value) return
   saving.value = true
-  errorMessage.value = null
+  dismissByKey(NOTES_ERROR_KEY)
   try {
     const saved = await api.updateProjectNotes(props.projectId, {
       content_md: draftContent.value,
@@ -167,7 +199,10 @@ async function handleSave(forceOverwrite = false) {
     if (isRevisionConflictError(err)) {
       conflictDetected.value = true
     } else {
-      errorMessage.value = err instanceof Error ? err.message : String(err)
+      notify.error(err, {
+        title: t('board.notes.title'),
+        key: NOTES_ERROR_KEY,
+      })
     }
   } finally {
     saving.value = false
@@ -405,10 +440,6 @@ defineExpose({
           {{ t('board.notes.conflictKeepMine') }}
         </button>
       </div>
-    </div>
-
-    <div v-if="errorMessage" class="notes-error-banner" role="alert" data-testid="notes-error-banner">
-      {{ errorMessage }}
     </div>
 
     <!-- Main Studio Surface: Edit | Split | Preview -->
@@ -676,15 +707,6 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.notes-error-banner {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section, var(--bg-secondary));
-  color: var(--text-error, var(--text-primary));
-  font-size: 12px;
 }
 
 .notes-workspace-grid {

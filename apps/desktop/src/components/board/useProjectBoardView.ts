@@ -854,6 +854,18 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
   let streamHandle: BoardEventStreamHandle | null = null
   let loadGeneration = 0
 
+  function resetScopedState(): void {
+    tasks.value = []
+    savedViews.value = []
+    activeViewId.value = null
+    settings.value = null
+    summary.value = null
+    notes.value = null
+    autopilot.value = null
+    error.value = null
+    stale.value = false
+  }
+
   function hydrateFromCache(pid: string | null): void {
     const cached = readCachedBoardSnapshot(scope, pid)
     if (!cached) return
@@ -1029,12 +1041,13 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
         }
         savedViews.value = loadedViews
       } else {
-        const [loadedTasks, loadedSettings, loadedViews, loadedNotes, loadedAutopilot] = await Promise.all([
+        const [loadedTasks, loadedSettings, loadedViews, loadedNotes, loadedAutopilot, loadedSummary] = await Promise.all([
           api.listProjectBoardTasks(pid!),
           api.getProjectBoardSettings(pid!).catch(() => null),
           api.listBoardViews({ scope: 'project', project_id: pid! }).catch(() => [] as ProjectBoardViewDto[]),
           api.getProjectNotes(pid!).catch(() => null),
           api.getProjectAutopilot(pid!).catch(() => null),
+          api.getGlobalBoardSummary().catch(() => null),
         ])
         if (gen !== loadGeneration) return
         tasks.value = loadedTasks
@@ -1042,6 +1055,10 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
         savedViews.value = loadedViews
         if (loadedNotes) notes.value = loadedNotes
         if (loadedAutopilot) autopilot.value = loadedAutopilot
+        if (loadedSummary) {
+          summary.value = loadedSummary
+          emitBoardSummaryBroadcast(loadedSummary.needs_action_count)
+        }
       }
       stale.value = false
       persistCache()
@@ -1454,13 +1471,24 @@ export function useProjectBoardView(options: UseProjectBoardViewOptions): UsePro
   if (options.autoConnect !== false) {
     watch(
       [resolvedProjectId, canAccessBackend],
-      ([pid, backendReady]) => {
-        hydrateFromCache(pid)
+      ([pid, backendReady], prev) => {
+        const prevPid = prev?.[0]
+        const projectChanged = prev === undefined || pid !== prevPid
+        if (projectChanged) {
+          if (prev !== undefined) {
+            resetScopedState()
+          }
+          hydrateFromCache(pid)
+        }
         if (backendReady && (scope === 'global' || Boolean(pid))) {
+          error.value = null
           void refresh()
           connectStream()
         } else {
           disconnectStream()
+          if (!backendReady && tasks.value.length > 0) {
+            stale.value = true
+          }
         }
       },
       { immediate: true },

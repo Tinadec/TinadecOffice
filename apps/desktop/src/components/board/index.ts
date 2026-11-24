@@ -1,6 +1,5 @@
 export * from './boardSessionFilter'
 export * from './useProjectBoardView'
-export { default as BoardShellLayout } from './BoardShellLayout.vue'
 export { default as BoardViewToolbar } from './BoardViewToolbar.vue'
 export { default as BoardTaskCard } from './BoardTaskCard.vue'
 export { default as BoardKanbanView } from './BoardKanbanView.vue'

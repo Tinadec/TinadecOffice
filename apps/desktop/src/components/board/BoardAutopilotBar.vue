@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   type ProjectBoardSettingsDto,
   type ProjectBoardTaskDto,
 } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
 
 const props = defineProps<{
@@ -35,11 +36,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const AUTOPILOT_ACTION_KEY = 'board-autopilot-action'
 
 const localAutopilot = ref<ProjectAutopilotStateDto | null>(props.autopilot ?? null)
 const updating = ref(false)
 const unblockingTaskId = ref<string | null>(null)
-const actionError = ref<string | null>(null)
+let lastReportedTickError: string | null = null
 
 watch(
   () => props.autopilot,
@@ -69,11 +73,31 @@ onMounted(() => {
 watch(
   () => props.projectId,
   (nextId, prevId) => {
+    if (prevId && prevId !== nextId) {
+      dismissByKey(`board-autopilot-tick:${prevId}`)
+      lastReportedTickError = null
+    }
     if (nextId && nextId !== prevId && props.autopilot === undefined) {
       void fetchAutopilotState()
     }
   },
 )
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && wasReady === false) {
+    dismissByKey(AUTOPILOT_ACTION_KEY)
+    if (props.autopilot === undefined && props.projectId) {
+      void fetchAutopilotState()
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(AUTOPILOT_ACTION_KEY)
+  if (props.projectId) {
+    dismissByKey(`board-autopilot-tick:${props.projectId}`)
+  }
+})
 
 const isEnabled = computed<boolean>(
   () => localAutopilot.value?.autopilot_enabled ?? props.settings?.autopilot_enabled ?? false,
@@ -119,7 +143,25 @@ const blockedCount = computed<number>(() =>
   Math.max(localAutopilot.value?.blocked_task_count ?? 0, blockedTasksList.value.length),
 )
 
-const lastError = computed<string | null>(() => localAutopilot.value?.last_error ?? null)
+watch(
+  () => localAutopilot.value?.last_error ?? null,
+  (errText) => {
+    const tickKey = `board-autopilot-tick:${props.projectId || 'current'}`
+    const trimmed = errText?.trim() || null
+    if (!trimmed) {
+      lastReportedTickError = null
+      dismissByKey(tickKey)
+      return
+    }
+    if (trimmed === lastReportedTickError) return
+    lastReportedTickError = trimmed
+    notify.error(trimmed, {
+      title: t('board.autopilot.title'),
+      key: tickKey,
+    })
+  },
+  { immediate: true },
+)
 
 async function applyAutopilotPatch(patch: {
   autopilot_enabled?: boolean
@@ -128,13 +170,16 @@ async function applyAutopilotPatch(patch: {
 }) {
   if (!props.projectId || updating.value) return
   updating.value = true
-  actionError.value = null
+  dismissByKey(AUTOPILOT_ACTION_KEY)
   try {
     const nextState = await api.updateProjectAutopilot(props.projectId, patch)
     localAutopilot.value = nextState
     emit('updated', nextState)
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, {
+      title: t('board.autopilot.title'),
+      key: AUTOPILOT_ACTION_KEY,
+    })
   } finally {
     updating.value = false
   }
@@ -157,7 +202,7 @@ function handlePauseAndCancelActive() {
 async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
   if (unblockingTaskId.value) return
   unblockingTaskId.value = task.task_id
-  actionError.value = null
+  dismissByKey(AUTOPILOT_ACTION_KEY)
   try {
     const targetPid = task.project_id || props.projectId
     const updatedTask = await api.updateProjectBoardTask(targetPid, task.task_id, {
@@ -177,7 +222,10 @@ async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
     emit('unblocked-task', updatedTask)
     void fetchAutopilotState()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, {
+      title: t('board.autopilot.title'),
+      key: AUTOPILOT_ACTION_KEY,
+    })
   } finally {
     unblockingTaskId.value = null
   }
@@ -256,11 +304,6 @@ async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
       </div>
 
       <div class="autopilot-right">
-        <span v-if="lastError" class="autopilot-error-pill" :title="lastError" data-testid="autopilot-last-error">
-          <AlertTriangle :size="11" />
-          <span>{{ lastError }}</span>
-        </span>
-
         <button
           type="button"
           class="autopilot-quick-btn ui-pressable"
@@ -288,10 +331,6 @@ async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
           <span>{{ t('board.autopilot.pauseAndCancelActive') }}</span>
         </UiButton>
       </div>
-    </div>
-
-    <div v-if="actionError" class="autopilot-inline-error" role="alert">
-      {{ actionError }}
     </div>
 
     <!-- Prominent Monochrome Blocked Human Intervention Banner -->
@@ -489,23 +528,6 @@ async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
   flex-wrap: wrap;
 }
 
-.autopilot-error-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 240px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-raised, var(--bg-secondary));
-  color: var(--text-secondary);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .autopilot-quick-btn {
   display: inline-flex;
   align-items: center;
@@ -525,15 +547,6 @@ async function handleUnblockAndResume(task: ProjectBoardTaskDto) {
 .autopilot-quick-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-.autopilot-inline-error {
-  padding: 5px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section, var(--bg-secondary));
-  color: var(--text-error, var(--text-primary));
-  font-size: 11.5px;
 }
 
 .autopilot-blocked-banner {

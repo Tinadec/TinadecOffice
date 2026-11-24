@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
@@ -46,10 +46,10 @@ import {
   type ProjectBoardTaskStatus,
   type UpdateProjectBoardTaskInput,
 } from '@/api'
-import { ApiError } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 import { pickLocalized } from '@/lib/packI18n'
 import { useLiveDigest } from '@/composables/useLiveDigest'
+import { useNotifications } from '@/composables/useNotifications'
 import {
   BOARD_ASSIGNEE_KINDS,
   BOARD_TASK_PRIORITIES,
@@ -82,6 +82,9 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const DRAWER_ERROR_KEY = 'board-task-drawer'
 
 // ---- Editable Form State ----
 const targetProjectId = ref('')
@@ -122,7 +125,6 @@ const taskDiff = ref<ProjectBoardTaskDiffDto | null>(null)
 const loadingDiff = ref(false)
 const mergeOrCleanWorktree = ref(true)
 const reviewFeedback = ref('')
-const actionError = ref<string | null>(null)
 
 const activeRunId = computed(() => props.task?.active_run_id ?? null)
 const liveDigest = useLiveDigest(activeRunId, {
@@ -140,7 +142,7 @@ const isRunActive = computed(() => {
 })
 
 function syncFormFromProps() {
-  actionError.value = null
+  dismissByKey(DRAWER_ERROR_KEY)
   steerDraft.value = ''
   steerSentNotice.value = false
   reviewFeedback.value = ''
@@ -263,7 +265,10 @@ async function loadSessionMessages() {
 watch(
   () => [props.open, props.mode, props.task?.task_id, props.task?.revision] as const,
   ([isOpen]) => {
-    if (!isOpen) return
+    if (!isOpen) {
+      dismissByKey(DRAWER_ERROR_KEY)
+      return
+    }
     syncFormFromProps()
     void loadAssigneeCatalogs()
     if (props.mode === 'edit' && props.task) {
@@ -277,6 +282,25 @@ watch(
   },
   { immediate: true },
 )
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && wasReady === false) {
+    dismissByKey(DRAWER_ERROR_KEY)
+    if (props.open) {
+      void loadAssigneeCatalogs()
+      if (props.mode === 'edit' && props.task) {
+        if (props.task.active_session_id) void loadSessionMessages()
+        if (props.task.status === 'in_review' || props.task.worktree_path || props.task.diff_stats) {
+          void loadTaskDiff()
+        }
+      }
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(DRAWER_ERROR_KEY)
+})
 
 const modeSelectOptions = computed(() => [
   { value: '', label: t('board.drawer.workspaceDefaultMode') },
@@ -408,7 +432,7 @@ function toggleDependency(depId: string) {
 }
 
 function handlePrimarySave() {
-  actionError.value = null
+  dismissByKey(DRAWER_ERROR_KEY)
   const trimmedTitle = title.value.trim()
   if (!trimmedTitle) return
 
@@ -447,7 +471,7 @@ function handlePrimarySave() {
 
 function handleDispatch() {
   if (!props.task) return
-  actionError.value = null
+  dismissByKey(DRAWER_ERROR_KEY)
   emit('dispatch-task', props.task.project_id, props.task.task_id, {
     assignee_override: buildAssigneeDto(),
     use_worktree: assigneeKind.value !== 'human' ? useWorktree.value : false,
@@ -460,7 +484,7 @@ async function handleSendSteer() {
   const text = steerDraft.value.trim()
   if (!sid || !text || sendingSteer.value) return
   sendingSteer.value = true
-  actionError.value = null
+  dismissByKey(DRAWER_ERROR_KEY)
   steerSentNotice.value = false
   try {
     const clientMsgId =
@@ -477,7 +501,10 @@ async function handleSendSteer() {
     steerSentNotice.value = true
     void loadSessionMessages()
   } catch (err) {
-    actionError.value = err instanceof ApiError || err instanceof Error ? err.message : String(err)
+    notify.error(err, {
+      title: t('app.operationFailed'),
+      key: DRAWER_ERROR_KEY,
+    })
   } finally {
     sendingSteer.value = false
   }
@@ -561,10 +588,6 @@ const diffLines = computed(() => {
           </button>
         </div>
       </header>
-
-      <div v-if="actionError" class="board-drawer-error" role="alert">
-        {{ actionError }}
-      </div>
 
       <!-- 1. Sync Conflict Resolver Banner & Side-by-Side Diff -->
       <section
@@ -1089,14 +1112,6 @@ const diffLines = computed(() => {
 .board-drawer-spatial-btn:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-.board-drawer-error {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg-error);
-  color: var(--text-error);
-  font-size: 12px;
 }
 
 .board-conflict-box {
