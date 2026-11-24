@@ -119,6 +119,50 @@ function buildHomePreset(ctx: PresetContext): UieLayoutSnapshot {
   return snapshot
 }
 
+function buildBoardPreset(ctx: PresetContext): UieLayoutSnapshot {
+  const n = ctx.nextInstanceId
+  const snapshot = createEmptySnapshot('board')
+  snapshot.gap = HOME_GEOMETRY.gap
+  snapshot.edgeInset = HOME_GEOMETRY.edgeInset
+
+  const nav = card(n(), 'nav')
+  const board = card(n(), 'globalBoard')
+
+  snapshot.cards = {
+    [nav.id]: nav,
+    [board.id]: board,
+  }
+  snapshot.columns = {
+    left: column('left', HOME_GEOMETRY.leftWidth, HOME_GEOMETRY.leftTopInset, 'float', [nav.id], nav.id),
+    center: column('center', 0, HOME_GEOMETRY.rightTopInset, 'float', [board.id], board.id),
+    right: column('right', 460, HOME_GEOMETRY.rightTopInset, 'float', [], null, false),
+  }
+  snapshot.focusedCardId = board.id
+  return snapshot
+}
+
+function buildProjectHubPreset(ctx: PresetContext): UieLayoutSnapshot {
+  const n = ctx.nextInstanceId
+  const snapshot = createEmptySnapshot('projectHub')
+  snapshot.gap = HOME_GEOMETRY.gap
+  snapshot.edgeInset = HOME_GEOMETRY.edgeInset
+
+  const nav = card(n(), 'nav')
+  const hub = card(n(), 'projectHub')
+
+  snapshot.cards = {
+    [nav.id]: nav,
+    [hub.id]: hub,
+  }
+  snapshot.columns = {
+    left: column('left', HOME_GEOMETRY.leftWidth, HOME_GEOMETRY.leftTopInset, 'float', [nav.id], nav.id),
+    center: column('center', 0, HOME_GEOMETRY.rightTopInset, 'float', [hub.id], hub.id),
+    right: column('right', 460, HOME_GEOMETRY.rightTopInset, 'float', [], null, false),
+  }
+  snapshot.focusedCardId = hub.id
+  return snapshot
+}
+
 function buildSettingsPreset(ctx: PresetContext): UieLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('settings')
@@ -219,6 +263,8 @@ function buildCompanionCenterPreset(ctx: PresetContext): UieLayoutSnapshot {
 
 export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayoutSnapshot> = {
   home: buildHomePreset,
+  board: buildBoardPreset,
+  projectHub: buildProjectHubPreset,
   settings: buildSettingsPreset,
   code: buildCodePreset,
   debug: buildDebugPreset,
@@ -226,6 +272,8 @@ export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayou
 }
 
 export const PRESET_REVISIONS: Partial<Record<UiePageId, number>> = {
+  board: 1,
+  projectHub: 1,
   companionCenter: 6,
 }
 

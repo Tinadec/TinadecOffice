@@ -17,6 +17,9 @@ import BrowserCard from './home/BrowserCard.vue'
 import AgentCard from './home/AgentCard.vue'
 import TerminalCard from './home/TerminalCard.vue'
 import WorkspaceCard from './home/WorkspaceCard.vue'
+import GlobalBoardCard from './board/GlobalBoardCard.vue'
+import ProjectHubCard from './board/ProjectHubCard.vue'
+import BoardTaskInspectorCard from './board/BoardTaskInspectorCard.vue'
 import type { UieCardDescriptor } from '../../engine/types'
 
 /**
@@ -58,6 +61,9 @@ export function buildUieRegistry(): CardRegistry {
     // "open in editor".
     { type: 'docReader', component: DocumentReaderCard, minWidth: 320, minHeight: 220, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
     { type: 'codeEditor', component: CodeEditorCard, minWidth: 320, minHeight: 220, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '' },
+    { type: 'globalBoard', component: GlobalBoardCard, minWidth: 320, minHeight: 200, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '', titlebarMode: 'hidden' },
+    { type: 'projectHub', component: ProjectHubCard, minWidth: 320, minHeight: 200, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '', titlebarMode: 'hidden' },
+    { type: 'boardTaskInspector', component: BoardTaskInspectorCard, minWidth: 340, minHeight: 220, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '', serializeState: (inst) => ({ ...(inst.state ?? {}) }) },
   ]
 
   for (const c of cards) reg.register(c)

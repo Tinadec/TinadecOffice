@@ -40,11 +40,23 @@ function clampWidth(w: unknown, fallback: number): number {
 
 /** Float pages keep an 8px window-edge gap; app pages stay flush. */
 function defaultEdgeInset(pageId: UiePageId): number {
-  return pageId === 'home' || pageId === 'settings' || pageId === 'companionCenter' ? 8 : 0
+  return pageId === 'home'
+    || pageId === 'board'
+    || pageId === 'projectHub'
+    || pageId === 'settings'
+    || pageId === 'companionCenter'
+    ? 8
+    : 0
 }
 
 function isValidPageId(p: unknown): p is UiePageId {
-  return p === 'home' || p === 'settings' || p === 'code' || p === 'debug' || p === 'companionCenter'
+  return p === 'home'
+    || p === 'board'
+    || p === 'projectHub'
+    || p === 'settings'
+    || p === 'code'
+    || p === 'debug'
+    || p === 'companionCenter'
 }
 
 function repairStack(

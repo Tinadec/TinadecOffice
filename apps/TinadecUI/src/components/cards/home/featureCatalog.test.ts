@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { FEATURE_CATALOG, catalogEntriesForPage } from './featureCatalog'
+import { Globe } from '@lucide/vue'
+import { FEATURE_CATALOG, catalogEntriesForPage, featureIconFor } from './featureCatalog'
 
 describe('FEATURE_CATALOG', () => {
 
@@ -36,5 +37,14 @@ describe('FEATURE_CATALOG', () => {
     expect(homeIds).toContain('workspace')
     expect(catalogEntriesForPage('companionCenter')).toEqual([])
     expect(catalogEntriesForPage('settings')).toEqual([])
+    expect(catalogEntriesForPage('board')).toEqual([])
+    expect(catalogEntriesForPage('projectHub')).toEqual([])
+  })
+
+  it('resolves secondary icons for board cards without polluting FEATURE_CATALOG', () => {
+    expect(featureIconFor('boardTaskInspector', Globe)).not.toBe(Globe)
+    expect(featureIconFor('globalBoard', Globe)).not.toBe(Globe)
+    expect(featureIconFor('projectHub', Globe)).not.toBe(Globe)
+    expect(featureIconFor('unknown_card', Globe)).toBe(Globe)
   })
 })

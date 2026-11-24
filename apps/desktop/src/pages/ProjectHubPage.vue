@@ -29,13 +29,17 @@ import {
   BoardKanbanView,
   BoardListView,
   BoardSwimlaneView,
-  BoardTaskDrawer,
   BoardViewToolbar,
   CoordinatorPlanModal,
   ProjectNotesPanel,
+  boardInspectorStore,
   buildSpatialFocusLocation,
+  closeBoardTaskInspector,
+  openBoardTaskInspector,
   stashPendingSpatialFocus,
+  syncBoardTaskInspectorData,
   useProjectBoardView,
+  type BoardInspectorCallbacks,
   type BoardTaskGroup,
 } from '@/components/board'
 import {
@@ -190,8 +194,7 @@ watch(
       workspaceDefaults.value = null
       defaultModeId.value = ''
       defaultAgentId.value = ''
-      drawerOpen.value = false
-      selectedTaskId.value = null
+      closeBoardTaskInspector()
       planModalOpen.value = false
     }
   },
@@ -345,17 +348,38 @@ async function handleSyncTinadec() {
 }
 
 function handleStartNewChat() {
+  closeBoardTaskInspector()
   const proj = currentProject.value
   c.startNewConversation(proj ? selectionKey(proj) : routeProjectId.value)
   void router.push('/')
 }
 
-// ---- Task Drawer, Coordinator Planner & Autopilot Actions ----
-const drawerOpen = ref(false)
-const drawerMode = ref<'create' | 'edit'>('edit')
-const selectedTaskId = ref<string | null>(null)
-const createDefaultStatus = ref<ProjectBoardTaskStatus>('ready')
+// ---- Docked Task Inspector, Coordinator Planner & Autopilot Actions ----
 const planModalOpen = ref(false)
+
+const selectedTaskId = computed<string | null>(() =>
+  boardInspectorStore.open ? boardInspectorStore.taskId : null,
+)
+
+watch(
+  () => board.tasks.value,
+  (tasks) => {
+    if (!routeProjectId.value) return
+    syncBoardTaskInspectorData({
+      tasks,
+      ownerScope: 'project',
+      projectId: routeProjectId.value,
+      loading: board.loading.value,
+    })
+  },
+  { immediate: true },
+)
+
+watch(activeTab, (tab) => {
+  if (tab !== 'board' && boardInspectorStore.open && boardInspectorStore.ownerScope === 'project') {
+    closeBoardTaskInspector()
+  }
+})
 
 function handleNotesSaved(savedNotes: ProjectNotesDto) {
   board.notes.value = savedNotes
@@ -388,16 +412,30 @@ function handlePlanApplied(createdTasks: ProjectBoardTaskDto[]) {
   notify.success(t('board.coordinator.appliedSuccess', { count: createdTasks.length }))
 }
 
-const selectedTask = computed<ProjectBoardTaskDto | null>(() => {
-  if (!selectedTaskId.value) return null
-  return board.tasks.value.find((item) => item.task_id === selectedTaskId.value) ?? null
-})
+const inspectorCallbacks: BoardInspectorCallbacks = {
+  onCreateTask: handleCreateTask,
+  onSaveTask: handleSaveTask,
+  onDeleteTask: handleDeleteTask,
+  onResolveConflict: handleResolveConflict,
+  onDispatchTask: handleDispatchTask,
+  onCancelTask: handleCancelTask,
+  onApproveTask: handleApproveTask,
+  onRequestChanges: handleRequestChanges,
+  onOpenSession: handleOpenSession,
+  onJumpSpatial: handleJumpSpatial,
+}
 
 function openCreateDrawer(defaultStatus: ProjectBoardTaskStatus = 'ready') {
-  drawerMode.value = 'create'
-  selectedTaskId.value = null
-  createDefaultStatus.value = defaultStatus
-  drawerOpen.value = true
+  openBoardTaskInspector({
+    mode: 'create',
+    ownerScope: 'project',
+    projectId: routeProjectId.value || null,
+    projectTasks: board.tasks.value,
+    defaultProjectId: routeProjectId.value || null,
+    defaultStatus,
+    storageId: currentProject.value?.storage_id ?? projectStorageId(routeProjectId.value),
+    ...inspectorCallbacks,
+  })
 }
 
 function openCreateInGroup(group: BoardTaskGroup) {
@@ -407,16 +445,23 @@ function openCreateInGroup(group: BoardTaskGroup) {
 }
 
 function openTaskDrawer(task: ProjectBoardTaskDto) {
-  drawerMode.value = 'edit'
-  selectedTaskId.value = task.task_id
-  drawerOpen.value = true
+  openBoardTaskInspector({
+    mode: 'edit',
+    ownerScope: 'project',
+    projectId: task.project_id || routeProjectId.value || null,
+    taskId: task.task_id,
+    task,
+    projectTasks: board.tasks.value,
+    defaultProjectId: routeProjectId.value || task.project_id,
+    storageId: currentProject.value?.storage_id ?? projectStorageId(task.project_id || routeProjectId.value),
+    ...inspectorCallbacks,
+  })
 }
 
 async function handleCreateTask(projectId: string, input: CreateProjectBoardTaskInput) {
   try {
     const created = await board.createTask(projectId || routeProjectId.value, input)
-    selectedTaskId.value = created.task_id
-    drawerMode.value = 'edit'
+    openTaskDrawer(created)
   } catch (err) {
     notify.error(err, { title: t('board.errors.saveFailed') })
   }
@@ -433,8 +478,7 @@ async function handleSaveTask(projectId: string, taskId: string, patch: UpdatePr
 async function handleDeleteTask(projectId: string, taskId: string) {
   try {
     await board.deleteTask(projectId, taskId)
-    drawerOpen.value = false
-    selectedTaskId.value = null
+    closeBoardTaskInspector()
   } catch (err) {
     notify.error(err, { title: t('board.errors.deleteFailed') })
   }
@@ -510,14 +554,14 @@ async function handleRequestChanges(projectId: string, taskId: string, feedback:
 }
 
 async function handleOpenSession(sessionId: string) {
-  drawerOpen.value = false
+  closeBoardTaskInspector()
   await c.setSelectedSession(sessionId)
   await router.push('/')
 }
 
 async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   if (!task.spatial_ref) return
-  drawerOpen.value = false
+  closeBoardTaskInspector()
   stashPendingSpatialFocus(task.spatial_ref)
   await c.setSelectedSession(task.spatial_ref.session_id)
   await router.push(buildSpatialFocusLocation(task.spatial_ref))
@@ -913,26 +957,6 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         :existing-tasks="board.tasks.value"
         :default-assignee-kind="board.settings.value?.default_assignee_kind"
         @applied="handlePlanApplied"
-      />
-
-      <!-- Right Slide-over Task Drawer -->
-      <BoardTaskDrawer
-        v-model:open="drawerOpen"
-        :mode="drawerMode"
-        :task="selectedTask"
-        :project-tasks="board.tasks.value"
-        :default-project-id="routeProjectId"
-        :default-status="createDefaultStatus"
-        @create-task="handleCreateTask"
-        @save-task="handleSaveTask"
-        @delete-task="handleDeleteTask"
-        @resolve-conflict="handleResolveConflict"
-        @dispatch-task="handleDispatchTask"
-        @cancel-task="handleCancelTask"
-        @approve-task="handleApproveTask"
-        @request-changes="handleRequestChanges"
-        @open-session="handleOpenSession"
-        @jump-spatial="handleJumpSpatial"
       />
   </div>
 </template>

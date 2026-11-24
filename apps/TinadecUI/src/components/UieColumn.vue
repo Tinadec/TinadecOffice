@@ -60,19 +60,22 @@ const isHomeActive = computed(() => {
   return props.column.primary.activeTabId === home
 })
 
+const isZeroWidthEmpty = computed(() => props.geometry.width <= 0)
+
 // True when the constraint solver visually collapsed this column (the window is
 // too narrow to fit it at its persisted width) but the user did NOT collapse it
 // in the layout. The feature panel then renders the 44px icon rail instead of a
 // blank strip — same as a real collapse, so the panel never "disappears".
 const visualCollapsed = computed(
-  () => !props.column.collapsed && props.geometry.width <= COLLAPSED_COLUMN_WIDTH,
+  () => !isZeroWidthEmpty.value && !props.column.collapsed && props.geometry.width <= COLLAPSED_COLUMN_WIDTH,
 )
 
 // The drag handle is drawn outside the clipped box, so it states its own visibility
 // instead of inheriting the rail branch's `v-else`: side columns only, and never on
 // the collapsed rail (an icon rail has no width worth dragging).
 const showResizer = computed(() =>
-  (props.column.slotId === 'left' || props.column.slotId === 'right')
+  !isZeroWidthEmpty.value
+  && (props.column.slotId === 'left' || props.column.slotId === 'right')
   && !(isFeatureColumn.value && (props.column.collapsed || visualCollapsed.value)),
 )
 
@@ -218,7 +221,7 @@ let virtualUnsub: (() => void) | null = null
 function syncVirtualPane() {
   virtualUnsub?.()
   virtualUnsub = null
-  if (props.column.dock || !isFeatureColumn.value) return
+  if (props.column.dock || !isFeatureColumn.value || isZeroWidthEmpty.value) return
   const el = colRef.value
   if (!el) return
   const rect = el.getBoundingClientRect()
@@ -271,7 +274,11 @@ function onDividerUp() {
   <div
     ref="colRef"
     class="uie-column"
-    :class="{ 'is-resizing': isResizing, 'uie-column--overlay': geometry.overlay }"
+    :class="{
+      'is-resizing': isResizing,
+      'uie-column--overlay': geometry.overlay,
+      'uie-column--empty-hidden': isZeroWidthEmpty,
+    }"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -288,7 +295,7 @@ function onDividerUp() {
            collapse and for a visual (solver-forced) collapse — without this the
            dock column would render an empty pane list and blank out. -->
       <div
-        v-if="isFeatureColumn && (column.collapsed || visualCollapsed)"
+        v-if="!isZeroWidthEmpty && isFeatureColumn && (column.collapsed || visualCollapsed)"
         class="uie-column-rail"
         :style="railStyle"
         v-bind="railAttrs"
@@ -322,7 +329,7 @@ function onDividerUp() {
         </button>
       </div>
 
-      <template v-else>
+      <template v-else-if="!isZeroWidthEmpty">
         <!-- Dock (multi-pane split) column: panes + dividers + drop overlay -->
         <UieDock
           v-if="column.dock && dock"
@@ -402,6 +409,10 @@ function onDividerUp() {
 
 .uie-column.is-resizing {
   transition: none !important;
+}
+
+.uie-column--empty-hidden {
+  pointer-events: none;
 }
 
 /* Window-stacking overlay: a very wide right feature panel floats over the chat

@@ -42,6 +42,15 @@ function effectiveWidth(col: { width: number; collapsed: boolean }): number {
   return col.collapsed ? COLLAPSED_COLUMN_WIDTH : col.width
 }
 
+/** True when a column has no dock tree and no tabs in either primary or secondary stacks. */
+export function isColumnEmpty(col: UieColumn): boolean {
+  return (
+    col.dock === null &&
+    col.primary.tabIds.length === 0 &&
+    (!col.secondary || col.secondary.tabIds.length === 0)
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Dock flattening — recursively lay a column's dock split tree out into
 // column-relative pane rects + divider hit-areas.
@@ -246,11 +255,17 @@ export function computeGeometry(
   // columns must fit in whatever remains. Work out how much room the side
   // columns need, and collapse them (right first, then left) until it fits.
   const sideSlots = slots.filter((s) => s !== 'center')
-  const sideGaps = Math.max(0, sideSlots.length - 1) * gap
   const leftCol = sideSlots.includes('left') ? snapshot.columns.left : null
   const rightCol = sideSlots.includes('right') ? snapshot.columns.right : null
+  const rightEmptyHidden =
+    rightCol !== null &&
+    !rightCol.collapsed &&
+    isColumnEmpty(rightCol) &&
+    !columnHostsHomePicker(snapshot, rightCol)
+  const visibleSideSlots = rightEmptyHidden ? sideSlots.filter((s) => s !== 'right') : sideSlots
+  const sideGaps = Math.max(0, visibleSideSlots.length - 1) * gap
   const leftW = leftCol ? effectiveWidth(leftCol) : 0
-  const rightRaw = rightCol ? effectiveWidth(rightCol) : 0
+  const rightRaw = rightCol ? (rightEmptyHidden ? 0 : effectiveWidth(rightCol)) : 0
 
   // Window-stacking overlay. When the user makes the right feature panel wider
   // than the center's comfort width allows side-by-side, the panel floats over
@@ -270,7 +285,9 @@ export function computeGeometry(
 
   const collapsedSet = new Set<UieSlotId>()
   const sideWidths = new Map<UieSlotId, number>()
-  for (const s of sideSlots) sideWidths.set(s, effectiveWidth(snapshot.columns[s]))
+  for (const s of sideSlots) {
+    sideWidths.set(s, s === 'right' && rightEmptyHidden ? 0 : effectiveWidth(snapshot.columns[s]))
+  }
 
   if (overlayRight) {
     // Keep the persisted width but clamp so at least MIN_OVERLAY_STRIP of the
@@ -281,7 +298,7 @@ export function computeGeometry(
     const reserved = (hasCenter ? MIN_CENTER_WIDTH : 0) + sideGaps
     if (reserved + sum(sideWidths) > availableWidth) {
       const right = sideSlots.find((s) => s === 'right')
-      if (right && !snapshot.columns[right].collapsed) {
+      if (right && !rightEmptyHidden && !snapshot.columns[right].collapsed) {
         collapsedSet.add(right)
         sideWidths.set(right, COLLAPSED_COLUMN_WIDTH)
         degraded.collapsedRight = true
@@ -312,15 +329,23 @@ export function computeGeometry(
     const col = snapshot.columns[slotId]
     const isLast = i === slots.length - 1
     const isCollapsedVisual = collapsedSet.has(slotId)
+    const isHiddenRight = slotId === 'right' && rightEmptyHidden
 
     // Center is adaptive: fills the space between the (possibly collapsed) side
     // columns, but never below MIN_CENTER_WIDTH. In overlay the center keeps
     // MIN_CHAT_COMFORT_WIDTH so the composer stays wide enough to never wrap.
-    let width = isCollapsedVisual ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(col)
+    let width = isHiddenRight
+      ? 0
+      : isCollapsedVisual
+        ? COLLAPSED_COLUMN_WIDTH
+        : effectiveWidth(col)
     if (slotId === 'right' && overlayRight) width = sideWidths.get('right') ?? width
     if (slotId === 'center' && !isCollapsedVisual) {
       if (overlayRight) {
         width = MIN_CHAT_COMFORT_WIDTH
+      } else if (rightEmptyHidden) {
+        const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : inset
+        width = Math.max(MIN_CENTER_WIDTH, (container.width - inset) - usedLeft)
       } else {
         const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : 0
         const rightX = columnGeoms.right
@@ -340,7 +365,7 @@ export function computeGeometry(
     const y = effectiveTopInset
     const geom: ColumnGeometry = {
       slotId,
-      x: cursorX,
+      x: isHiddenRight ? container.width - inset : cursorX,
       y,
       width,
       height,
@@ -353,7 +378,9 @@ export function computeGeometry(
       geom.overlay = true
     }
     columnGeoms[slotId] = geom
-    cursorX += width + (isLast ? 0 : gap)
+    if (!isHiddenRight) {
+      cursorX += width + (isLast ? 0 : gap)
+    }
   }
 
   // Assign back into the returned shape.

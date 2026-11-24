@@ -52,6 +52,9 @@ export function makeRegistry(): CardRegistry {
   reg.register(makeCard('terminal', { singleton: true }))
   reg.register(makeCard('settingsNav', { singleton: true, movable: false, closable: false, detachable: false }))
   reg.register(makeCard('settingsContent', { singleton: true, movable: false, closable: false, detachable: false }))
+  reg.register(makeCard('globalBoard', { singleton: true, movable: false, closable: false, detachable: false }))
+  reg.register(makeCard('projectHub', { singleton: true, movable: false, closable: false, detachable: false }))
+  reg.register(makeCard('boardTaskInspector', { singleton: true, movable: true, closable: true, detachable: true }))
   return reg
 }
 

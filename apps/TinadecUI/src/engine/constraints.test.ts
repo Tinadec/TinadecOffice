@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { computeGeometry, flattenDock, maxOverlayColumnWidth } from './constraints'
+import { computeGeometry, flattenDock, isColumnEmpty, maxOverlayColumnWidth } from './constraints'
 import { buildPreset, HOME_GEOMETRY } from './presets'
+import { reduce } from './reducer'
+import { makeContext, makeRegistry } from './__testUtils'
 import type { UieDockNode, UieDockPane } from './types'
 
 function nextId() {
@@ -375,5 +377,110 @@ describe('darwin left-column traffic-light topInset adaptation', () => {
     expect(g.columns.left.topInset).toBe(8)
     expect(g.columns.left.y).toBe(8)
     expect(g.columns.left.height).toBe(920 - 8 - 8)
+  })
+})
+
+describe('empty non-feature right column (board & projectHub)', () => {
+  it('isColumnEmpty detects empty vs populated stacks and docks', () => {
+    const board = buildPreset('board', { nextInstanceId: nextId() })
+    expect(isColumnEmpty(board.columns.right)).toBe(true)
+    expect(isColumnEmpty(board.columns.left)).toBe(false)
+    expect(isColumnEmpty(board.columns.center)).toBe(false)
+
+    const withSecondary = {
+      ...board.columns.right,
+      secondary: { stackId: 'secondary' as const, tabIds: ['x'], activeTabId: 'x' },
+    }
+    expect(isColumnEmpty(withSecondary)).toBe(false)
+
+    const withDock = {
+      ...board.columns.right,
+      dock: { kind: 'pane' as const, paneId: 'p1', main: true, tabIds: [], activeTabId: null },
+    }
+    expect(isColumnEmpty(withDock)).toBe(false)
+  })
+
+  it('gives empty non-collapsed right column 0px width and 0 gap on board & projectHub while settings stays 44px', () => {
+    for (const pageId of ['board', 'projectHub'] as const) {
+      const snapshot = buildPreset(pageId, { nextInstanceId: nextId() })
+      const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+
+      expect(snapshot.columns.right.width).toBe(460)
+      expect(snapshot.columns.right.collapsed).toBe(false)
+      expect(g.columns.right.width).toBe(0)
+      expect(g.columns.right.effectiveWidth).toBe(0)
+      expect(g.columns.right.x).toBe(1440 - 8)
+      expect(g.columns.right.topInset).toBe(48)
+      expect(g.columns.center.topInset).toBe(48)
+      expect(g.degraded.collapsedRight).toBe(false)
+      // center spans all the way to container.width - inset (no right gap deducted)
+      expect(g.columns.center.width).toBe(1440 - 2 * 8 - 260 - 8)
+      expect(g.columns.center.x + g.columns.center.width).toBe(1440 - 8)
+
+      // Even at narrow widths, empty right column never visually collapses to a 44px rail.
+      const narrow = computeGeometry({ width: 600, height: 800 }, snapshot)
+      expect(narrow.columns.right.width).toBe(0)
+      expect(narrow.degraded.collapsedRight).toBe(false)
+    }
+
+    const settings = buildPreset('settings', { nextInstanceId: nextId() })
+    const gs = computeGeometry({ width: 1440, height: 920 }, settings)
+    expect(settings.columns.right.collapsed).toBe(true)
+    expect(gs.columns.right.width).toBe(44)
+  })
+
+  it('expands right to 460px when opening boardTaskInspector and shrinks back to 0px on closeCard without mutating persisted width', () => {
+    const reg = makeRegistry()
+    const ctx = makeContext(reg)
+    const initial = buildPreset('board', { nextInstanceId: nextId() })
+    const g0 = computeGeometry({ width: 1440, height: 920 }, initial)
+    expect(g0.columns.right.width).toBe(0)
+    expect(g0.columns.center.width).toBe(1440 - 2 * 8 - 260 - 8)
+
+    const opened = reduce(
+      initial,
+      {
+        command: {
+          type: 'openCard',
+          scope: { kind: 'page', pageId: 'board' },
+          descriptorId: 'boardTaskInspector',
+          slotId: 'right',
+        },
+        source: 'user',
+        expectedRevision: initial.revision,
+      },
+      ctx,
+    )
+    expect(opened.ok).toBe(true)
+    if (!opened.ok) return
+
+    const gOpen = computeGeometry({ width: 1440, height: 920 }, opened.result.next)
+    expect(gOpen.columns.right.width).toBe(460)
+    expect(gOpen.columns.right.effectiveWidth).toBe(460)
+    expect(gOpen.columns.right.x).toBe(1440 - 8 - 460)
+    expect(gOpen.columns.center.width).toBe(1440 - 2 * 8 - 260 - 460 - 2 * 8)
+
+    const inspectorId = opened.result.next.columns.right.primary.tabIds[0]!
+    const closed = reduce(
+      opened.result.next,
+      {
+        command: {
+          type: 'closeCard',
+          scope: { kind: 'page', pageId: 'board' },
+          instanceId: inspectorId,
+        },
+        source: 'user',
+        expectedRevision: opened.result.next.revision,
+      },
+      ctx,
+    )
+    expect(closed.ok).toBe(true)
+    if (!closed.ok) return
+
+    expect(closed.result.next.columns.right.width).toBe(460)
+    const gClosed = computeGeometry({ width: 1440, height: 920 }, closed.result.next)
+    expect(gClosed.columns.right.width).toBe(0)
+    expect(gClosed.columns.right.effectiveWidth).toBe(0)
+    expect(gClosed.columns.center.width).toBe(1440 - 2 * 8 - 260 - 8)
   })
 })

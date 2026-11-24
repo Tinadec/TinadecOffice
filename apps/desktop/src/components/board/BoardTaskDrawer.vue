@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
@@ -56,15 +56,43 @@ import {
   BOARD_TASK_STATUSES,
 } from './useProjectBoardView'
 
-const props = defineProps<{
-  open: boolean
-  mode: 'create' | 'edit'
-  task: ProjectBoardTaskDto | null
-  projectTasks: readonly ProjectBoardTaskDto[]
-  defaultProjectId?: string | null
-  defaultStatus?: ProjectBoardTaskStatus
-  projects?: Array<{ id: string; name: string }>
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    mode: 'create' | 'edit'
+    task: ProjectBoardTaskDto | null
+    projectTasks: readonly ProjectBoardTaskDto[]
+    defaultProjectId?: string | null
+    defaultStatus?: ProjectBoardTaskStatus
+    projects?: Array<{ id: string; name: string }>
+    embedded?: boolean
+  }>(),
+  {
+    embedded: false,
+  },
+)
+
+const EmbeddedInspectorShell = defineComponent({
+  name: 'EmbeddedInspectorShell',
+  props: {
+    open: { type: Boolean, default: true },
+    side: { type: String, default: undefined },
+  },
+  emits: ['update:open'],
+  setup(shellProps, { slots }) {
+    return () =>
+      shellProps.open
+        ? h(
+            'div',
+            {
+              class: 'board-drawer-embedded-shell',
+              'data-testid': 'board-task-inspector-embedded',
+            },
+            slots.default ? slots.default() : [],
+          )
+        : null
+  },
+})
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
@@ -298,7 +326,30 @@ watch(canAccessBackend, (ready, wasReady) => {
   }
 })
 
+function onEmbeddedKeydown(event: KeyboardEvent) {
+  if (!props.embedded || !props.open) return
+  if (event.key !== 'Escape' || event.defaultPrevented) return
+  event.preventDefault()
+  emit('update:open', false)
+}
+
+watch(
+  () => Boolean(props.embedded && props.open),
+  (active) => {
+    if (typeof window === 'undefined') return
+    if (active) {
+      window.addEventListener('keydown', onEmbeddedKeydown)
+    } else {
+      window.removeEventListener('keydown', onEmbeddedKeydown)
+    }
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('keydown', onEmbeddedKeydown)
+  }
   dismissByKey(DRAWER_ERROR_KEY)
 })
 
@@ -562,13 +613,14 @@ const diffLines = computed(() => {
 </script>
 
 <template>
-  <UiSheet
+  <component
+    :is="embedded ? EmbeddedInspectorShell : UiSheet"
     :open="open"
     side="right"
-    class="w-[min(94vw,600px)] sm:max-w-[600px] overflow-y-auto p-0"
+    :class="embedded ? undefined : 'w-[min(94vw,600px)] sm:max-w-[600px] overflow-y-auto p-0'"
     @update:open="emit('update:open', $event)"
   >
-    <div class="board-drawer" data-testid="board-task-drawer">
+    <div class="board-drawer" :class="{ 'board-drawer--embedded': embedded }" data-testid="board-task-drawer">
       <!-- Drawer Header -->
       <header class="board-drawer-header">
         <div class="board-drawer-id-row">
@@ -587,6 +639,18 @@ const diffLines = computed(() => {
             <span>{{ t('board.jumpToSpatial') }}</span>
           </button>
         </div>
+
+        <button
+          v-if="embedded"
+          type="button"
+          class="board-drawer-close-btn ui-pressable"
+          :title="t('common.close')"
+          :aria-label="t('common.close')"
+          data-testid="drawer-embedded-close-btn"
+          @click="emit('update:open', false)"
+        >
+          <X :size="14" />
+        </button>
       </header>
 
       <!-- 1. Sync Conflict Resolver Banner & Side-by-Side Diff -->
@@ -1054,10 +1118,19 @@ const diffLines = computed(() => {
         </div>
       </footer>
     </div>
-  </UiSheet>
+  </component>
 </template>
 
 <style scoped>
+.board-drawer-embedded-shell {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .board-drawer {
   display: flex;
   flex-direction: column;
@@ -1067,11 +1140,42 @@ const diffLines = computed(() => {
   box-sizing: border-box;
 }
 
+.board-drawer--embedded {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px 18px;
+  overflow-y: auto;
+}
+
 .board-drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding-right: 28px;
+}
+
+.board-drawer--embedded .board-drawer-header {
+  padding-right: 0;
+  gap: 8px;
+}
+
+.board-drawer-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-control, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.board-drawer-close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .board-drawer-id-row {

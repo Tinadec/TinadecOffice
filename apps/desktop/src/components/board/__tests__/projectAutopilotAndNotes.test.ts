@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { __resetUieForTests } from '@tinadec/ui'
 import i18n from '@/i18n'
 import { ApiError } from '@/lib/apiError'
 import { resetHostAccessForTests, setHostAccessStatus } from '@/lib/hostAccess'
@@ -21,6 +22,8 @@ import {
   BoardAutopilotBar,
   CoordinatorPlanModal,
   ProjectNotesPanel,
+  boardInspectorStore,
+  resetBoardInspectorForTests,
   useProjectBoardView,
 } from '@/components/board'
 import GlobalBoardPage from '@/pages/GlobalBoardPage.vue'
@@ -91,6 +94,8 @@ function makeAutopilot(overrides: Partial<ProjectAutopilotStateDto> = {}): Proje
 describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot UI', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    __resetUieForTests()
+    resetBoardInspectorForTests()
     resetHostAccessForTests()
     setHostAccessStatus({ state: 'ready', managed: true })
     const notifications = useNotifications()
@@ -520,15 +525,16 @@ describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot U
     const globalPage = mount(GlobalBoardPage, {
       global: {
         plugins: [i18n, router],
-        stubs: {
-          BoardTaskDrawer: true,
-        },
       },
     })
     await flushPromises()
 
     expect(globalPage.find('[data-testid="global-board-blocked-banner"]').exists()).toBe(true)
     expect(globalPage.get('[data-testid="global-board-blocked-banner"]').text()).toContain('TIN-9')
+    await globalPage.get('[data-testid="global-blocked-open-t-blocked-9"]').trigger('click')
+    expect(boardInspectorStore.open).toBe(true)
+    expect(boardInspectorStore.taskId).toBe('t-blocked-9')
+    expect(document.body.querySelector('[data-slot="sheet-backdrop"]')).toBeNull()
     await globalPage.get('[data-testid="global-board-blocked-filter"]').trigger('click')
     await nextTick()
     expect(globalPage.find('[data-testid="board-task-card-t-blocked-9"]').exists()).toBe(true)
@@ -625,6 +631,7 @@ describe('Phase 3 (#56): Project Notes Studio, Coordinator Planner & Autopilot U
       path.resolve(dir, '../CoordinatorPlanModal.vue'),
       path.resolve(dir, '../BoardAutopilotBar.vue'),
       path.resolve(dir, '../BoardViewToolbar.vue'),
+      path.resolve(dir, '../BoardTaskInspectorPanel.vue'),
       path.resolve(dir, '../../../pages/ProjectHubPage.vue'),
       path.resolve(dir, '../../../pages/GlobalBoardPage.vue'),
     ]

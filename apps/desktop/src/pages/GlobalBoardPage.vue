@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Activity, AlertTriangle, CheckCircle2, ExternalLink, Layers, Play, RefreshCw, Rows3 } from '@lucide/vue'
@@ -8,13 +8,17 @@ import {
   BoardKanbanView,
   BoardListView,
   BoardSwimlaneView,
-  BoardTaskDrawer,
   BoardViewToolbar,
+  boardInspectorStore,
   buildBoardSwimlanes,
   buildSpatialFocusLocation,
+  closeBoardTaskInspector,
   groupBoardTasks,
+  openBoardTaskInspector,
   stashPendingSpatialFocus,
+  syncBoardTaskInspectorData,
   useProjectBoardView,
+  type BoardInspectorCallbacks,
   type BoardTaskGroup,
 } from '@/components/board'
 import type {
@@ -45,16 +49,24 @@ const board = useProjectBoardView({
   projects: activeProjects,
 })
 
-const drawerOpen = ref(false)
-const drawerMode = ref<'create' | 'edit'>('edit')
-const selectedTaskId = ref<string | null>(null)
-const createDefaultStatus = ref<ProjectBoardTaskStatus>('ready')
 const blockedOnlyFilter = ref(false)
 
-const selectedTask = computed<ProjectBoardTaskDto | null>(() => {
-  if (!selectedTaskId.value) return null
-  return board.tasks.value.find((item) => item.task_id === selectedTaskId.value) ?? null
-})
+const selectedTaskId = computed<string | null>(() =>
+  boardInspectorStore.open ? boardInspectorStore.taskId : null,
+)
+
+watch(
+  [() => board.tasks.value, activeProjects],
+  ([tasks, projects]) => {
+    syncBoardTaskInspectorData({
+      tasks,
+      projects,
+      ownerScope: 'global',
+      loading: board.loading.value,
+    })
+  },
+  { immediate: true },
+)
 
 const blockedTasks = computed<ProjectBoardTaskDto[]>(() =>
   board.tasks.value.filter((item) => item.blocked),
@@ -111,15 +123,33 @@ onMounted(async () => {
   emit('ready')
 })
 
+const inspectorCallbacks: BoardInspectorCallbacks = {
+  onCreateTask: handleCreateTask,
+  onSaveTask: handleSaveTask,
+  onDeleteTask: handleDeleteTask,
+  onResolveConflict: handleResolveConflict,
+  onDispatchTask: handleDispatchTask,
+  onCancelTask: handleCancelTask,
+  onApproveTask: handleApproveTask,
+  onRequestChanges: handleRequestChanges,
+  onOpenSession: handleOpenSession,
+  onJumpSpatial: handleJumpSpatial,
+}
+
 function openCreateDrawer(defaultStatus: ProjectBoardTaskStatus = 'ready') {
   if (!activeProjects.value.length) {
     c.openProject()
     return
   }
-  drawerMode.value = 'create'
-  selectedTaskId.value = null
-  createDefaultStatus.value = defaultStatus
-  drawerOpen.value = true
+  openBoardTaskInspector({
+    mode: 'create',
+    ownerScope: 'global',
+    projectTasks: board.tasks.value,
+    projects: activeProjects.value,
+    defaultProjectId: activeProjects.value[0]?.id ?? null,
+    defaultStatus,
+    ...inspectorCallbacks,
+  })
 }
 
 function openCreateInGroup(group: BoardTaskGroup) {
@@ -129,16 +159,23 @@ function openCreateInGroup(group: BoardTaskGroup) {
 }
 
 function openTaskDrawer(task: ProjectBoardTaskDto) {
-  drawerMode.value = 'edit'
-  selectedTaskId.value = task.task_id
-  drawerOpen.value = true
+  openBoardTaskInspector({
+    mode: 'edit',
+    ownerScope: 'global',
+    projectId: task.project_id,
+    taskId: task.task_id,
+    task,
+    projectTasks: board.tasks.value,
+    projects: activeProjects.value,
+    defaultProjectId: task.project_id || (activeProjects.value[0]?.id ?? null),
+    ...inspectorCallbacks,
+  })
 }
 
 async function handleCreateTask(projectId: string, input: CreateProjectBoardTaskInput) {
   try {
     const created = await board.createTask(projectId, input)
-    selectedTaskId.value = created.task_id
-    drawerMode.value = 'edit'
+    openTaskDrawer(created)
   } catch (err) {
     notify.error(err, { title: t('board.errors.saveFailed') })
   }
@@ -155,8 +192,7 @@ async function handleSaveTask(projectId: string, taskId: string, patch: UpdatePr
 async function handleDeleteTask(projectId: string, taskId: string) {
   try {
     await board.deleteTask(projectId, taskId)
-    drawerOpen.value = false
-    selectedTaskId.value = null
+    closeBoardTaskInspector()
   } catch (err) {
     notify.error(err, { title: t('board.errors.deleteFailed') })
   }
@@ -228,14 +264,14 @@ async function handleRequestChanges(projectId: string, taskId: string, feedback:
 }
 
 async function handleOpenSession(sessionId: string) {
-  drawerOpen.value = false
+  closeBoardTaskInspector()
   await c.setSelectedSession(sessionId)
   await router.push('/')
 }
 
 async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   if (!task.spatial_ref) return
-  drawerOpen.value = false
+  closeBoardTaskInspector()
   stashPendingSpatialFocus(task.spatial_ref)
   await c.setSelectedSession(task.spatial_ref.session_id)
   await router.push(buildSpatialFocusLocation(task.spatial_ref))
@@ -415,27 +451,6 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
         @jump-spatial="handleJumpSpatial"
         @move-task="handleMoveTask"
       />
-
-      <!-- Right Slide-over Task Drawer -->
-      <BoardTaskDrawer
-        v-model:open="drawerOpen"
-        :mode="drawerMode"
-        :task="selectedTask"
-        :project-tasks="board.tasks.value"
-        :default-project-id="activeProjects[0]?.id ?? null"
-        :default-status="createDefaultStatus"
-        :projects="activeProjects"
-        @create-task="handleCreateTask"
-        @save-task="handleSaveTask"
-        @delete-task="handleDeleteTask"
-        @resolve-conflict="handleResolveConflict"
-        @dispatch-task="handleDispatchTask"
-        @cancel-task="handleCancelTask"
-        @approve-task="handleApproveTask"
-        @request-changes="handleRequestChanges"
-        @open-session="handleOpenSession"
-        @jump-spatial="handleJumpSpatial"
-      />
   </div>
 </template>
 
@@ -453,7 +468,7 @@ async function handleJumpSpatial(task: ProjectBoardTaskDto) {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 16px 6px;
+  padding: 14px 16px 6px;
   flex-wrap: wrap;
 }
 

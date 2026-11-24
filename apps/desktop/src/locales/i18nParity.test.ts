@@ -170,6 +170,7 @@ const panelSources = import.meta.glob(
     './../components/board/ProjectNotesPanel.vue',
     './../components/board/CoordinatorPlanModal.vue',
     './../components/board/BoardAutopilotBar.vue',
+    './../components/board/BoardTaskInspectorPanel.vue',
     './../components/spatial/SpatialProjectBoardNode.vue',
     './../components/spatial/SpatialTaskStatusCapsule.vue',
     './../components/spatial/SpatialSelectionBar.vue',

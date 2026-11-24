@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { UieShell } from '@tinadec/ui'
 import { homeController } from '@/controllers/HomeController'
 import { consumeRequest, pendingConversationId, pendingProjectId } from '@/lib/pageRequests'
-import { useUiePage } from '@/lib/uiEngine'
+import { ensureProductionUie } from '@/lib/uiEngine'
 import { useHomeEntrance } from '@/composables/useHomeEntrance'
 import { usePageTransition } from '@/composables/usePageTransition'
 import { useNotifications } from '@/composables/useNotifications'
@@ -19,14 +19,13 @@ import {
   type HomeDockCardId,
 } from '@/lib/homeDockSync'
 
-// The UIE store is a module singleton shared by every UIE route; entering Home
-// switches it back to the home layout (restoring the user's saved home layout).
-const uie = useUiePage('home')
+// The UIE store is a module singleton shared by every UIE route; HomePage drives
+// page switching across `'home'`, `'board'`, and `'projectHub'` from the active child route.
+const uie = ensureProductionUie()
 const router = useRouter()
 homeController.setViewMode('flat')
 const emit = defineEmits<{ ready: [] }>()
 const root = ref<HTMLElement | null>(null)
-const { contentReady, phase } = useHomeEntrance(root, uie.ready, () => emit('ready'))
 
 const currentHomeSurface = computed<'chat' | 'board' | 'project-hub'>(() => {
   const current = router?.currentRoute?.value
@@ -43,6 +42,22 @@ const currentHomeSurface = computed<'chat' | 'board' | 'project-hub'>(() => {
   }
   return 'chat'
 })
+
+const targetUiePageId = computed<'home' | 'board' | 'projectHub'>(() => {
+  if (currentHomeSurface.value === 'board') return 'board'
+  if (currentHomeSurface.value === 'project-hub') return 'projectHub'
+  return 'home'
+})
+
+watch(
+  targetUiePageId,
+  (pageId) => {
+    uie.showPage(pageId)
+  },
+  { immediate: true },
+)
+
+const { contentReady, phase } = useHomeEntrance(root, uie.ready, () => emit('ready'))
 
 // Spatial transition state — declarative, class-driven.
 // Same mechanism as the Settings page: toggling container classes
@@ -82,7 +97,7 @@ const controllerStarted = ref(false)
 const { t } = useI18n()
 const { notify } = useNotifications()
 
-function onFocusHomeDockEvent(event: Event): void {
+async function onFocusHomeDockEvent(event: Event): Promise<void> {
   const detail = (event as CustomEvent<{
     card?: HomeDockCardId
     approvalTab?: ApprovalDockTab
@@ -90,6 +105,12 @@ function onFocusHomeDockEvent(event: Event): void {
     runId?: string | null
   }>).detail
   if (!detail?.card) return
+  if (targetUiePageId.value !== 'home') {
+    if (router?.currentRoute?.value && router.currentRoute.value.path !== '/') {
+      await router.push('/')
+    }
+    if ((targetUiePageId.value as string) !== 'home') return
+  }
   focusDockCard({
     card: detail.card,
     ...(detail.approvalTab ? { approvalTab: detail.approvalTab } : {}),
@@ -141,11 +162,12 @@ function onLiveDigestFillSteerEvent(event: Event): void {
 }
 
 onMounted(() => {
+  uie.showPage(targetUiePageId.value)
   homeController.start()
   controllerStarted.value = true
   window.addEventListener('tinadec:focus-home-dock', onFocusHomeDockEvent)
   window.addEventListener('tinadec:live-digest-fill-steer', onLiveDigestFillSteerEvent)
-  if (activeDockFocus.value) {
+  if (activeDockFocus.value && targetUiePageId.value === 'home') {
     ensureHomeDockCardOpen(activeDockFocus.value.card, { uie, title: dockCardTitle(activeDockFocus.value.card) })
   }
 })
@@ -234,7 +256,7 @@ watch(
   () => activeDockFocus.value?.nonce,
   async () => {
     const focus = activeDockFocus.value
-    if (!focus) return
+    if (!focus || targetUiePageId.value !== 'home') return
     ensureHomeDockCardOpen(focus.card, { uie, title: dockCardTitle(focus.card) })
     await nextTick()
     const container = root.value

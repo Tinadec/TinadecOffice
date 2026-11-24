@@ -21,6 +21,7 @@ import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
 import CodeEditorCard from '@/components/code/CodeEditorCard.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
+import BoardTaskInspectorPanel from '@/components/board/BoardTaskInspectorPanel.vue'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 const route = useRoute()
@@ -75,6 +76,10 @@ const {
 let unsubscribeEvents: (() => void) | null = null
 
 async function loadData() {
+  if (tabType.value === 'boardTaskInspector') {
+    loading.value = false
+    return
+  }
   // Readiness is runtime-wide, not session-scoped.
   if (tabType.value === 'doctor') readiness.value = await api.readiness().catch(() => null)
   if (!sessionId.value) {
@@ -113,6 +118,7 @@ async function loadData() {
 function connectSSE() {
   unsubscribeEvents?.()
   unsubscribeEvents = null
+  if (tabType.value === 'boardTaskInspector') return
   // The detached window follows its own session; useAgentActivity subscribes to the
   // same bus underneath, so this page used to be the second of two connections here.
   followSession(sessionId.value ? `${storageId.value}::${sessionId.value}` : null)
@@ -375,6 +381,11 @@ watch(sessionId, () => {
         />
 
         <CodeEditorCard v-else-if="tabType === 'codeEditor'" />
+
+        <BoardTaskInspectorPanel
+          v-else-if="tabType === 'boardTaskInspector'"
+          :detached-state="tabState"
+        />
 
         <div v-else class="detached-panel-unknown">
           <p>{{ t('context.unknownPanelType') }}: {{ tabType }}</p>

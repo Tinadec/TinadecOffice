@@ -10,6 +10,8 @@ describe('layout scope', () => {
   it('pages outside PROJECT_SCOPED_PAGES stay page-wide even with a project active', () => {
     expect(writeScopeFor('companionCenter', 'proj-1')).toEqual({ kind: 'page', pageId: 'companionCenter' })
     expect(resolveReadScope('companionCenter', 'proj-1', () => true)).toEqual({ kind: 'page', pageId: 'companionCenter' })
+    expect(writeScopeFor('board', 'proj-1')).toEqual({ kind: 'page', pageId: 'board' })
+    expect(writeScopeFor('projectHub', 'proj-1')).toEqual({ kind: 'page', pageId: 'projectHub' })
   })
 
   it('write scope is page when no project is active', () => {

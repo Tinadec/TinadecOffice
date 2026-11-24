@@ -155,6 +155,27 @@ describe('repairLayout', () => {
     expect(home.edgeInset).toBe(8)
     const settings = repairLayout({ version: 1, pageId: 'settings', columns: {}, cards: {} }, ctx)
     expect(settings.edgeInset).toBe(8)
+    const board = repairLayout({ version: 1, pageId: 'board', columns: {}, cards: {} }, ctx)
+    expect(board.pageId).toBe('board')
+    expect(board.edgeInset).toBe(8)
+    const projectHub = repairLayout({ version: 1, pageId: 'projectHub', columns: {}, cards: {} }, ctx)
+    expect(projectHub.pageId).toBe('projectHub')
+    expect(projectHub.edgeInset).toBe(8)
+  })
+
+  it('keeps valid board and projectHub presets on their own pages', () => {
+    const ctx = makeCtx()
+    for (const [pageId, centerDescriptor] of [
+      ['board', 'globalBoard'],
+      ['projectHub', 'projectHub'],
+    ] as const) {
+      const preset = buildPreset(pageId, { nextInstanceId: () => `${pageId}-${Math.random()}` })
+      const out = repairLayout({ ...preset, edgeInset: undefined }, ctx)
+      expect(out.pageId).toBe(pageId)
+      expect(out.edgeInset).toBe(8)
+      expect(out.gap).toBe(8)
+      expect(Object.values(out.cards).map((c) => c.descriptorId).sort()).toEqual([centerDescriptor, 'nav'].sort())
+    }
   })
 
   it('defaults legacy app-page JSON to a flush edge inset', () => {

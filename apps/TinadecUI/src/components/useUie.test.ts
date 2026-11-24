@@ -24,6 +24,18 @@ function makeFullRegistry() {
     type: 'settingsContent', component: {} as never, minWidth: 320, minHeight: 200,
     singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '设置内容',
   })
+  reg.register({
+    type: 'globalBoard', component: {} as never, minWidth: 320, minHeight: 200,
+    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '', titlebarMode: 'hidden',
+  })
+  reg.register({
+    type: 'projectHub', component: {} as never, minWidth: 320, minHeight: 200,
+    singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '', titlebarMode: 'hidden',
+  })
+  reg.register({
+    type: 'boardTaskInspector', component: {} as never, minWidth: 340, minHeight: 220,
+    singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '',
+  })
   return reg
 }
 
@@ -283,5 +295,110 @@ describe('preset revisions for redesigned pages', () => {
 
     // A user who has already arranged the new page keeps their arrangement.
     expect(uie.snapshot.value.columns.left.width).toBe(333)
+  })
+})
+
+describe('persistent left NavCard and inspector docking across home <-> board <-> projectHub', () => {
+  beforeEach(() => {
+    __resetUieForTests()
+  })
+
+  it('preserves nav instanceId, left.width, and left.collapsed across home -> board -> projectHub -> home', async () => {
+    const store = memoryLayerStore()
+    await store.hydrate()
+    const uie = createUie({ registry: makeFullRegistry(), persistence: { store } })
+    await uie.ready
+
+    const initialNavId = uie.snapshot.value.columns.left.primary.tabIds[0]!
+    expect(uie.snapshot.value.cards[initialNavId]?.descriptorId).toBe('nav')
+
+    // User resizes and collapses left sidebar on home
+    uie.dispatch({
+      command: { type: 'resizeColumn', scope: uie.scope.value, slotId: 'left', width: 312 },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+    uie.dispatch({
+      command: { type: 'collapseColumn', scope: uie.scope.value, slotId: 'left', collapsed: true },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+
+    // home -> board
+    uie.showPage('board')
+    expect(uie.pageId.value).toBe('board')
+    expect(uie.snapshot.value.columns.left.primary.tabIds).toEqual([initialNavId])
+    expect(uie.snapshot.value.columns.left.primary.activeTabId).toBe(initialNavId)
+    expect(uie.snapshot.value.columns.left.width).toBe(312)
+    expect(uie.snapshot.value.columns.left.collapsed).toBe(true)
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+
+    // User expands and resizes left sidebar while on board
+    uie.dispatch({
+      command: { type: 'collapseColumn', scope: uie.scope.value, slotId: 'left', collapsed: false },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+    uie.dispatch({
+      command: { type: 'resizeColumn', scope: uie.scope.value, slotId: 'left', width: 294 },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+
+    // board -> projectHub
+    uie.showPage('projectHub')
+    expect(uie.pageId.value).toBe('projectHub')
+    expect(uie.snapshot.value.columns.left.primary.tabIds).toEqual([initialNavId])
+    expect(uie.snapshot.value.columns.left.width).toBe(294)
+    expect(uie.snapshot.value.columns.left.collapsed).toBe(false)
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+
+    // projectHub -> home (carries latest sidebar geometry back onto stored home layout too)
+    uie.showPage('home')
+    expect(uie.pageId.value).toBe('home')
+    expect(uie.snapshot.value.columns.left.primary.tabIds).toEqual([initialNavId])
+    expect(uie.snapshot.value.columns.left.width).toBe(294)
+    expect(uie.snapshot.value.columns.left.collapsed).toBe(false)
+  })
+
+  it('docks boardTaskInspector in right at 460px and collapses right back to 0px on closeCard', () => {
+    const uie = createUie({ registry: makeFullRegistry() })
+    uie.setContainerSize({ width: 1440, height: 920 })
+    uie.showPage('board')
+
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+    expect(uie.geometry.value.columns.center.width).toBe(1440 - 16 - 260 - 8)
+
+    uie.dispatch({
+      command: {
+        type: 'openCard',
+        scope: uie.scope.value,
+        descriptorId: 'boardTaskInspector',
+        slotId: 'right',
+        state: { projectId: 'proj-1', taskId: 'task-1' },
+      },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+
+    expect(uie.geometry.value.columns.right.width).toBe(460)
+    expect(uie.geometry.value.columns.center.width).toBe(1440 - 16 - 260 - 460 - 16)
+
+    const inspectorId = uie.snapshot.value.columns.right.primary.tabIds[0]!
+    expect(uie.snapshot.value.cards[inspectorId]?.descriptorId).toBe('boardTaskInspector')
+
+    uie.dispatch({
+      command: {
+        type: 'closeCard',
+        scope: uie.scope.value,
+        instanceId: inspectorId,
+      },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+
+    expect(uie.snapshot.value.columns.right.width).toBe(460)
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+    expect(uie.geometry.value.columns.center.width).toBe(1440 - 16 - 260 - 8)
   })
 })

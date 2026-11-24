@@ -9,7 +9,7 @@ import type { Component } from 'vue'
 // so every part can be unit-tested without mounting components.
 // ---------------------------------------------------------------------------
 
-export type UiePageId = 'home' | 'settings' | 'code' | 'debug' | 'companionCenter'
+export type UiePageId = 'home' | 'board' | 'projectHub' | 'settings' | 'code' | 'debug' | 'companionCenter'
 export type UieSlotId = 'left' | 'center' | 'right'
 /** secondary only exists when a column is vertically split. */
 export type UieStackId = 'primary' | 'secondary'

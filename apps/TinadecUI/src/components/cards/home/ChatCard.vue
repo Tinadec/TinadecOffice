@@ -1,63 +1,19 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue'
 import LiveDigestHeartbeatStrip from '@/components/liveDigest/LiveDigestHeartbeatStrip.vue'
-import GlobalBoardPage from '@/pages/GlobalBoardPage.vue'
-import ProjectHubPage from '@/pages/ProjectHubPage.vue'
-import { computed, getCurrentInstance, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, GitBranch, Send, ShieldAlert } from '@lucide/vue'
 import { api } from '@/api'
 import { useAgentDirectory } from '@/composables/useAgentDirectory'
 import { selectPrimaryRunId } from '@/composables/useLiveDigest'
-import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useSessionWorktrees } from '@/composables/useSessionWorktrees'
 import { homeController } from '@/controllers/HomeController'
 import { focusDockCard, type InlineDockCardItem } from '@/lib/homeDockSync'
 import { selectionIdentity } from '@/lib/storageScope'
 
-export type HomeSurfaceKind = 'chat' | 'board' | 'project-hub'
-
 const c = homeController
 const { t } = useI18n()
-const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
-const workspacePanelStyle = computed(() => getPanelStyle())
-const workspacePanelAttrs = computed(() => getPanelDataAttributes())
-
-const instance = getCurrentInstance()
-let injectedRoute: ReturnType<typeof useRoute> | undefined
-try {
-  if (instance?.appContext.config.globalProperties.$router) {
-    injectedRoute = useRoute()
-  } else if (instance?.appContext.config.globalProperties.$route) {
-    injectedRoute = instance.appContext.config.globalProperties.$route as ReturnType<typeof useRoute>
-  }
-} catch {
-  injectedRoute = undefined
-}
-
-const homeSurface = computed<HomeSurfaceKind>(() => {
-  const r = injectedRoute
-  if (!r) return 'chat'
-  if (r.meta?.homeSurface === 'board' || r.name === 'board' || r.path === '/board') {
-    return 'board'
-  }
-  if (
-    r.meta?.homeSurface === 'project-hub' ||
-    r.name === 'project-hub' ||
-    (typeof r.path === 'string' && r.path.startsWith('/projects/'))
-  ) {
-    return 'project-hub'
-  }
-  return 'chat'
-})
-
-const hasSwitchedSurface = ref(false)
-watch(homeSurface, (next, prev) => {
-  if (prev !== undefined && next !== prev) {
-    hasSwitchedSurface.value = true
-  }
-})
 
 const resolveAgentName = typeof api?.listAgents === 'function'
   ? useAgentDirectory().nameFor
@@ -205,109 +161,80 @@ const liveDigestStorageId = computed<string | undefined>(() => {
 </script>
 
 <template>
-  <div class="chat-card-shell" :data-home-surface="homeSurface" data-testid="chat-card-root">
-    <template v-if="homeSurface === 'chat'">
-      <aside
-        v-if="streamDockCards.length > 0"
-        class="chat-dock-sync-bar"
-        data-testid="chat-stream-dock-bar"
-      >
-        <div
-          v-for="item in streamDockCards"
-          :key="item.id"
-          class="chat-dock-card"
-          :class="[`is-${item.kind}`, { 'is-urgent': item.urgent }]"
-          :data-dock-kind="item.kind"
-          data-testid="chat-stream-dock-card"
-        >
-          <button type="button" class="chat-dock-card-main" @click="openStreamDockCard(item)">
-            <Send v-if="item.kind === 'dispatch'" :size="11" aria-hidden="true" />
-            <GitBranch v-else-if="item.kind === 'worktree'" :size="11" aria-hidden="true" />
-            <ShieldAlert v-else :size="11" aria-hidden="true" />
-            <span class="chat-dock-card-title">{{ item.title }}</span>
-            <span v-if="item.badge" class="chat-dock-card-badge">{{ item.badge }}</span>
-            <span v-if="item.subtitle" class="chat-dock-card-sub">{{ item.subtitle }}</span>
-          </button>
-          <button
-            v-if="item.workerLabel || item.workerHandle || item.taskId"
-            type="button"
-            class="chat-dock-worker-badge"
-            data-testid="chat-stream-worker-badge"
-            @click.stop="openStreamWorkerBadge(item)"
-          >
-            <Bot :size="10" aria-hidden="true" />
-            <span>{{ item.workerLabel ?? item.workerHandle ?? item.taskId }}</span>
-          </button>
-        </div>
-      </aside>
+  <div class="chat-card-shell" data-testid="chat-card-root">
+    <aside
+      v-if="streamDockCards.length > 0"
+      class="chat-dock-sync-bar"
+      data-testid="chat-stream-dock-bar"
+    >
       <div
-        v-if="primaryLiveDigestRunId"
-        class="chat-live-digest-strip"
-        :class="{ 'has-dock-cards': streamDockCards.length > 0 }"
+        v-for="item in streamDockCards"
+        :key="item.id"
+        class="chat-dock-card"
+        :class="[`is-${item.kind}`, { 'is-urgent': item.urgent }]"
+        :data-dock-kind="item.kind"
+        data-testid="chat-stream-dock-card"
       >
-        <LiveDigestHeartbeatStrip
-          :run-id="primaryLiveDigestRunId"
-          :storage-id="liveDigestStorageId"
-        />
+        <button type="button" class="chat-dock-card-main" @click="openStreamDockCard(item)">
+          <Send v-if="item.kind === 'dispatch'" :size="11" aria-hidden="true" />
+          <GitBranch v-else-if="item.kind === 'worktree'" :size="11" aria-hidden="true" />
+          <ShieldAlert v-else :size="11" aria-hidden="true" />
+          <span class="chat-dock-card-title">{{ item.title }}</span>
+          <span v-if="item.badge" class="chat-dock-card-badge">{{ item.badge }}</span>
+          <span v-if="item.subtitle" class="chat-dock-card-sub">{{ item.subtitle }}</span>
+        </button>
+        <button
+          v-if="item.workerLabel || item.workerHandle || item.taskId"
+          type="button"
+          class="chat-dock-worker-badge"
+          data-testid="chat-stream-worker-badge"
+          @click.stop="openStreamWorkerBadge(item)"
+        >
+          <Bot :size="10" aria-hidden="true" />
+          <span>{{ item.workerLabel ?? item.workerHandle ?? item.taskId }}</span>
+        </button>
       </div>
-      <ChatPanel
-        class="chat-card-panel"
-        :class="{ 'chat-surface-settle': hasSwitchedSurface }"
-        :messages="c.messages.value"
-        :sessions="c.sessions.value"
-        :projects="c.projects.value"
-        :current-session="c.currentSession.value"
-        :current-project="c.currentProject.value"
-        :selected-project-id="c.selectedProjectId.value"
-        :model-name="c.modelName.value"
-        :orchestration="c.orchestration.value"
-        :busy="c.busy.value"
-        :draft="c.draft.value"
-        :permission="c.currentPermission.value"
-        :composer-settings="c.composerSettings.value"
-        :settings-saving="c.settingsSaving.value"
-        :settings-error="c.settingsError.value"
-        :runs-for-composer="c.runs.value"
-        :can-stop="Boolean(c.stoppableRunId.value)"
-        :conversation="conversation"
-        :loading="c.transcriptLoading.value"
-        @update:draft="c.updateDraft($event)"
-        @update:permission="c.updatePermission($event)"
-        @update:settings="c.updateComposerSettings($event)"
-        @send="c.sendMessage($event)"
-        @welcome-send="c.handleWelcomeSend($event)"
-        @create-project="c.openProject()"
-        @select-project="c.setSelectedProject($event)"
-        @edit-message="c.editAndResend($event)"
-        @stop="c.stopRun()"
+    </aside>
+    <div
+      v-if="primaryLiveDigestRunId"
+      class="chat-live-digest-strip"
+      :class="{ 'has-dock-cards': streamDockCards.length > 0 }"
+    >
+      <LiveDigestHeartbeatStrip
+        :run-id="primaryLiveDigestRunId"
+        :storage-id="liveDigestStorageId"
       />
-    </template>
-
-    <section
-      v-else-if="homeSurface === 'board'"
-      key="board"
-      class="chat-card-workspace-surface"
-      :class="{ 'chat-surface-settle': hasSwitchedSurface }"
-      :aria-label="t('board.mainWorkspaceAria')"
-      :style="workspacePanelStyle"
-      v-bind="workspacePanelAttrs"
-      data-testid="chat-card-workspace-board"
-    >
-      <GlobalBoardPage />
-    </section>
-
-    <section
-      v-else
-      key="project-hub"
-      class="chat-card-workspace-surface"
-      :class="{ 'chat-surface-settle': hasSwitchedSurface }"
-      :aria-label="t('board.mainWorkspaceAria')"
-      :style="workspacePanelStyle"
-      v-bind="workspacePanelAttrs"
-      data-testid="chat-card-workspace-project-hub"
-    >
-      <ProjectHubPage />
-    </section>
+    </div>
+    <ChatPanel
+      class="chat-card-panel"
+      :messages="c.messages.value"
+      :sessions="c.sessions.value"
+      :projects="c.projects.value"
+      :current-session="c.currentSession.value"
+      :current-project="c.currentProject.value"
+      :selected-project-id="c.selectedProjectId.value"
+      :model-name="c.modelName.value"
+      :orchestration="c.orchestration.value"
+      :busy="c.busy.value"
+      :draft="c.draft.value"
+      :permission="c.currentPermission.value"
+      :composer-settings="c.composerSettings.value"
+      :settings-saving="c.settingsSaving.value"
+      :settings-error="c.settingsError.value"
+      :runs-for-composer="c.runs.value"
+      :can-stop="Boolean(c.stoppableRunId.value)"
+      :conversation="conversation"
+      :loading="c.transcriptLoading.value"
+      @update:draft="c.updateDraft($event)"
+      @update:permission="c.updatePermission($event)"
+      @update:settings="c.updateComposerSettings($event)"
+      @send="c.sendMessage($event)"
+      @welcome-send="c.handleWelcomeSend($event)"
+      @create-project="c.openProject()"
+      @select-project="c.setSelectedProject($event)"
+      @edit-message="c.editAndResend($event)"
+      @stop="c.stopRun()"
+    />
   </div>
 </template>
 
@@ -328,43 +255,6 @@ const liveDigestStorageId = computed<string | undefined>(() => {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
-}
-
-.chat-card-workspace-surface {
-  flex: 1;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 0;
-  margin-top: 40px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-sizing: border-box;
-  background: var(--surface-section);
-  border: 1px solid var(--border-card);
-  border-radius: 12px;
-  box-shadow: var(--shadow-card-subtle);
-}
-
-@keyframes chat-surface-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.chat-surface-settle {
-  animation: chat-surface-fade-in var(--duration-pop, 180ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-card-workspace-surface,
-  .chat-surface-settle {
-    animation: none !important;
-    transition: none !important;
-  }
 }
 
 .chat-dock-sync-bar {

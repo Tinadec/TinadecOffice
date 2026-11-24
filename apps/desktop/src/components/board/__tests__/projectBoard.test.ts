@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
+import { __resetUieForTests, useUie } from '@tinadec/ui'
 import i18n from '@/i18n'
 import { resetHostAccessForTests, setHostAccessStatus } from '@/lib/hostAccess'
 import { useNotifications } from '@/composables/useNotifications'
@@ -26,15 +27,19 @@ import {
   BoardSwimlaneView,
   BoardTaskCard,
   BoardTaskDrawer,
+  BoardTaskInspectorPanel,
   BoardViewToolbar,
   SPATIAL_PROMOTION_PREF_STORAGE_KEY,
+  boardInspectorStore,
   buildBoardSwimlanes,
+  closeBoardTaskInspector,
   computeReorderSortKey,
   filterBoardTasks,
   filterOrdinarySidebarSessions,
   groupBoardTasks,
   isBoardTaskSession,
   readSpatialPromotionPreference,
+  resetBoardInspectorForTests,
   saveSpatialPromotionPreference,
   sortBoardTasks,
   useProjectBoardView,
@@ -80,6 +85,8 @@ function makeTask(overrides: Partial<ProjectBoardTaskDto> = {}): ProjectBoardTas
 describe('Project Board View Engine & Components (Phase 1 #54)', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    __resetUieForTests()
+    resetBoardInspectorForTests()
     resetHostAccessForTests()
     setHostAccessStatus({ state: 'ready', managed: true })
     const notifications = useNotifications()
@@ -636,7 +643,7 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
     drawer.unmount()
   })
 
-  it('keeps HomePage & AppSidebar mounted with stable scrollTop while switching ChatCard in-place across /, /board, and /projects/:projectId', async () => {
+  it('switches UIE pages across /, /board, and /projects/:projectId with persistent NavCard/scrollTop, 0px empty right column, and 460px docked BoardTaskInspector', async () => {
     // Provide non-zero `.uie-canvas` bounds & Web Animations stub for happy-dom layout measurement
     const origGetAnimations = HTMLElement.prototype.getAnimations
     HTMLElement.prototype.getAnimations = () => []
@@ -681,13 +688,17 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
     homeController.selectedProjectId.value = 'proj-alpha'
     homeController.selectedSessionId.value = 'sess-alpha-1'
 
+    vi.spyOn(api, 'listAgentModes').mockResolvedValue([])
+    vi.spyOn(api, 'listModelProviders').mockResolvedValue([])
+    vi.spyOn(api, 'discoverHarnesses').mockResolvedValue({ cli_runtimes: [] })
     vi.spyOn(api, 'listGlobalBoardTasks').mockResolvedValue([
-      makeTask({ task_id: 't-global-1', task_key: 'TIN-1', title: 'Global Board Card' }),
+      makeTask({ task_id: 't-global-1', task_key: 'TIN-1', title: 'Global Board Card One' }),
+      makeTask({ task_id: 't-global-2', task_key: 'TIN-2', title: 'Global Board Card Two' }),
     ])
     vi.spyOn(api, 'getGlobalBoardSummary').mockResolvedValue({
-      total_tasks: 1,
+      total_tasks: 2,
       backlog_count: 0,
-      ready_count: 1,
+      ready_count: 2,
       in_progress_count: 0,
       in_review_count: 0,
       done_count: 0,
@@ -790,7 +801,6 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
           TinadecCalligraphy: true,
           PersonalAvatar: true,
           SidebarActivityCard: true,
-          BoardTaskDrawer: true,
           CoordinatorPlanModal: true,
         },
       },
@@ -801,30 +811,98 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
     await flushPromises()
 
     expect(homeReadyCount).toBe(1)
+    const uie = useUie()
+    uie.setContainerSize({ width: 1360, height: 860 })
+    await nextTick()
+
     const homeEl = shell.findComponent(HomePage).element
     const homeUid = (shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid
     const sidebarEl = shell.get('.sidebar').element
+    const initialNavId = uie.snapshot.value.columns.left.primary.tabIds[0]
     const workspacesEl = shell.get('#sidebar-workspaces').element as HTMLElement
     workspacesEl.scrollTop = 148
     await shell.get('#sidebar-workspaces').trigger('scroll')
 
-    // On `/board`: GlobalBoardPage renders inside ChatCard workspace surface, chat-only strip is hidden
-    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('board')
+    // 1. On `/board`: UIE page is `'board'`, zero chat right-column tools (`homePicker` / `git`), right column starts at 0px
+    expect(uie.pageId.value).toBe('board')
+    expect(Object.values(uie.snapshot.value.cards).some((c) => c.descriptorId === 'homePicker')).toBe(false)
+    expect(Object.values(uie.snapshot.value.cards).some((c) => c.descriptorId === 'git')).toBe(false)
+    expect(uie.geometry.value.columns.right.width).toBe(0)
     expect(shell.find('[data-testid="global-board-page"]').exists()).toBe(true)
     expect(shell.find('[data-testid="chat-panel-stub"]').exists()).toBe(false)
-    expect(shell.find('[data-testid="live-digest-strip-stub"]').exists()).toBe(false)
+    expect(document.body.querySelector('[data-slot="sheet-backdrop"]')).toBeNull()
 
-    // Navigate `/board` -> `/projects/proj-alpha`: zero HomePage/AppSidebar remount, scrollTop stays 148
+    // 2. Clicking Task A docks `'boardTaskInspector'` in `right` (`460px`) with zero modal sheet backdrop
+    await shell.get('[data-testid="board-task-card-t-global-1"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(uie.geometry.value.columns.right.width).toBe(460)
+    expect(boardInspectorStore.open).toBe(true)
+    expect(boardInspectorStore.taskId).toBe('t-global-1')
+    expect(document.body.querySelector('[data-slot="sheet-backdrop"]')).toBeNull()
+    expect(shell.find('[data-testid="board-task-inspector-panel"]').exists()).toBe(true)
+    expect(shell.find('[data-testid="board-task-inspector-embedded"]').exists()).toBe(true)
+    expect((shell.get('[data-testid="drawer-title-input"]').element as HTMLInputElement).value).toBe(
+      'Global Board Card One',
+    )
+    const inspectorInstanceId = Object.values(uie.snapshot.value.cards).find(
+      (c) => c.descriptorId === 'boardTaskInspector',
+    )?.id
+    expect(inspectorInstanceId).toBeTruthy()
+
+    // 3. Clicking Task B switches the docked inspector in-place (reusing the same card instance)
+    await shell.get('[data-testid="board-task-card-t-global-2"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(uie.geometry.value.columns.right.width).toBe(460)
+    expect(boardInspectorStore.taskId).toBe('t-global-2')
+    expect(
+      Object.values(uie.snapshot.value.cards).find((c) => c.descriptorId === 'boardTaskInspector')?.id,
+    ).toBe(inspectorInstanceId)
+    expect((shell.get('[data-testid="drawer-title-input"]').element as HTMLInputElement).value).toBe(
+      'Global Board Card Two',
+    )
+
+    // 4. Closing the docked inspector via header X button shrinks `right` back to 0px and clears selection
+    await shell.get('[data-testid="drawer-embedded-close-btn"]').trigger('click')
+    await nextTick()
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+    expect(boardInspectorStore.open).toBe(false)
+    expect(boardInspectorStore.taskId).toBeNull()
+
+    // 5. Navigate `/board` -> `/projects/proj-alpha`: switches `uie.pageId` to `'projectHub'`, preserves NavCard & scrollTop
     await router.push('/projects/proj-alpha')
     await flushPromises()
+    expect(uie.pageId.value).toBe('projectHub')
+    expect(uie.snapshot.value.columns.left.primary.tabIds[0]).toBe(initialNavId)
     expect(shell.findComponent(HomePage).element).toBe(homeEl)
     expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
     expect(shell.get('.sidebar').element).toBe(sidebarEl)
     expect(workspacesEl.scrollTop).toBe(148)
-    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('project-hub')
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+    expect(Object.values(uie.snapshot.value.cards).some((c) => c.descriptorId === 'homePicker')).toBe(false)
     expect(shell.find('[data-testid="project-hub-page"]').exists()).toBe(true)
     expect(overviewSpy).toHaveBeenCalledWith('proj-alpha')
     expect(listProjectTasksSpy).toHaveBeenCalledWith('proj-alpha')
+
+    // 6. Clicking `+ New Task` on ProjectHubPage docks `'boardTaskInspector'` in create mode (`460px`), and UIE closeCard syncs store closed
+    await shell.get('[data-testid="hub-new-task-btn"]').trigger('click')
+    await nextTick()
+    expect(uie.geometry.value.columns.right.width).toBe(460)
+    expect(boardInspectorStore.open).toBe(true)
+    expect(boardInspectorStore.mode).toBe('create')
+    const hubInspectorCard = Object.values(uie.snapshot.value.cards).find(
+      (c) => c.descriptorId === 'boardTaskInspector',
+    )!
+    uie.dispatch({
+      command: { type: 'closeCard', scope: uie.scope.value, instanceId: hubInspectorCard.id },
+      source: 'user',
+      expectedRevision: uie.snapshot.value.revision,
+    })
+    await nextTick()
+    expect(uie.geometry.value.columns.right.width).toBe(0)
+    expect(boardInspectorStore.open).toBe(false)
+    expect(boardInspectorStore.taskId).toBeNull()
 
     // Trigger `.tinadec/` sync -> transient notification via useNotifications, zero inline `.hub-sync-banner`
     await shell.get('[data-testid="hub-sync-tinadec-btn"]').trigger('click')
@@ -836,36 +914,109 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
       ),
     ).toBe(true)
 
-    // Navigate `/projects/proj-alpha` -> `/projects/proj-beta`: HomePage stays mounted, scrollTop preserved across project scope, overview & tasks reload in-place
+    // 7. Navigate `/projects/proj-alpha` -> `/projects/proj-beta` -> `/` -> `/board`: NavCard & scrollTop stay 148
     await router.push('/projects/proj-beta')
     await flushPromises()
+    expect(uie.pageId.value).toBe('projectHub')
+    expect(uie.snapshot.value.columns.left.primary.tabIds[0]).toBe(initialNavId)
     expect(shell.findComponent(HomePage).element).toBe(homeEl)
     expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
     const betaSidebarEl = shell.get('.sidebar').element
+    expect(betaSidebarEl).toBe(sidebarEl)
     expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
     expect(overviewSpy).toHaveBeenCalledWith('proj-beta')
     expect(listProjectTasksSpy).toHaveBeenCalledWith('proj-beta')
 
-    // Navigate `/projects/proj-beta` -> `/` -> `/board`: zero HomePage/AppSidebar remount, scrollTop stays 148
     await router.push('/')
     await flushPromises()
+    expect(uie.pageId.value).toBe('home')
+    expect(uie.snapshot.value.columns.left.primary.tabIds[0]).toBe(initialNavId)
     expect(shell.findComponent(HomePage).element).toBe(homeEl)
     expect((shell.findComponent(HomePage).vm as unknown as { $: { uid: number } }).$.uid).toBe(homeUid)
-    expect(shell.get('.sidebar').element).toBe(betaSidebarEl)
+    expect(shell.get('.sidebar').element).toBe(sidebarEl)
     expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
-    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('chat')
     expect(shell.find('[data-testid="chat-panel-stub"]').exists()).toBe(true)
     expect(shell.find('[data-testid="project-hub-page"]').exists()).toBe(false)
 
     await router.push('/board')
     await flushPromises()
+    expect(uie.pageId.value).toBe('board')
+    expect(uie.snapshot.value.columns.left.primary.tabIds[0]).toBe(initialNavId)
     expect(shell.findComponent(HomePage).element).toBe(homeEl)
-    expect(shell.get('.sidebar').element).toBe(betaSidebarEl)
+    expect(shell.get('.sidebar').element).toBe(sidebarEl)
     expect((shell.get('#sidebar-workspaces').element as HTMLElement).scrollTop).toBe(148)
-    expect(shell.get('[data-testid="chat-card-root"]').attributes('data-home-surface')).toBe('board')
+    expect(shell.find('[data-testid="global-board-page"]').exists()).toBe(true)
 
+    closeBoardTaskInspector()
     shell.unmount()
     HTMLElement.prototype.getAnimations = origGetAnimations
+  })
+
+  it('hydrates standalone detached BoardTaskInspectorPanel via API and saves updates directly', async () => {
+    const detachedTask = makeTask({
+      task_id: 'task-det-1',
+      project_id: 'proj-alpha',
+      task_key: 'TIN-88',
+      title: 'Detached Window Inspector Task',
+      revision: 3,
+    })
+    vi.spyOn(api, 'listProjects').mockResolvedValue([
+      {
+        id: 'proj-alpha',
+        name: 'Alpha Repo',
+        path: '/workspace/alpha',
+        created_at: '2026-11-24T00:00:00Z',
+        lifecycle_status: 'active',
+      },
+    ])
+    vi.spyOn(api, 'listProjectBoardTasks').mockResolvedValue([detachedTask])
+    vi.spyOn(api, 'subscribeProjectBoardEvents').mockReturnValue({
+      close: vi.fn(),
+      closed: false,
+      lastSeq: 0,
+    })
+    vi.spyOn(api, 'listAgentModes').mockResolvedValue([])
+    vi.spyOn(api, 'listModelProviders').mockResolvedValue([])
+    vi.spyOn(api, 'discoverHarnesses').mockResolvedValue({ cli_runtimes: [] })
+    const updateSpy = vi.spyOn(api, 'updateProjectBoardTask').mockResolvedValue(
+      makeTask({
+        ...detachedTask,
+        title: 'Updated From Detached Window',
+        revision: 4,
+      }),
+    )
+
+    const panel = mount(BoardTaskInspectorPanel, {
+      global: { plugins: [i18n] },
+      props: {
+        detachedState: {
+          mode: 'edit',
+          projectId: 'proj-alpha',
+          taskId: 'task-det-1',
+          storageId: 'user',
+        },
+      },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const titleInput = panel.get('[data-testid="drawer-title-input"]')
+    expect((titleInput.element as HTMLInputElement).value).toBe('Detached Window Inspector Task')
+
+    await titleInput.setValue('Updated From Detached Window')
+    await panel.get('[data-testid="drawer-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      'proj-alpha',
+      'task-det-1',
+      expect.objectContaining({
+        title: 'Updated From Detached Window',
+        expected_revision: 3,
+      }),
+    )
+
+    panel.unmount()
   })
 
   it('respects strict monochrome & .tinadec/ guardrails across all board UI files (BoardShellLayout deleted, zero border-left stripes, zero .agent/ paths)', () => {
@@ -879,9 +1030,11 @@ describe('Project Board View Engine & Components (Phase 1 #54)', () => {
       path.resolve(dir, '../BoardListView.vue'),
       path.resolve(dir, '../BoardSwimlaneView.vue'),
       path.resolve(dir, '../BoardTaskDrawer.vue'),
+      path.resolve(dir, '../BoardTaskInspectorPanel.vue'),
       path.resolve(dir, '../../../pages/HomePage.vue'),
       path.resolve(dir, '../../../pages/GlobalBoardPage.vue'),
       path.resolve(dir, '../../../pages/ProjectHubPage.vue'),
+      path.resolve(dir, '../../../pages/DetachedPanelPage.vue'),
       path.resolve(dir, '../../../../../TinadecUI/src/components/cards/home/ChatCard.vue'),
     ]
 

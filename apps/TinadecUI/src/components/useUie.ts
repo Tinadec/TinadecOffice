@@ -9,13 +9,14 @@ import { PROJECT_SCOPED_PAGES, writeScopeFor } from '../engine/scope'
 import { createInstancePool, type InstancePool } from '../engine/instancePool'
 import type {
   LayoutScope,
+  UieColumn,
   UieContainerSize,
   UieGeometry,
   UieLayoutSnapshot,
   UiePageId,
   UieSlotId,
 } from '../engine/types'
-import type { UieCommand, UieCommandEnvelope } from '../engine/commands'
+import type { UieCommandEnvelope } from '../engine/commands'
 import type { Component } from 'vue'
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,102 @@ function readDocumentGeometryOptions(): ComputeGeometryOptions {
   return {
     platform: platform || undefined,
     fullScreen: fullscreen === 'true',
+  }
+}
+
+export const SHARED_LEFT_NAV_PAGES: ReadonlySet<UiePageId> = new Set<UiePageId>([
+  'home',
+  'board',
+  'projectHub',
+])
+
+function findColumnNavId(snapshot: UieLayoutSnapshot, col: UieColumn): string | null {
+  const candidates = [
+    ...col.primary.tabIds,
+    ...(col.secondary?.tabIds ?? []),
+  ]
+  for (const id of candidates) {
+    if (snapshot.cards[id]?.descriptorId === 'nav') return id
+  }
+  return null
+}
+
+/**
+ * Re-key the target layout's left `'nav'` card instance to match the currently mounted
+ * `'nav'` instance so `<UieCardHost :key="inst.id">` keeps `<NavCard />` + `<AppSidebar />`
+ * mounted without scroll or state loss. Across `home <-> board <-> projectHub`, also carry
+ * the user's current `left.width` and `left.collapsed`.
+ */
+export function inheritLiveLeftNav(
+  current: UieLayoutSnapshot,
+  next: UieLayoutSnapshot,
+  carryGeometry: boolean,
+): UieLayoutSnapshot {
+  const currentLeft = current.columns?.left
+  const nextLeft = next.columns?.left
+  if (!currentLeft || !nextLeft) return next
+
+  const liveNavId = findColumnNavId(current, currentLeft)
+  const nextNavId = findColumnNavId(next, nextLeft)
+  if (!liveNavId || !nextNavId) return next
+
+  const needsReKey = liveNavId !== nextNavId
+  const needsGeometry =
+    carryGeometry &&
+    (nextLeft.width !== currentLeft.width || nextLeft.collapsed !== currentLeft.collapsed)
+
+  if (!needsReKey && !needsGeometry) return next
+
+  const replaceId = (id: string) => (id === nextNavId ? liveNavId : id)
+
+  const cards = needsReKey
+    ? (() => {
+        const copy = { ...next.cards }
+        const navCard = copy[nextNavId]
+        delete copy[nextNavId]
+        copy[liveNavId] = { ...navCard, id: liveNavId }
+        return copy
+      })()
+    : next.cards
+
+  const primary = needsReKey
+    ? {
+        ...nextLeft.primary,
+        tabIds: nextLeft.primary.tabIds.map(replaceId),
+        activeTabId: nextLeft.primary.activeTabId === nextNavId ? liveNavId : nextLeft.primary.activeTabId,
+      }
+    : nextLeft.primary
+
+  const secondary =
+    needsReKey && nextLeft.secondary
+      ? {
+          ...nextLeft.secondary,
+          tabIds: nextLeft.secondary.tabIds.map(replaceId),
+          activeTabId:
+            nextLeft.secondary.activeTabId === nextNavId ? liveNavId : nextLeft.secondary.activeTabId,
+        }
+      : nextLeft.secondary
+
+  const updatedLeft: UieColumn = {
+    ...nextLeft,
+    ...(carryGeometry
+      ? {
+          width: currentLeft.width,
+          collapsed: currentLeft.collapsed,
+        }
+      : {}),
+    primary,
+    secondary,
+  }
+
+  return {
+    ...next,
+    cards,
+    columns: {
+      ...next.columns,
+      left: updatedLeft,
+    },
+    focusedCardId: needsReKey && next.focusedCardId === nextNavId ? liveNavId : next.focusedCardId,
   }
 }
 
@@ -207,14 +304,23 @@ export function createUie(options: UieStoreOptions): UieStore {
 
   /** Show `page`'s effective layout for the active project (stored, else preset). */
   function loadLayout(page: UiePageId) {
+    const prev = snapshot.value
+    const carryGeometry =
+      SHARED_LEFT_NAV_PAGES.has(prev.pageId) &&
+      SHARED_LEFT_NAV_PAGES.has(page) &&
+      prev.pageId !== page
     const stored = options.persistence?.store.resolveSnapshot(page, activeProjectId.value)
     // A page that was redesigned replaces its stored layout instead of restoring it: presets alone
     // only reach fresh installs, so an existing user would never see the new arrangement.
     const wantedRevision = PRESET_REVISIONS[page]
     const stale = stored !== null && stored !== undefined && wantedRevision !== undefined
       && (stored.presetRevision ?? 0) < wantedRevision
-    if (stored && !stale) restoreSnapshot(stored)
-    else bus.loadSnapshot(buildPreset(page, { nextInstanceId: createUieInstanceId }))
+    if (stored && !stale) {
+      restoreSnapshot(inheritLiveLeftNav(prev, stored, carryGeometry))
+    } else {
+      const preset = buildPreset(page, { nextInstanceId: createUieInstanceId })
+      bus.loadSnapshot(inheritLiveLeftNav(prev, preset, carryGeometry))
+    }
     scope.value = writeScopeFor(page, activeProjectId.value)
   }
 

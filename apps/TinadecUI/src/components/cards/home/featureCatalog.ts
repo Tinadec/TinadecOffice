@@ -7,6 +7,7 @@ import {
   GitBranch,
   Globe,
   Layers3,
+  ListChecks,
   Radio,
   ShieldCheck,
   Stethoscope,
@@ -89,7 +90,15 @@ const FEATURE_ICON_BY_DESCRIPTOR = new Map<string, LucideIcon>(
   FEATURE_CATALOG.map((f) => [f.descriptorId, f.icon]),
 )
 
+const EXTRA_DESCRIPTOR_ICONS = new Map<string, LucideIcon>([
+  ['boardTaskInspector', ListChecks],
+  ['globalBoard', ListChecks],
+  ['projectHub', Layers3],
+])
+
 /** The catalog icon of a feature descriptor, or `fallback` for non-feature cards. */
 export function featureIconFor(descriptorId: string, fallback: LucideIcon): LucideIcon {
-  return FEATURE_ICON_BY_DESCRIPTOR.get(descriptorId) ?? fallback
+  return FEATURE_ICON_BY_DESCRIPTOR.get(descriptorId)
+    ?? EXTRA_DESCRIPTOR_ICONS.get(descriptorId)
+    ?? fallback
 }
