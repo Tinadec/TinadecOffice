@@ -49,6 +49,8 @@ import {
   type CompanionConnectedWorkSession,
   type CompanionWorkSessionPendingApproval,
 } from '@/lib/companionWorkSession'
+import { useNotifications } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 
 /**
  * Floating Companion Capsule & Island Panel:
@@ -75,6 +77,14 @@ function companionHost(): CompanionHostBridge | undefined {
 }
 
 const { t, locale } = useI18n()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const COMPANION_LOAD_KEY = 'companion-load'
+const COMPANION_CHAT_LOAD_KEY = 'companion-chat-load'
+const COMPANION_SEND_KEY = 'companion-send'
+const COMPANION_INVITE_KEY = 'companion-invite'
+const COMPANION_WORK_SESSION_KEY = 'companion-work-session'
 const state = ref<CompanionState | null>(null)
 const dragging = ref(false)
 const panelRef = ref<HTMLElement | null>(null)
@@ -322,21 +332,18 @@ const unreadCount = ref(0)
 const workSessions = ref<CompanionConnectedWorkSession[]>([])
 const decidingApprovalIds = ref<Record<string, boolean>>({})
 const cancellingRunIds = ref<Record<string, boolean>>({})
-const workSessionError = ref('')
 
 const booting = ref(true)
-const loadError = ref('')
+const bootFailed = ref(false)
 const chatLoading = ref(false)
-const chatError = ref('')
+const chatLoadFailed = ref(false)
 const sending = ref(false)
-const sendError = ref('')
 const pauseBusy = ref(false)
 const menuOpen = ref(false)
 const inviteOpen = ref(false)
 const inviteTargetId = ref('')
 const inviteShareHistory = ref(false)
 const inviteBusy = ref(false)
-const inviteError = ref('')
 const logRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -504,13 +511,24 @@ function isHidden(): boolean {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden'
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.code === 'desktop_host_required') return t('companion.chat.desktopHostRequired')
-    if (error.code) return t('companion.chat.apiError', { code: error.code, message: error.message })
-    return error.message
+function reportCompanionError(
+  error: unknown,
+  key: string,
+  action?: { label: string; run: () => void | Promise<void> },
+): void {
+  if (error instanceof ApiError && error.code === 'desktop_host_required') {
+    notify.error(t('companion.chat.desktopHostRequired'), {
+      title: t('companion.title'),
+      key,
+      ...(action ? { action } : {}),
+    })
+    return
   }
-  return error instanceof Error ? error.message : String(error)
+  notify.error(error, {
+    title: t('companion.title'),
+    key,
+    ...(action ? { action } : {}),
+  })
 }
 
 function runFailureText(run: CompanionRun): string {
@@ -592,7 +610,7 @@ async function hydrateWorkSessions(companionId: string | null): Promise<void> {
       }
     }
     workSessions.value = [...merged.values()]
-    workSessionError.value = ''
+    dismissByKey(COMPANION_WORK_SESSION_KEY)
   } catch {
     // Work-session supervision is progressive enhancement; never block chat on 404/unreachable.
   }
@@ -646,7 +664,7 @@ async function decideWorkApproval(item: CompanionWorkSessionPendingApproval, app
   const ws = featuredWorkSession.value
   if (!ws || decidingApprovalIds.value[item.approval_id]) return
   decidingApprovalIds.value = { ...decidingApprovalIds.value, [item.approval_id]: true }
-  workSessionError.value = ''
+  dismissByKey(COMPANION_WORK_SESSION_KEY)
   try {
     await proxyCall<unknown>('POST', `/api/v1/approvals/${encodeURIComponent(item.approval_id)}/decision`, {
       decision: approved ? 'approved' : 'rejected',
@@ -665,7 +683,7 @@ async function decideWorkApproval(item: CompanionWorkSessionPendingApproval, app
       }
     })
   } catch (error) {
-    workSessionError.value = errorText(error)
+    reportCompanionError(error, COMPANION_WORK_SESSION_KEY)
   } finally {
     const next = { ...decidingApprovalIds.value }
     delete next[item.approval_id]
@@ -678,7 +696,7 @@ async function cancelWorkRun(): Promise<void> {
   const runId = ws?.latest_run_id
   if (!ws || !runId || cancellingRunIds.value[runId]) return
   cancellingRunIds.value = { ...cancellingRunIds.value, [runId]: true }
-  workSessionError.value = ''
+  dismissByKey(COMPANION_WORK_SESSION_KEY)
   const clientControlId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? `companion-cancel-${crypto.randomUUID()}`
     : `companion-cancel-${Date.now()}`
@@ -697,7 +715,7 @@ async function cancelWorkRun(): Promise<void> {
       }
     })
   } catch (error) {
-    workSessionError.value = errorText(error)
+    reportCompanionError(error, COMPANION_WORK_SESSION_KEY)
   } finally {
     const next = { ...cancellingRunIds.value }
     delete next[runId]
@@ -770,7 +788,8 @@ watch(mode, (next) => {
 
 async function loadMessagesFor(conversationId: string, token: number): Promise<void> {
   chatLoading.value = true
-  chatError.value = ''
+  chatLoadFailed.value = false
+  dismissByKey(COMPANION_CHAT_LOAD_KEY)
   try {
     const list = await companionBridge.listMessages(conversationId)
     if (token !== loadToken) return
@@ -779,7 +798,13 @@ async function loadMessagesFor(conversationId: string, token: number): Promise<v
     mergeMessages(list ?? [], false)
     scrollToBottom()
   } catch (error) {
-    if (token === loadToken) chatError.value = errorText(error)
+    if (token === loadToken) {
+      chatLoadFailed.value = true
+      reportCompanionError(error, COMPANION_CHAT_LOAD_KEY, {
+        label: t('companion.chat.retry'),
+        run: retryChat,
+      })
+    }
   } finally {
     if (token === loadToken) chatLoading.value = false
   }
@@ -798,10 +823,11 @@ async function selectCompanion(id: string): Promise<void> {
   liveDeltaBodies.value = {}
   workSessions.value = []
   liveWorkSessionIds.clear()
-  workSessionError.value = ''
   lastSeq = 0
-  chatError.value = ''
-  sendError.value = ''
+  chatLoadFailed.value = false
+  dismissByKey(COMPANION_WORK_SESSION_KEY)
+  dismissByKey(COMPANION_CHAT_LOAD_KEY)
+  dismissByKey(COMPANION_SEND_KEY)
   void hydrateWorkSessions(id)
   try {
     const conversation = await companionBridge.ensurePrivateConversation(id)
@@ -812,7 +838,13 @@ async function selectCompanion(id: string): Promise<void> {
     conversations.value = list.some((item) => item.id === conversation.id) ? list : [conversation, ...list]
     await loadMessagesFor(conversation.id, token)
   } catch (error) {
-    if (token === loadToken) chatError.value = errorText(error)
+    if (token === loadToken) {
+      chatLoadFailed.value = true
+      reportCompanionError(error, COMPANION_CHAT_LOAD_KEY, {
+        label: t('companion.chat.retry'),
+        run: retryChat,
+      })
+    }
   }
 }
 
@@ -825,7 +857,7 @@ async function adoptConversation(conversation: CompanionConversation): Promise<v
   trackedRunIds.value = []
   liveDeltaBodies.value = {}
   lastSeq = 0
-  sendError.value = ''
+  dismissByKey(COMPANION_SEND_KEY)
   await loadMessagesFor(conversation.id, token)
 }
 
@@ -841,7 +873,8 @@ function pickCompanion(settings: CompanionSettings, active: CompanionSummary[]):
 
 async function boot(): Promise<void> {
   booting.value = true
-  loadError.value = ''
+  bootFailed.value = false
+  dismissByKey(COMPANION_LOAD_KEY)
   try {
     const [settings, list] = await Promise.all([companionBridge.getSettings(), companionBridge.listCompanions()])
     const active = (list ?? []).filter((item) => item.status === 'active')
@@ -849,7 +882,11 @@ async function boot(): Promise<void> {
     const preferred = pickCompanion(settings, active)
     if (preferred) await selectCompanion(preferred.id)
   } catch (error) {
-    loadError.value = errorText(error)
+    bootFailed.value = true
+    reportCompanionError(error, COMPANION_LOAD_KEY, {
+      label: t('companion.chat.retry'),
+      run: () => boot(),
+    })
   } finally {
     booting.value = false
   }
@@ -891,7 +928,7 @@ async function send(): Promise<void> {
   if (!body || !conversation || sending.value) return
   const companionId = selectedCompanionId.value
   sending.value = true
-  sendError.value = ''
+  dismissByKey(COMPANION_SEND_KEY)
   let key: string | undefined
   try { key = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : undefined } catch { /* ignore */ }
   try {
@@ -903,7 +940,7 @@ async function send(): Promise<void> {
     trackedRunIds.value = [...new Set([...trackedRunIds.value, ...(result.runs ?? []).map((run) => run.id)])]
     scrollToBottom()
   } catch (error) {
-    sendError.value = errorText(error)
+    reportCompanionError(error, COMPANION_SEND_KEY)
   } finally {
     sending.value = false
   }
@@ -989,12 +1026,13 @@ async function togglePause(): Promise<void> {
   const conversation = activeConversation.value
   if (!conversation || pauseBusy.value) return
   pauseBusy.value = true
+  dismissByKey(COMPANION_SEND_KEY)
   try {
     const updated = await companionBridge.pauseConversation(conversation.id, !conversation.autonomy_paused)
     activeConversation.value = updated
     conversations.value = conversations.value.map((item) => (item.id === updated.id ? updated : item))
   } catch (error) {
-    sendError.value = errorText(error)
+    reportCompanionError(error, COMPANION_SEND_KEY)
   } finally {
     pauseBusy.value = false
   }
@@ -1003,7 +1041,7 @@ async function togglePause(): Promise<void> {
 function openInvite(): void {
   menuOpen.value = false
   inviteOpen.value = true
-  inviteError.value = ''
+  dismissByKey(COMPANION_INVITE_KEY)
   inviteShareHistory.value = false
   inviteTargetId.value = inviteCandidates.value[0]?.id ?? ''
 }
@@ -1013,7 +1051,7 @@ async function confirmInvite(): Promise<void> {
   const target = inviteTargetId.value
   if (!conversation || !target || inviteBusy.value) return
   inviteBusy.value = true
-  inviteError.value = ''
+  dismissByKey(COMPANION_INVITE_KEY)
   try {
     const result = await companionBridge.inviteMember(conversation.id, {
       companion_id: target,
@@ -1024,11 +1062,26 @@ async function confirmInvite(): Promise<void> {
     await adoptConversation(result)
     if (!conversations.value.some((item) => item.id === result.id)) conversations.value = [result, ...conversations.value]
   } catch (error) {
-    inviteError.value = errorText(error)
+    reportCompanionError(error, COMPANION_INVITE_KEY)
   } finally {
     inviteBusy.value = false
   }
 }
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && wasReady === false) {
+    dismissByKey(COMPANION_LOAD_KEY)
+    dismissByKey(COMPANION_CHAT_LOAD_KEY)
+    dismissByKey(COMPANION_WORK_SESSION_KEY)
+    if (bootFailed.value || companions.value.length === 0) {
+      void boot()
+    } else if (chatLoadFailed.value) {
+      retryChat()
+    } else if (selectedCompanionId.value) {
+      void hydrateWorkSessions(selectedCompanionId.value)
+    }
+  }
+})
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
@@ -1053,6 +1106,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  dismissByKey(COMPANION_LOAD_KEY)
+  dismissByKey(COMPANION_CHAT_LOAD_KEY)
+  dismissByKey(COMPANION_SEND_KEY)
+  dismissByKey(COMPANION_INVITE_KEY)
+  dismissByKey(COMPANION_WORK_SESSION_KEY)
   clearTimeout(impulseTimer)
   if (noticeTimer) clearTimeout(noticeTimer)
   unsubscribeRelay?.()
@@ -1351,16 +1409,14 @@ onBeforeUnmount(() => {
             <span>{{ t('companionCenter.workSession.cancelRun') }}</span>
           </button>
         </div>
-
-        <p v-if="workSessionError" class="companion-ws-error">{{ workSessionError }}</p>
       </section>
 
       <p v-if="patNote" class="companion-pat-note" aria-live="polite">{{ patNote }}</p>
 
       <div class="companion-chat" @pointerdown.stop @dblclick="pat">
         <p v-if="booting" class="companion-chat-state">{{ t('companion.chat.loading') }}</p>
-        <div v-else-if="loadError" class="companion-chat-state companion-chat-state--error">
-          <p class="companion-chat-state-body">{{ loadError }}</p>
+        <div v-else-if="bootFailed" class="companion-chat-state" data-testid="companion-empty-retry">
+          <p class="companion-chat-state-body">{{ t('companion.chat.noMessages') }}</p>
           <button class="companion-retry" type="button" @click="boot">{{ t('companion.chat.retry') }}</button>
         </div>
         <div v-else-if="companions.length === 0" class="companion-chat-state">
@@ -1371,7 +1427,12 @@ onBeforeUnmount(() => {
         <template v-else>
           <p v-if="chatLoading" class="companion-chat-state">{{ t('companion.chat.loading') }}</p>
           <div v-else ref="logRef" class="companion-log">
-            <p v-if="messages.length === 0 && !activeStreamingText" class="companion-log-empty">{{ t('companion.chat.noMessages') }}</p>
+            <div v-if="messages.length === 0 && !activeStreamingText" class="companion-chat-state">
+              <p class="companion-chat-state-body">{{ t('companion.chat.noMessages') }}</p>
+              <button v-if="chatLoadFailed" class="companion-retry" type="button" @click="retryChat">
+                {{ t('companion.chat.retry') }}
+              </button>
+            </div>
             <article v-for="message in messages" :key="message.id" class="companion-msg" :class="`companion-msg--${message.author_kind}`">
               <AgentPetAvatar
                 v-if="message.author_kind === 'companion'"
@@ -1413,11 +1474,6 @@ onBeforeUnmount(() => {
             {{ t('companion.chat.thinking') }}<span class="companion-run-dots" aria-hidden="true"><span /><span /><span /></span>
           </p>
           <p v-for="failure in failures" :key="failure.id" class="companion-run companion-run--failed">{{ runFailureText(failure) }}</p>
-          <p v-if="chatError" class="companion-chat-error">
-            {{ chatError }}
-            <button class="companion-retry" type="button" @click="retryChat">{{ t('companion.chat.retry') }}</button>
-          </p>
-          <p v-if="sendError" class="companion-chat-error">{{ sendError }}</p>
         </template>
 
         <div v-if="inviteOpen" class="companion-invite" role="dialog" :aria-label="t('companion.chat.inviteTitle')" @pointerdown.stop>
@@ -1431,7 +1487,6 @@ onBeforeUnmount(() => {
             <input v-model="inviteShareHistory" type="checkbox" />
             <span>{{ t('companion.chat.shareHistory') }}</span>
           </label>
-          <p v-if="inviteError" class="companion-chat-error">{{ inviteError }}</p>
           <div class="companion-invite-actions">
             <button class="companion-secondary" type="button" @click="inviteOpen = false">{{ t('companion.chat.inviteCancel') }}</button>
             <button class="companion-primary" type="button" :disabled="!inviteTargetId || inviteBusy" @click="confirmInvite">{{ t('companion.chat.inviteConfirm') }}</button>
@@ -1439,7 +1494,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <form v-if="companions.length > 0 && !loadError" class="companion-composer" @submit.prevent="send" @pointerdown.stop>
+      <form v-if="companions.length > 0 && !bootFailed" class="companion-composer" @submit.prevent="send" @pointerdown.stop>
         <textarea
           ref="composerRef"
           v-model="draft"
@@ -2040,12 +2095,6 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--accent-danger, #ef4444) 30%, var(--border-subtle, var(--border-muted)));
 }
 
-.companion-ws-error {
-  margin: 0;
-  font-size: 11px;
-  color: var(--accent-danger, #ef4444);
-}
-
 /* ── Message Feed ───────────────────────────────────────────────────── */
 
 .companion-pat-note {
@@ -2076,8 +2125,7 @@ onBeforeUnmount(() => {
 
 .companion-log-empty,
 .companion-chat-state,
-.companion-run,
-.companion-chat-error {
+.companion-run {
   margin: 6px 12px;
   font-size: 12px;
   color: var(--text-muted);
@@ -2107,9 +2155,8 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
-.companion-chat-error,
 .companion-run--failed {
-  color: var(--accent-danger, #ef4444);
+  color: var(--text-secondary);
 }
 
 .companion-msg {

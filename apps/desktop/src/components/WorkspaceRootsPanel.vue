@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Copy, FilePlus, FileText, FolderOpen, FolderPlus, FolderUp, LoaderCircle, RefreshCw, Star, Trash2 } from '@lucide/vue'
 import { homeController } from '@/controllers/HomeController'
@@ -8,7 +8,12 @@ import type { WorkspaceFileGrant, WorkspaceRoot } from '@/lib/workspaces'
 import type { AttachableFile } from '@/lib/pendingAttachments'
 import { api } from '@/api'
 import { canPickHostDirectories, pickWorkspaceFolders } from '@/lib/hostConnection'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
+import { useNotifications } from '@/composables/useNotifications'
 import type { MessageAttachmentDto } from '@/generated/client'
+
+const WORKSPACE_ROOTS_KEY = 'workspace-roots'
 
 type WorkspaceExposure = MessageAttachmentDto & {
   origin?: 'composer' | 'workspace'
@@ -34,6 +39,8 @@ type WorkspaceExposure = MessageAttachmentDto & {
  * consequence and offers no bypass of its own.
  */
 const { t, te } = useI18n()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
 const c = homeController
 
 const project = computed(() => c.currentProject.value)
@@ -51,8 +58,8 @@ const dragging = ref(false)
  */
 const result = ref<{ imported: number; bound: number; attached: number; skipped: Array<{ path: string; reason: string }> } | null>(null)
 const skippedOpen = ref(true)
-/** A failure this card itself observed; controller failures speak through the shared notifications. */
-const problem = ref<string | null>(null)
+/** Pure client-side input validation hint (e.g. dropping a file onto the folder-only control). */
+const inputValidationHint = ref<string | null>(null)
 /**
  * Set when a write finished without changing the list. The controller reports a refused save
  * (a 412 on a stale digest, the common one) through the notification latch rather than by
@@ -64,7 +71,6 @@ const filePickerMode = ref<'bind' | 'attach' | 'copy'>('bind')
 const fileInput = ref<HTMLInputElement | null>(null)
 const exposures = ref<WorkspaceExposure[]>([])
 const exposuresLoading = ref(false)
-const exposuresError = ref<string | null>(null)
 let exposureRead = 0
 
 /**
@@ -130,21 +136,36 @@ function listSignature(): string {
 
 /** Runs one controller action and notices whether the list actually changed. */
 async function write(action: () => Promise<void>): Promise<void> {
-  problem.value = null
+  inputValidationHint.value = null
   unchanged.value = false
   const before = listSignature()
-  await action()
-  unchanged.value = listSignature() === before
+  try {
+    await action()
+    const didChange = listSignature() !== before
+    unchanged.value = !didChange
+    if (didChange) dismissByKey(WORKSPACE_ROOTS_KEY)
+  } catch (err) {
+    if (!isAbortError(err)) {
+      notify.error(err, { key: WORKSPACE_ROOTS_KEY })
+    }
+  }
 }
 
 async function addFolders(): Promise<void> {
   if (picking.value || busy.value) return
   // A browser preview has no dialog to open; saying nothing would read as "no folder chosen".
-  if (!canPickHostDirectories()) { problem.value = t('host.previewShim'); return }
+  if (!canPickHostDirectories()) {
+    notify.error(t('host.previewShim'), { key: WORKSPACE_ROOTS_KEY })
+    return
+  }
   picking.value = true
   try {
     const paths = await pickWorkspaceFolders(t('workspaceRoots.addFolder'))
     if (paths.length) await write(() => c.addWorkspaceFolderPaths(paths))
+  } catch (err) {
+    if (!isAbortError(err)) {
+      notify.error(err, { key: WORKSPACE_ROOTS_KEY })
+    }
   } finally { picking.value = false }
 }
 
@@ -217,9 +238,10 @@ async function copyFiles(entries: DroppedFile[]): Promise<void> {
   if (resolved.length) {
     try {
       copied = await c.importWorkspaceFiles(resolved.map((entry) => entry.path))
+      dismissByKey(WORKSPACE_ROOTS_KEY)
     } catch (reason) {
       // A rejected copy must not fall through to "0 files copied": that reads as success.
-      problem.value = reason instanceof Error ? reason.message : String(reason)
+      notify.error(reason, { key: WORKSPACE_ROOTS_KEY })
       return
     }
   }
@@ -235,7 +257,15 @@ async function copyFiles(entries: DroppedFile[]): Promise<void> {
 async function bindFiles(entries: DroppedFile[]): Promise<void> {
   const resolved = entries.filter((entry) => entry.path)
   const unresolved = entries.filter((entry) => !entry.path)
-  if (resolved.length) await c.addWorkspaceFilePaths(resolved.map((entry) => entry.path))
+  if (resolved.length) {
+    try {
+      await c.addWorkspaceFilePaths(resolved.map((entry) => entry.path))
+      dismissByKey(WORKSPACE_ROOTS_KEY)
+    } catch (err) {
+      if (!isAbortError(err)) notify.error(err, { key: WORKSPACE_ROOTS_KEY })
+      return
+    }
+  }
   result.value = {
     imported: 0,
     bound: resolved.length,
@@ -252,10 +282,10 @@ async function dropTransfer(transfer: DataTransfer | null, foldersOnly = false):
   // A new drop starts a new outcome: leaving the previous one on screen would put one drop's
   // count beside another drop's refusal.
   result.value = null
-  problem.value = null
+  inputValidationHint.value = null
   if (foldersOnly) {
     // Dropping onto the folder control means "authorize this"; a file there is the mismatch.
-    if (files.length) problem.value = t('workspaceRoots.notAFolder', { path: files[0]!.path || files[0]!.name })
+    if (files.length) inputValidationHint.value = t('workspaceRoots.notAFolder', { path: files[0]!.path || files[0]!.name })
     else if (folders.length) await addFoldersFromDrop(folders)
     return
   }
@@ -286,14 +316,15 @@ function dismissResult(): void {
   result.value = null
 }
 
-function dismissProblem(): void {
-  problem.value = null
+function dismissInputHint(): void {
+  inputValidationHint.value = null
 }
 
 function reload(): void {
   result.value = null
-  problem.value = null
+  inputValidationHint.value = null
   unchanged.value = false
+  dismissByKey(WORKSPACE_ROOTS_KEY)
   void loadExposures()
   void c.refreshProjectsAndSessions()
 }
@@ -303,16 +334,25 @@ async function loadExposures(): Promise<void> {
   const generation = ++exposureRead
   if (!projectId) {
     exposures.value = []
-    exposuresError.value = null
+    return
+  }
+  if (!canAccessBackend.value) {
     return
   }
   exposuresLoading.value = true
-  exposuresError.value = null
   try {
     const rows = await api.listProjectExposures(projectId) as WorkspaceExposure[]
-    if (generation === exposureRead) exposures.value = rows
+    if (generation === exposureRead) {
+      exposures.value = rows
+      dismissByKey(WORKSPACE_ROOTS_KEY)
+    }
   } catch (error) {
-    if (generation === exposureRead) exposuresError.value = error instanceof Error ? error.message : String(error)
+    if (generation === exposureRead && !isAbortError(error)) {
+      notify.error(error, {
+        key: WORKSPACE_ROOTS_KEY,
+        action: { label: t('workspaceRoots.reload'), run: () => loadExposures() },
+      })
+    }
   } finally {
     if (generation === exposureRead) exposuresLoading.value = false
   }
@@ -334,6 +374,16 @@ function exposureSource(exposure: WorkspaceExposure): string {
 }
 
 watch(() => project.value?.id, () => { void loadExposures() }, { immediate: true })
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(WORKSPACE_ROOTS_KEY)
+    void loadExposures()
+  }
+})
+onBeforeUnmount(() => {
+  ++exposureRead
+  dismissByKey(WORKSPACE_ROOTS_KEY)
+})
 
 function chooseFiles(mode: 'bind' | 'attach' | 'copy') {
   if (busy.value) return
@@ -355,7 +405,7 @@ async function filesPicked(event: Event) {
 async function attachFilesToComposer(picked: File[], entries: DroppedFile[]): Promise<void> {
   const projectId = project.value?.id ?? null
   if (!projectId) {
-    problem.value = t('workspaceRoots.noWorkspaceBody')
+    notify.warning({ key: WORKSPACE_ROOTS_KEY, message: t('workspaceRoots.noWorkspaceBody') })
     return
   }
   const files: AttachableFile[] = []
@@ -376,7 +426,15 @@ async function attachFilesToComposer(picked: File[], entries: DroppedFile[]): Pr
       arrayBuffer: () => file.arrayBuffer(),
     })
   })
-  if (files.length) await c.prefillWorkspaceAttachments(files)
+  if (files.length) {
+    try {
+      await c.prefillWorkspaceAttachments(files)
+      dismissByKey(WORKSPACE_ROOTS_KEY)
+    } catch (err) {
+      if (!isAbortError(err)) notify.error(err, { key: WORKSPACE_ROOTS_KEY })
+      return
+    }
+  }
   result.value = { imported: 0, bound: 0, attached: files.length, skipped }
   skippedOpen.value = true
 }
@@ -495,9 +553,9 @@ function removeFile(file: WorkspaceFileGrant): void {
         </span>
       </div>
 
-      <div v-if="problem" class="ws-problem" role="alert">
-        <span>{{ problem }}</span>
-        <button type="button" class="ws-row-action" @click="dismissProblem">{{ t('workspaceRoots.cancel') }}</button>
+      <div v-if="inputValidationHint" class="ws-input-hint" data-testid="workspace-input-hint" role="status">
+        <span>{{ inputValidationHint }}</span>
+        <button type="button" class="ws-row-action" @click="dismissInputHint">{{ t('workspaceRoots.cancel') }}</button>
       </div>
 
       <div v-if="result" class="ws-summary" role="status" aria-live="polite">
@@ -538,11 +596,7 @@ function removeFile(file: WorkspaceFileGrant): void {
           </button>
         </div>
         <p class="ws-muted">{{ t('workspaceRoots.exposuresHint') }}</p>
-        <div v-if="exposuresError" class="ws-problem" role="alert">
-          <span>{{ exposuresError }}</span>
-          <button type="button" class="ws-row-action" @click="loadExposures">{{ t('workspaceRoots.reload') }}</button>
-        </div>
-        <ul v-else-if="exposures.length" class="ws-exposure-list">
+        <ul v-if="exposures.length" class="ws-exposure-list">
           <li v-for="exposure in exposures" :key="exposure.id" class="ws-exposure-row">
             <img
               v-if="exposure.media_type.startsWith('image/')"
@@ -649,8 +703,8 @@ function removeFile(file: WorkspaceFileGrant): void {
 .ws-drop-hint { font-size: 11.5px; }
 .ws-drop-target { font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.ws-problem { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-section); color: var(--text-secondary); font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
-.ws-problem span { flex: 1; min-width: 0; }
+.ws-input-hint { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-section); color: var(--text-secondary); font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.ws-input-hint span { flex: 1; min-width: 0; }
 
 .ws-summary { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--surface-section); }
 .ws-summary-line { margin: 0; font-size: 11.5px; color: var(--text-secondary); }

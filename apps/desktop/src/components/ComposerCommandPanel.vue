@@ -19,8 +19,13 @@ import type { AgentDirectoryItemDto } from '@/api'
 import type { ReasoningEffortChoice } from '@/lib/reasoningEffort'
 import type { ContextPolicyParams, ContextStrategyTier } from '@/lib/contextMemoryApi'
 import { modeCatalogRevision } from '@/composables/useAgentModesStore'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
 import ReasoningEffortSlider from './ReasoningEffortSlider.vue'
 import ModeContextStrategySection from './modeEditor/ModeContextStrategySection.vue'
+
+const COMPOSER_CATALOG_KEY = 'composer-command-catalog'
 
 const props = defineProps<{
   open: boolean
@@ -64,6 +69,8 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
 const { commands: workspaceCommands, refresh: refreshWorkspaceCommands } = useWorkspaceCommands(() => props.workspaceRoot ?? null)
 
 const modeName = (mode: AgentModeTopologyDto) =>
@@ -572,6 +579,11 @@ function place() {
     bottom: `${Math.max(8, window.innerHeight - Math.max(topEdge + height + 16, rect.top) + 8)}px`,
   }
 }
+function retryCatalogs() {
+  void loadCatalogs()
+  if (props.agentModels?.error.value) void props.agentModels.load()
+}
+
 async function loadCatalogs() {
   const sequence = ++loadSequence
   loading.value = true
@@ -580,17 +592,61 @@ async function loadCatalogs() {
   // One read, in the scope the conversation belongs to: `baseApi` stamps the selected storage id,
   // so a project conversation lists the project's published modes and a free one lists the user's.
   let failed = false
+  let caughtError: unknown = null
   try {
     const catalog = await baseApi.listAgentModeTopologies()
     if (sequence !== loadSequence) return
     modes.value = withoutRetiredModes(Array.isArray(catalog) ? catalog : [])
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) return
     failed = true
+    caughtError = err
   }
   if (sequence !== loadSequence) return
   modeError.value = failed
   loading.value = false
+  if (failed) {
+    if (props.open) {
+      notify.error(caughtError ?? t('commandPanel.catalogError'), {
+        key: COMPOSER_CATALOG_KEY,
+        title: t('commandPanel.catalogError'),
+        ...(!canAccessBackend.value || isConnectionLevelError(caughtError) ? { category: 'connection' } : {}),
+        action: { label: t('commandPanel.retry'), run: () => retryCatalogs() },
+      })
+    }
+  } else if (!props.agentModels?.error.value) {
+    dismissByKey(COMPOSER_CATALOG_KEY)
+  }
 }
+
+watch(
+  () => [props.open, agentListFailed.value, modeError.value] as const,
+  ([isOpen, agentsFailed, modesFailed]) => {
+    if (!modesFailed && !agentsFailed) {
+      dismissByKey(COMPOSER_CATALOG_KEY)
+      return
+    }
+    if (!isOpen) return
+    if (agentsFailed) {
+      notify.error(
+        t(page.value === 'model' ? 'composer.agentModels.loadFailedFallback' : 'composer.agentModels.loadFailed'),
+        {
+          key: COMPOSER_CATALOG_KEY,
+          ...(!canAccessBackend.value ? { category: 'connection' } : {}),
+          action: { label: t('commandPanel.retry'), run: () => retryCatalogs() },
+        },
+      )
+    }
+  },
+)
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(COMPOSER_CATALOG_KEY)
+    void loadCatalogs()
+    if (props.open) void refreshWorkspaceCommands()
+  }
+})
 watch(() => props.open, async open => {
   cancelPageAnimations()
   if (!open) { navigationDeleteKey = null; return }
@@ -649,6 +705,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   loadSequence++
+  dismissByKey(COMPOSER_CATALOG_KEY)
   anchorObserver?.disconnect()
   cancelPageAnimations()
   document.removeEventListener('pointerdown', outside, true)
@@ -694,8 +751,6 @@ defineExpose({ keydown, activate, page, selectPage })
         />
       </div>
       <div v-else class="command-panel-list">
-        <p v-if="catalogError" class="command-panel-feedback" role="alert">{{ t('commandPanel.catalogError') }} <button @click="loadCatalogs">{{ t('commandPanel.retry') }}</button></p>
-        <p v-if="agentListFailed" class="command-panel-feedback" role="alert" data-testid="command-panel-agents-failed">{{ t(page === 'model' ? 'composer.agentModels.loadFailedFallback' : 'composer.agentModels.loadFailed') }} <button @click="agentModels?.load()">{{ t('commandPanel.retry') }}</button></p>
         <p v-if="(loading || agentListPending) && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
         <button v-for="(row, rowIndex) in rows" :key="row.id" class="command-panel-row" :class="{ 'is-highlighted': rowIndex === index, 'is-selected': row.checked, 'mode-selector-item': page === 'mode', active: page === 'mode' && row.checked }" :role="row.switch ? 'switch' : undefined" :aria-checked="row.switch ? row.checked : undefined" :aria-pressed="!row.switch && row.checked !== undefined ? row.checked : undefined" :aria-label="row.risk && row.risk !== 'neutral' ? `${row.label} · ${t(`commandPanel.risk.${row.risk}`)}` : undefined" :disabled="row.disabled" :data-testid="row.testId ?? `command-panel-${row.id}`" :data-row-index="rowIndex" :title="row.hint" @mouseenter="index = rowIndex" @focus="index = rowIndex" @click="activate(row)">
           <component :is="row.icon" v-if="row.icon" :size="16" class="command-panel-row-icon" :data-risk="row.risk" aria-hidden="true" />
@@ -703,7 +758,13 @@ defineExpose({ keydown, activate, page, selectPage })
           <span v-if="row.switch" class="command-panel-switch" :class="{ 'is-on': row.checked }" aria-hidden="true"><span /></span>
           <template v-else><span v-if="row.value" class="command-panel-value">{{ row.value }}</span><ChevronRight v-if="row.submenu" :size="14" aria-hidden="true" /><Check v-else-if="row.checked" :size="16" aria-hidden="true" /></template>
         </button>
-        <p v-if="!rows.length && !agentListPending && !agentListFailed" class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
+        <div v-if="!rows.length && !loading && !agentListPending" class="command-panel-empty" data-testid="command-panel-empty">
+          <p class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery && !agentListFailed ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
+          <button v-if="catalogError || agentListFailed" type="button" class="command-panel-retry ui-pressable" data-testid="command-panel-retry" @click="retryCatalogs">{{ t('commandPanel.retry') }}</button>
+        </div>
+        <div v-else-if="(catalogError || agentListFailed) && !loading && !agentListPending" class="command-panel-empty-inline">
+          <button type="button" class="command-panel-retry ui-pressable" data-testid="command-panel-retry" @click="retryCatalogs">{{ t('commandPanel.retry') }}</button>
+        </div>
         <button v-if="page === 'root' && slashQuery && !rows.length" class="command-panel-row" data-testid="command-panel-send-as-text" @click="emit('send-as-text')"><FileText :size="16" class="command-panel-row-icon" aria-hidden="true" />{{ t('commandPanel.sendAsText') }}</button>
         <p v-if="page === 'workflow'" class="command-panel-note">{{ t('commandPanel.workflowRequirement') }}</p>
       </div>
@@ -714,7 +775,7 @@ defineExpose({ keydown, activate, page, selectPage })
           @commit="defaultModel?.setReasoningEffort($event)" />
       </div>
       </div>
-      <footer class="command-panel-footer" :class="{ 'has-error': settingsError }" :role="settingsError ? 'alert' : 'status'">{{ settingsError || (settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask')) }}</footer>
+      <footer class="command-panel-footer" role="status">{{ settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask') }}</footer>
     </section>
   </Teleport>
 </template>
@@ -755,10 +816,12 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-switch.is-on { background: var(--text-primary); justify-content: flex-end; }
 .command-panel-switch.is-on span { background: var(--bg-primary); }
 .command-panel-footer { padding: 8px 12px; flex-shrink: 0; color: var(--text-muted); background: var(--surface-raised); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.command-panel-footer.has-error, .command-panel-feedback { color: var(--accent-danger); }
-.command-panel-note, .command-panel-feedback { margin: 6px 10px; font-size: 11px; line-height: 1.6; }
-.command-panel-note { color: var(--text-muted); }
-.command-panel-feedback button { color: inherit; background: transparent; border: 0; text-decoration: underline; cursor: pointer; }
+.command-panel-note { margin: 6px 10px; font-size: 11px; line-height: 1.6; color: var(--text-muted); }
+.command-panel-empty { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 10px; }
+.command-panel-empty .command-panel-note { margin: 0; }
+.command-panel-empty-inline { display: flex; justify-content: flex-end; padding: 4px 10px; }
+.command-panel-retry { flex-shrink: 0; padding: 3px 10px; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--surface-input); color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.command-panel-retry:hover { background: var(--surface-hover); color: var(--text-primary); }
 @media (prefers-reduced-motion: reduce) {
   .command-panel-row, .command-panel-switch { transition: none; }
 }

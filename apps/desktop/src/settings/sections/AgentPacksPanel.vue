@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useHostAccess } from '@/lib/hostAccess'
-import { useErrorState } from '@/composables/useErrorState'
+import { isAbortError } from '@/lib/isAbortError'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -18,6 +18,8 @@ import { pickLocalized } from '@/lib/packI18n'
 import { useNotifications } from '@/composables/useNotifications'
 import { UiBadge, UiButton, UiSelectField } from '@/components/ui'
 
+const AGENT_PACKS_PANEL_KEY = 'agent-packs-panel'
+
 const emit = defineEmits<{
   /**
    * Cloning a pack-managed agent is the Agent Center's flow, not this panel's: it switches the
@@ -33,9 +35,8 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 const { canAccessBackend } = useHostAccess()
-const inventoryFailure = useErrorState()
 const inventoryLoading = ref(false)
-const { notify, confirm, status } = useNotifications()
+const { notify, confirm, dismissByKey } = useNotifications()
 
 const selectedCloneSlug = ref(graphSeedPackManifest.resources.agents[0]?.slug ?? 'meeting')
 const packAgentOptions = computed(() =>
@@ -84,14 +85,28 @@ async function reloadPackInventory(): Promise<void> {
   if (!canAccessBackend.value || inventoryLoading.value) return
   const read = ++inventoryRead
   const request = new AbortController(); inventoryAbort = request
-  inventoryLoading.value = true; inventoryFailure.clear()
+  inventoryLoading.value = true
   try {
     const [packs, defaults] = await Promise.allSettled([api.listAgentPacks(request.signal), api.getWorkspaceDefaults(request.signal)])
     if (read !== inventoryRead || request.signal.aborted || !canAccessBackend.value) return
     if (packs.status === 'fulfilled') installedAgentPacks.value = packs.value
-    else inventoryFailure.set(packs.reason)
     if (defaults.status === 'fulfilled') workspaceDefaultModeVersionId.value = defaults.value.default_mode_version_id ?? null
-    else if (!inventoryFailure.error.value) inventoryFailure.set(defaults.reason)
+    const firstError = packs.status === 'rejected'
+      ? packs.reason
+      : defaults.status === 'rejected'
+        ? defaults.reason
+        : null
+    if (firstError) {
+      if (!isAbortError(firstError)) {
+        notify.error(firstError, {
+          key: AGENT_PACKS_PANEL_KEY,
+          source: 'AgentPack',
+          action: { label: t('settings.retry'), run: () => reloadPackInventory() },
+        })
+      }
+    } else {
+      dismissByKey(AGENT_PACKS_PANEL_KEY)
+    }
   } finally { if (read === inventoryRead) { inventoryLoading.value = false; inventoryAbort = null } }
 }
 
@@ -100,13 +115,14 @@ async function togglePackEnabled(pack: AgentPackDto): Promise<void> {
   busyPackId.value = pack.pack_id
   try {
     await api.setAgentPackEnabled(pack.pack_id, pack.status === 'disabled')
+    dismissByKey(AGENT_PACKS_PANEL_KEY)
     await reloadPackInventory()
     // 模式列表跟着可用包走：重新拉一次让下拉立刻反映启用/禁用。
     void refreshGraphSeedPack()
     emit('changed')
   } catch (error) {
     notify.error(error, {
-      key: `agent-pack-toggle-${pack.pack_id}`,
+      key: AGENT_PACKS_PANEL_KEY,
       title: t('agentPack.toggleFailed'),
       source: 'AgentPack',
     })
@@ -120,11 +136,12 @@ async function adoptPackDefaults(pack: AgentPackDto): Promise<void> {
   busyPackId.value = pack.pack_id
   try {
     await api.adoptAgentPackDefaults(pack.pack_id)
+    dismissByKey(AGENT_PACKS_PANEL_KEY)
     await reloadPackInventory()
     emit('changed')
   } catch (error) {
     notify.error(error, {
-      key: `agent-pack-adopt-${pack.pack_id}`,
+      key: AGENT_PACKS_PANEL_KEY,
       title: t('agentPack.adoptFailed'),
       source: 'AgentPack',
     })
@@ -148,8 +165,9 @@ async function uninstallPack(pack: AgentPackDto): Promise<void> {
   busyPackId.value = pack.pack_id
   try {
     await api.purgeAgentPack(pack.pack_id, pack.revision)
+    dismissByKey(AGENT_PACKS_PANEL_KEY)
     await reloadPackInventory()
-    status.warning({
+    notify.warning({
       key: `agent-pack-uninstalled-${pack.pack_id}`,
       title: t('agentPack.uninstalledTitle'),
       message: t('agentPack.uninstalledMessage', { pack: pack.pack_id }),
@@ -159,7 +177,7 @@ async function uninstallPack(pack: AgentPackDto): Promise<void> {
     emit('uninstalled', pack.pack_id)
   } catch (error) {
     notify.error(error, {
-      key: `agent-pack-uninstall-${pack.pack_id}`,
+      key: AGENT_PACKS_PANEL_KEY,
       title: t('agentPack.uninstallFailed'),
       source: 'AgentPack',
     })
@@ -169,14 +187,23 @@ async function uninstallPack(pack: AgentPackDto): Promise<void> {
 }
 
 onMounted(() => { void reloadPackInventory() })
-watch(canAccessBackend, ready => { if (ready) void reloadPackInventory(); else cancelInventoryRead() })
-onBeforeUnmount(cancelInventoryRead)
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready) {
+    if (!wasReady) dismissByKey(AGENT_PACKS_PANEL_KEY)
+    void reloadPackInventory()
+  } else {
+    cancelInventoryRead()
+  }
+})
+onBeforeUnmount(() => {
+  cancelInventoryRead()
+  dismissByKey(AGENT_PACKS_PANEL_KEY)
+})
 
 defineExpose({ reloadPackInventory })
 </script>
 
 <template>
-  <div v-if="inventoryFailure.error.value" role="alert" class="agent-pack-error"><p>{{ inventoryFailure.error.value.message }}</p><p v-if="inventoryFailure.error.value.details">{{ inventoryFailure.error.value.details }}</p><p v-if="inventoryFailure.error.value.traceId">trace_id: {{ inventoryFailure.error.value.traceId }}</p><UiButton variant="outline" size="sm" :disabled="inventoryLoading || !canAccessBackend" @click="reloadPackInventory">{{ t('settings.retry') }}</UiButton></div>
   <section class="agent-pack-status-band" data-testid="graph-seed-pack-status">
     <PackageCheck class="agent-pack-status-icon" aria-hidden="true" />
     <div class="agent-pack-status-copy">
@@ -227,7 +254,7 @@ defineExpose({ reloadPackInventory })
       </UiButton>
     </div>
   </section>
-  <details v-if="installedAgentPacks.length > 0 || inventoryFailure.error.value" class="agent-pack-inventory" data-testid="installed-agent-packs">
+  <details v-if="installedAgentPacks.length > 0" class="agent-pack-inventory" data-testid="installed-agent-packs">
     <summary class="agent-pack-inventory-head">
       <ChevronRight :size="14" class="agent-pack-inventory-chevron" aria-hidden="true" />
       <strong>{{ t('agentPack.installedTitle') }}</strong>

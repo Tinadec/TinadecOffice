@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArchiveRestore, FolderOpen, MessageSquare, Trash2 } from '@lucide/vue'
+import { ArchiveRestore, FolderOpen, MessageSquare, RefreshCw, Trash2 } from '@lucide/vue'
 import { generatedApi, type ProjectDto } from '@/generated/client'
 import type { SessionDto } from '@/api'
 import { UiButton } from '@/components/ui'
@@ -10,15 +10,18 @@ import { selectionKey } from '@/lib/storageScope'
 import { loadSessionCatalog } from '@/lib/sessionRoster'
 import { toErrorState } from '@/composables/useErrorState'
 import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
+
+const ARCHIVE_TRASH_LOAD_KEY = 'archive-trash-load'
 
 const { t } = useI18n()
-const { confirm, notify } = useNotifications()
+const { confirm, notify, dismissByKey } = useNotifications()
 
-const { canAccessBackend, reason: hostReason } = useHostAccess()
+const { canAccessBackend } = useHostAccess()
 const loading = ref(false)
-const loadErrors = ref<string[]>([])
 let generation = 0
 let controller: AbortController | null = null
+const activeProjects = ref<ProjectDto[]>([])
 const archivedProjects = ref<ProjectDto[]>([])
 const archivedSessions = ref<SessionDto[]>([])
 const trashedProjects = ref<ProjectDto[]>([])
@@ -29,41 +32,89 @@ async function load() {
   if (!canAccessBackend.value) return
   const read = ++generation
   controller?.abort()
-  const request = new AbortController(); controller = request
-  loading.value = true; loadErrors.value = []
+  const request = new AbortController()
+  controller = request
+  loading.value = true
+  const rawErrors: unknown[] = []
+  const scopeWarnings: string[] = []
   const report = (error: unknown) => {
-    if (read !== generation || request.signal.aborted) return
-    const failure = toErrorState(error, t('settings.loadArchiveFailed'))
-    loadErrors.value.push([failure.message, failure.details, failure.traceId ? 'trace_id: ' + failure.traceId : ''].filter(Boolean).join('\n'))
+    if (read !== generation || request.signal.aborted || isAbortError(error)) return
+    rawErrors.push(error)
   }
   const lists = [activeProjects, archivedProjects, trashedProjects]
   try {
     await Promise.allSettled([
-      ...(['active', 'archived', 'trashed'] as const).map((lifecycle, index) => generatedApi.listProjects(lifecycle, { signal: request.signal }).then(rows => {
-        if (read === generation && !request.signal.aborted) lists[index]!.value = rows
-      }).catch(report)),
-      ...(['archived', 'trashed'] as const).map(lifecycle => {
+      ...(['active', 'archived', 'trashed'] as const).map((lifecycle, index) =>
+        generatedApi.listProjects(lifecycle, { signal: request.signal }).then((rows) => {
+          if (read === generation && !request.signal.aborted) lists[index]!.value = rows
+        }).catch(report),
+      ),
+      ...(['archived', 'trashed'] as const).map((lifecycle) => {
         const target = lifecycle === 'archived' ? archivedSessions : trashedSessions
-        return loadSessionCatalog({ lifecycleStatus: lifecycle, previous: target.value, signal: request.signal }).then(result => {
+        return loadSessionCatalog({ lifecycleStatus: lifecycle, previous: target.value, signal: request.signal }).then((result) => {
           if (read !== generation || request.signal.aborted) return
           target.value = result.rows
-          for (const failure of result.failures) loadErrors.value.push(failure.source.storageId + ': ' + failure.error.message + (failure.error.traceId ? ' · trace_id: ' + failure.error.traceId : ''))
+          for (const failure of result.failures) {
+            scopeWarnings.push(
+              failure.source.storageId + ': ' + failure.error.message + (failure.error.traceId ? ' · trace_id: ' + failure.error.traceId : ''),
+            )
+          }
         }).catch(report)
       }),
     ])
     if (read !== generation || request.signal.aborted) return
     const names = new Map<string, string>()
-    for (const project of [...activeProjects.value, ...archivedProjects.value, ...trashedProjects.value]) names.set(selectionKey({ ...project, storage_id: project.storage_id ?? 'user' }), project.name)
+    for (const project of [...activeProjects.value, ...archivedProjects.value, ...trashedProjects.value]) {
+      names.set(selectionKey({ ...project, storage_id: project.storage_id ?? 'user' }), project.name)
+    }
     projectNames.value = names
-  } finally { if (read === generation) loading.value = false }
+
+    if (rawErrors.length > 0) {
+      const extraDetails = [
+        ...rawErrors.slice(1).map((err) => {
+          const failure = toErrorState(err, t('settings.loadArchiveFailed'))
+          return [failure.message, failure.details, failure.traceId ? `trace_id: ${failure.traceId}` : ''].filter(Boolean).join('\n')
+        }),
+        ...scopeWarnings,
+      ].filter(Boolean).join('\n')
+      notify.error(rawErrors[0], {
+        key: ARCHIVE_TRASH_LOAD_KEY,
+        title: t('settings.loadArchiveFailed'),
+        ...(extraDetails ? { details: extraDetails } : {}),
+        action: { label: t('settings.retry'), run: () => load() },
+      })
+    } else if (scopeWarnings.length > 0) {
+      notify.warning({
+        key: ARCHIVE_TRASH_LOAD_KEY,
+        title: t('settings.loadArchiveFailed'),
+        message: scopeWarnings[0]!,
+        ...(scopeWarnings.length > 1 ? { details: scopeWarnings.slice(1).join('\n') } : {}),
+        action: { label: t('settings.retry'), run: () => load() },
+      })
+    } else {
+      dismissByKey(ARCHIVE_TRASH_LOAD_KEY)
+    }
+  } finally {
+    if (read === generation) loading.value = false
+  }
 }
-const activeProjects = ref<ProjectDto[]>([])
-watch(canAccessBackend, ready => {
-  if (ready) void load()
-  else { ++generation; controller?.abort(); loading.value = false }
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready) {
+    if (!wasReady) dismissByKey(ARCHIVE_TRASH_LOAD_KEY)
+    void load()
+  } else {
+    ++generation
+    controller?.abort()
+    loading.value = false
+  }
 })
 onMounted(() => { void load() })
-onBeforeUnmount(() => { ++generation; controller?.abort() })
+onBeforeUnmount(() => {
+  ++generation
+  controller?.abort()
+  dismissByKey(ARCHIVE_TRASH_LOAD_KEY)
+})
 
 const archivedEmpty = computed(() => archivedProjects.value.length === 0 && archivedSessions.value.length === 0)
 const trashEmpty = computed(() => trashedProjects.value.length === 0 && trashedSessions.value.length === 0)
@@ -78,7 +129,7 @@ async function restoreProject(project: ProjectDto) {
     await generatedApi.restoreProject(selectionKey(project))
     await load()
   } catch (err) {
-    notify.error(err, { title: t('settings.loadArchiveFailed') })
+    notify.error(err, { key: ARCHIVE_TRASH_LOAD_KEY, title: t('settings.loadArchiveFailed') })
   }
 }
 
@@ -87,7 +138,7 @@ async function restoreSession(session: SessionDto) {
     await generatedApi.restoreSession(selectionKey(session))
     await load()
   } catch (err) {
-    notify.error(err, { title: t('settings.loadArchiveFailed') })
+    notify.error(err, { key: ARCHIVE_TRASH_LOAD_KEY, title: t('settings.loadArchiveFailed') })
   }
 }
 
@@ -103,7 +154,7 @@ async function purgeProject(project: ProjectDto) {
     await generatedApi.purgeProject(selectionKey(project))
     await load()
   } catch (err) {
-    notify.error(err, { title: t('settings.deletePermanently') })
+    notify.error(err, { key: ARCHIVE_TRASH_LOAD_KEY, title: t('settings.deletePermanently') })
   }
 }
 
@@ -119,22 +170,33 @@ async function purgeSession(session: SessionDto) {
     await generatedApi.purgeSession(selectionKey(session))
     await load()
   } catch (err) {
-    notify.error(err, { title: t('settings.deletePermanently') })
+    notify.error(err, { key: ARCHIVE_TRASH_LOAD_KEY, title: t('settings.deletePermanently') })
   }
 }
 </script>
 
 <template>
   <div class="archive-trash-section">
-    <h2>{{ t('settings.archiveTrash') }}</h2>
-    <p class="archive-trash-subtitle">{{ t('settings.archiveTrashSubtitle') }}</p>
+    <div class="archive-trash-head">
+      <div>
+        <h2>{{ t('settings.archiveTrash') }}</h2>
+        <p class="archive-trash-subtitle">{{ t('settings.archiveTrashSubtitle') }}</p>
+      </div>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        :disabled="loading || !canAccessBackend"
+        :aria-label="t('common.refresh')"
+        @click="load"
+      >
+        <RefreshCw :size="14" />
+      </UiButton>
+    </div>
 
-    <p v-if="!canAccessBackend" role="status">{{ hostReason }}</p>
     <p v-if="loading" role="status">{{ t('common.loading') }}</p>
-    <div v-if="loadErrors.length" role="alert" class="archive-trash-failures"><p v-for="(error, index) in loadErrors" :key="index">{{ error }}</p><UiButton variant="outline" size="sm" :disabled="loading || !canAccessBackend" @click="load">{{ t('settings.retry') }}</UiButton></div>
     <section class="archive-trash-group">
       <h3><ArchiveRestore :size="14" /> {{ t('settings.archivedGroup') }}</h3>
-      <p v-if="!loading && !loadErrors.length && archivedEmpty" class="archive-trash-empty">{{ t('settings.emptyArchived') }}</p>
+      <p v-if="!loading && archivedEmpty" class="archive-trash-empty">{{ t('settings.emptyArchived') }}</p>
       <template v-else>
         <div v-if="archivedProjects.length" class="archive-trash-list-label">{{ t('settings.projectsGroup') }}</div>
         <div
@@ -166,7 +228,7 @@ async function purgeSession(session: SessionDto) {
 
     <section class="archive-trash-group">
       <h3><Trash2 :size="14" /> {{ t('settings.trashGroup') }}</h3>
-      <p v-if="!loading && !loadErrors.length && trashEmpty" class="archive-trash-empty">{{ t('settings.emptyTrash') }}</p>
+      <p v-if="!loading && trashEmpty" class="archive-trash-empty">{{ t('settings.emptyTrash') }}</p>
       <template v-else>
         <div v-if="trashedProjects.length" class="archive-trash-list-label">{{ t('settings.projectsGroup') }}</div>
         <div
@@ -207,8 +269,19 @@ async function purgeSession(session: SessionDto) {
   gap: 12px;
 }
 
-.archive-trash-subtitle {
+.archive-trash-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.archive-trash-head h2 {
   margin: 0;
+}
+
+.archive-trash-subtitle {
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--text-muted);
 }

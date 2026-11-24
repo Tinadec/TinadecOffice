@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Globe, KeyRound, Lock, LogOut, RefreshCw, Save, ShieldCheck } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSwitch, UiTextarea } from '@/components/ui'
+import { ApiError } from '@/lib/apiError'
 import { useHostAccess } from '@/lib/hostAccess'
 import { resolveWebGatewayBase } from '@/lib/hostConnection'
 import { useNotifications } from '@/composables/useNotifications'
+
+const WEB_ACCESS_KEY = 'web-access'
 
 interface WebAuthSettingsDto {
   allow_loopback_auto_login: boolean
@@ -22,13 +25,13 @@ interface WebAuthSettingsDto {
 }
 
 const { t } = useI18n()
-const { status: hostStatus } = useHostAccess()
-const { notify } = useNotifications()
+const { status: hostStatus, canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
 
 const loading = ref(false)
 const saving = ref(false)
-const loadError = ref<string | null>(null)
 const dirty = ref(false)
+const passwordValidationHint = ref<string | null>(null)
 
 const allowLoopbackAutoLogin = ref(true)
 const passwordConfigured = ref(false)
@@ -53,8 +56,8 @@ function parseList(raw: string): string[] {
 }
 
 async function loadSettings() {
+  if (!canAccessBackend.value) return
   loading.value = true
-  loadError.value = null
   try {
     const origin = resolveWebGatewayBase()
     const response = await fetch(`${origin}/api/v1/web-auth/settings`, {
@@ -62,8 +65,11 @@ async function loadSettings() {
       headers: { accept: 'application/json' },
     })
     if (!response.ok) {
-      loadError.value = t('webAccess.loadFailed')
-      return
+      const payload = (await response.json().catch(() => ({}))) as { detail?: string; message?: string; code?: string }
+      throw new ApiError(payload.detail || payload.message || t('webAccess.loadFailed'), response.status, {
+        code: payload.code,
+        detail: payload.detail,
+      })
     }
     const data = (await response.json()) as WebAuthSettingsDto
     allowLoopbackAutoLogin.value = data.allow_loopback_auto_login
@@ -76,8 +82,13 @@ async function loadSettings() {
     cloudflareAud.value = data.cloudflare_access_aud || ''
     trustProxy.value = data.trust_proxy || 'false'
     dirty.value = false
-  } catch {
-    loadError.value = t('webAccess.loadFailed')
+    dismissByKey(WEB_ACCESS_KEY)
+  } catch (err) {
+    notify.error(err, {
+      key: WEB_ACCESS_KEY,
+      title: t('webAccess.loadFailed'),
+      action: { label: t('common.retry'), run: () => loadSettings() },
+    })
   } finally {
     loading.value = false
   }
@@ -86,9 +97,10 @@ async function loadSettings() {
 async function saveSettings(revokeExisting = false) {
   if (saving.value) return
   if (newPassword.value && newPassword.value !== confirmPassword.value) {
-    notify.error(new Error(t('webAccess.passwordMismatch')))
+    passwordValidationHint.value = t('webAccess.passwordMismatch')
     return
   }
+  passwordValidationHint.value = null
   saving.value = true
   try {
     const origin = resolveWebGatewayBase()
@@ -114,17 +126,21 @@ async function saveSettings(revokeExisting = false) {
       },
       body: JSON.stringify(body),
     })
-    const payload = (await response.json().catch(() => ({}))) as WebAuthSettingsDto & { detail?: string; message?: string }
+    const payload = (await response.json().catch(() => ({}))) as WebAuthSettingsDto & { detail?: string; message?: string; code?: string }
     if (!response.ok) {
-      throw new Error(payload.detail || payload.message || t('webAccess.saveFailed'))
+      throw new ApiError(payload.detail || payload.message || t('webAccess.saveFailed'), response.status, {
+        code: payload.code,
+        detail: payload.detail,
+      })
     }
     passwordConfigured.value = payload.password_configured
     newPassword.value = ''
     confirmPassword.value = ''
     dirty.value = false
+    dismissByKey(WEB_ACCESS_KEY)
     notify.success(revokeExisting ? t('webAccess.sessionsRevoked') : t('webAccess.saved'))
   } catch (err) {
-    notify.error(err, { title: t('webAccess.saveFailed') })
+    notify.error(err, { key: WEB_ACCESS_KEY, title: t('webAccess.saveFailed') })
   } finally {
     saving.value = false
   }
@@ -141,18 +157,38 @@ async function clearOwnerPassword() {
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ clear_password: true }),
     })
-    if (!response.ok) throw new Error(t('webAccess.saveFailed'))
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { detail?: string; message?: string; code?: string }
+      throw new ApiError(payload.detail || payload.message || t('webAccess.saveFailed'), response.status, {
+        code: payload.code,
+        detail: payload.detail,
+      })
+    }
     passwordConfigured.value = false
+    dismissByKey(WEB_ACCESS_KEY)
     notify.success(t('webAccess.saved'))
   } catch (err) {
-    notify.error(err, { title: t('webAccess.saveFailed') })
+    notify.error(err, { key: WEB_ACCESS_KEY, title: t('webAccess.saveFailed') })
   } finally {
     saving.value = false
   }
 }
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(WEB_ACCESS_KEY)
+    void loadSettings()
+  }
+})
+
 onMounted(() => {
-  void loadSettings()
+  if (canAccessBackend.value) {
+    void loadSettings()
+  }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(WEB_ACCESS_KEY)
 })
 
 defineExpose({
@@ -173,16 +209,17 @@ defineExpose({
       <div class="web-access-badges">
         <UiBadge variant="outline">{{ t('webAccess.tierLabel', { tier: currentTier }) }}</UiBadge>
         <UiBadge variant="secondary">{{ currentAuthMethod }}</UiBadge>
+        <UiButton
+          variant="ghost"
+          size="sm"
+          :disabled="loading || !canAccessBackend"
+          :aria-label="t('common.refresh')"
+          @click="loadSettings"
+        >
+          <RefreshCw :size="14" />
+        </UiButton>
       </div>
     </header>
-
-    <div v-if="loadError" class="web-access-alert">
-      <span>{{ loadError }}</span>
-      <UiButton variant="outline" size="sm" :disabled="loading" @click="loadSettings">
-        <RefreshCw :size="14" />
-        <span>{{ t('common.retry') }}</span>
-      </UiButton>
-    </div>
 
     <div class="web-access-card">
       <div class="web-access-row">
@@ -211,7 +248,7 @@ defineExpose({
             type="password"
             autocomplete="new-password"
             :placeholder="t('webAccess.newPasswordPlaceholder')"
-            @update:model-value="dirty = true"
+            @update:model-value="dirty = true; passwordValidationHint = null"
           />
         </div>
         <div class="web-access-field">
@@ -222,10 +259,11 @@ defineExpose({
             type="password"
             autocomplete="new-password"
             :placeholder="t('webAccess.confirmPasswordPlaceholder')"
-            @update:model-value="dirty = true"
+            @update:model-value="dirty = true; passwordValidationHint = null"
           />
         </div>
       </div>
+      <p v-if="passwordValidationHint" class="web-access-field-hint" role="alert">{{ passwordValidationHint }}</p>
       <div v-if="passwordConfigured" class="web-access-inline-actions">
         <UiButton variant="ghost" size="sm" :disabled="saving" @click="clearOwnerPassword">
           {{ t('webAccess.clearPassword') }}
@@ -350,19 +388,14 @@ defineExpose({
 
 .web-access-badges {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.web-access-alert {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-section);
-  font-size: 12.5px;
+.web-access-field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-danger, #ef4444);
 }
 
 .web-access-card {

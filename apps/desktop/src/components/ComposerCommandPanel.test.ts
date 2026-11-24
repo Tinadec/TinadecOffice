@@ -145,6 +145,8 @@ vi.mock('@/components/ui', () => ({
 import ComposerCommandPanel from './ComposerCommandPanel.vue'
 import ModeInspectorDrawer from './modeEditor/ModeInspectorDrawer.vue'
 import { modeCatalogRevision, type ModeDraftState } from '@/composables/useAgentModesStore'
+import { __resetNotificationsForTests, useNotifications } from '@/composables/useNotifications'
+import { resetHostAccessForTests, setGatewayConnectionLiveness, setHostAccessStatus } from '@/lib/hostAccess'
 
 const SOLO_MODE: AgentModeTopologyDto = {
   id: 'mode-solo',
@@ -239,11 +241,16 @@ function mountPanel(props: Record<string, unknown> = {}, locale: 'zh-CN' | 'en' 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetNotificationsForTests()
+  resetHostAccessForTests()
+  setHostAccessStatus({ state: 'ready', managed: true })
   apiMocks.listAgentModeTopologies.mockResolvedValue([SOLO_MODE, RESEARCH_MODE])
 })
 
 afterEach(() => {
   wrappers.splice(0).forEach((w) => w.unmount())
+  __resetNotificationsForTests()
+  resetHostAccessForTests()
   document.body.innerHTML = ''
 })
 
@@ -414,6 +421,35 @@ describe('ComposerCommandPanel context-strategy submenu & session overlay', () =
     await flushPromises()
 
     expect(wrapper.get('[data-testid="command-panel-context-strategy"]').text()).toContain('轻量直通 (direct)')
+  })
+
+  it('never renders a red alert banner inside the menu on catalog failure, routes to composer-command-catalog, and recovers on canAccessBackend', async () => {
+    const { items } = useNotifications()
+    apiMocks.listAgentModeTopologies.mockRejectedValueOnce(new Error('Catalog service error'))
+
+    const wrapper = mountPanel({ initialPage: 'mode', modeVersionId: null }, 'en')
+    await flushPromises()
+
+    // Zero wild red alert bars inside the command palette menu
+    expect(wrapper.find('.command-panel-feedback').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+
+    // Calm minimal empty state + Retry button rendered inside the menu
+    expect(wrapper.find('[data-testid="command-panel-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="command-panel-retry"]').exists()).toBe(true)
+
+    // Error routed to Dynamic Island notification with key 'composer-command-catalog'
+    expect(items.value.some((n) => n.key === 'composer-command-catalog' && n.level === 'error')).toBe(true)
+
+    // Simulate Gateway disconnect -> reconnect (`canAccessBackend`: false -> true)
+    apiMocks.listAgentModeTopologies.mockResolvedValueOnce([SOLO_MODE, RESEARCH_MODE])
+    setGatewayConnectionLiveness(true, false)
+    await flushPromises()
+    setGatewayConnectionLiveness(true, true)
+    await flushPromises()
+
+    expect(items.value.some((n) => n.key === 'composer-command-catalog')).toBe(false)
+    expect(wrapper.findAll('.mode-selector-item')).toHaveLength(2)
   })
 })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, RefreshCw, Save, Trash2, Webhook } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSelectField } from '@/components/ui'
@@ -12,15 +12,17 @@ import {
 import { scopedApi } from '@/lib/storageScope'
 import { useNotifications } from '@/composables/useNotifications'
 import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
 
 const api = scopedApi(baseApi, () => 'user')
+const LIFECYCLE_HOOKS_KEY = 'lifecycle-hooks'
 
 const emit = defineEmits<{
   changed: []
 }>()
 
 const { t } = useI18n()
-const { notify } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
 const { canAccessBackend } = useHostAccess()
 
 const activeScope = ref<LifecycleHookScope>('workspace')
@@ -30,7 +32,7 @@ const baselineJson = ref('[]')
 const revision = ref<number | null>(null)
 const loading = ref(false)
 const saving = ref(false)
-const loadError = ref<string | null>(null)
+const loadFailed = ref(false)
 
 const eventOptions = computed(() => [
   { value: 'PreToolUse', label: t('settings.lifecycleHooks.eventPreToolUse') },
@@ -67,7 +69,6 @@ function newHookId(): string {
 async function loadHooks() {
   if (!canAccessBackend.value || typeof api.listLifecycleHooks !== 'function') return
   loading.value = true
-  loadError.value = null
   try {
     const doc = await api.listLifecycleHooks({ scope: activeScope.value })
     const list = Array.isArray(doc?.hooks) ? doc.hooks.map(normalizeHook) : []
@@ -75,8 +76,16 @@ async function loadHooks() {
     baselineJson.value = JSON.stringify(list)
     revision.value = typeof doc?.revision === 'number' ? doc.revision : null
     workspaceRoot.value = doc?.workspace_root ?? null
+    loadFailed.value = false
+    dismissByKey(LIFECYCLE_HOOKS_KEY)
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : String(err)
+    if (!isAbortError(err)) {
+      loadFailed.value = true
+      notify.error(err, {
+        key: LIFECYCLE_HOOKS_KEY,
+        action: { label: t('settings.retry'), run: () => loadHooks() },
+      })
+    }
   } finally {
     loading.value = false
   }
@@ -135,23 +144,31 @@ async function saveHooks() {
     hooks.value = nextList
     baselineJson.value = JSON.stringify(nextList)
     revision.value = typeof saved?.revision === 'number' ? saved.revision : revision.value
+    dismissByKey(LIFECYCLE_HOOKS_KEY)
     notify.success({ message: t('settings.lifecycleHooks.saved') })
     emit('changed')
   } catch (err) {
-    notify.error(err)
+    notify.error(err, { key: LIFECYCLE_HOOKS_KEY })
   } finally {
     saving.value = false
   }
 }
 
-watch(canAccessBackend, (ready) => {
-  if (ready) void loadHooks()
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(LIFECYCLE_HOOKS_KEY)
+    void loadHooks()
+  }
 })
 
 onMounted(() => {
   if (canAccessBackend.value) {
     void loadHooks()
   }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(LIFECYCLE_HOOKS_KEY)
 })
 
 defineExpose({ reload: loadHooks })
@@ -226,13 +243,15 @@ defineExpose({ reload: loadHooks })
       </div>
     </header>
 
-    <div v-if="loadError" class="lh-error" role="alert">
-      <span>{{ loadError }}</span>
-      <UiButton size="sm" variant="outline" @click="loadHooks">{{ t('settings.retry') }}</UiButton>
-    </div>
-
-    <div v-else-if="hooks.length === 0" class="lh-empty quiet">
-      {{ t('settings.lifecycleHooks.empty') }}
+    <div v-if="hooks.length === 0" class="lh-empty quiet">
+      <span>{{ t('settings.lifecycleHooks.empty') }}</span>
+      <UiButton
+        v-if="loadFailed && !loading"
+        size="sm"
+        variant="outline"
+        :disabled="!canAccessBackend || loading"
+        @click="loadHooks"
+      >{{ t('settings.retry') }}</UiButton>
     </div>
 
     <div v-else class="lh-list" role="list">
@@ -408,19 +427,11 @@ defineExpose({ reload: loadHooks })
   font-weight: 500;
 }
 
-.lh-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent-danger, #ef4444) 35%, var(--border-muted));
-  color: var(--accent-danger, #ef4444);
-  font-size: 12px;
-}
-
 .lh-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 14px 8px;
   text-align: center;
 }

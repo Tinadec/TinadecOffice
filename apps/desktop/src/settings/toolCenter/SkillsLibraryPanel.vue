@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronDown, GitCommitHorizontal, Package, Plus, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { UiBadge, UiButton, UiDropdownMenu, UiInput, UiSwitch } from '@/components/ui'
 import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
-import { toErrorState } from '@/composables/useErrorState'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
 import type { ToolSkillResource } from '@/settings/toolSettings'
 import {
   ecosystemDisplayLabel,
@@ -19,6 +20,8 @@ import {
 import SkillDetailDrawer from './SkillDetailDrawer.vue'
 import SkillInstallModal, { type SkillInstallMode } from './SkillInstallModal.vue'
 
+const SKILLS_LIBRARY_KEY = 'skills-library'
+
 const props = defineProps<{
   projectId?: string
 }>()
@@ -29,14 +32,15 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { notify } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
+const { canAccessBackend } = useHostAccess()
 
 type ScopeFilter = 'all' | 'builtin' | 'user' | 'project'
 
 const skills = ref<ToolSkillResource[]>([])
 const loading = ref(false)
 const reloading = ref(false)
-const loadError = ref('')
+const loadFailed = ref(false)
 const search = ref('')
 const scopeFilter = ref<ScopeFilter>('all')
 const togglingId = ref('')
@@ -65,14 +69,24 @@ const filteredSkills = computed(() => {
 })
 
 async function refresh() {
+  if (!canAccessBackend.value) {
+    loadFailed.value = true
+    return
+  }
   loading.value = true
-  loadError.value = ''
   try {
     const res = await api.listToolSkills(props.projectId || undefined)
     skills.value = res.skills ?? []
+    loadFailed.value = false
+    dismissByKey(SKILLS_LIBRARY_KEY)
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.skills')
-    loadError.value = errState.details || errState.message
+    if (!isAbortError(err)) {
+      loadFailed.value = true
+      notify.error(err, {
+        key: SKILLS_LIBRARY_KEY,
+        action: { label: t('common.retry'), run: () => refresh() },
+      })
+    }
   } finally {
     loading.value = false
   }
@@ -83,10 +97,11 @@ async function onReloadIndex() {
   try {
     const res = await api.reloadToolSkills(props.projectId || undefined)
     skills.value = res.skills ?? []
+    loadFailed.value = false
+    dismissByKey(SKILLS_LIBRARY_KEY)
     notify.success(t('toolsSettings.center.skills.reloaded'))
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.skills')
-    notify.error(errState.details || errState.message)
+    notify.error(err, { key: SKILLS_LIBRARY_KEY })
   } finally {
     reloading.value = false
   }
@@ -98,9 +113,9 @@ async function onToggleEnabled(skill: ToolSkillResource, next: boolean) {
     const updated = await api.setToolSkillEnabled(skill.resource_id, next, props.projectId || undefined)
     skills.value = skills.value.map(item => (item.resource_id === skill.resource_id ? updated : item))
     if (activeSkill.value?.resource_id === skill.resource_id) activeSkill.value = updated
+    dismissByKey(SKILLS_LIBRARY_KEY)
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.skills')
-    notify.error(errState.details || errState.message)
+    notify.error(err, { key: SKILLS_LIBRARY_KEY })
   } finally {
     togglingId.value = ''
   }
@@ -152,8 +167,19 @@ watch(() => props.projectId, () => {
   void refresh()
 })
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(SKILLS_LIBRARY_KEY)
+    void refresh()
+  }
+})
+
 onMounted(() => {
   void refresh()
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(SKILLS_LIBRARY_KEY)
 })
 
 defineExpose({ refresh })
@@ -221,14 +247,21 @@ defineExpose({ refresh })
       </div>
     </div>
 
-    <p v-if="loadError" class="error-hint" role="alert">{{ loadError }}</p>
-
     <div v-if="loading && !skills.length" class="tool-center-empty">
       {{ t('common.loading') }}
     </div>
     <div v-else-if="!filteredSkills.length" class="tool-center-empty">
       <Package :size="24" />
       <span>{{ t('toolsSettings.center.skills.empty') }}</span>
+      <UiButton
+        v-if="loadFailed && !skills.length"
+        size="sm"
+        variant="outline"
+        :disabled="loading || !canAccessBackend"
+        @click="refresh"
+      >
+        {{ t('common.retry') }}
+      </UiButton>
     </div>
 
     <div v-else class="tool-center-card-grid">

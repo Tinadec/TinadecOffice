@@ -27,11 +27,13 @@ import {
 } from '@lucide/vue'
 import TerminalView from './TerminalView.vue'
 import { useTerminal, type TerminalInstance } from '@/composables/useTerminal'
-import { useNotifications } from '@/composables/useNotifications'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
+
+const TERMINAL_CREATE_KEY = 'terminal-create'
 
 const { t, te } = useI18n()
 const shellLabel = (shell: { id: string; label: string }) => (te(`terminal.shellName.${shell.id}`) ? t(`terminal.shellName.${shell.id}`) : shell.label)
-const { notify } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
 
 const props = defineProps<{
   /** Working directory for new terminals */
@@ -60,7 +62,7 @@ const {
 
 // Space exposes only agent terminals established for this session's runs.
 // Filtering a view never kills the underlying terminal or creates a local shell.
-const spaceRuns = inject<ComputedRef<ReadonlySet<string>>>('space:terminal-runs')
+const spaceRuns = inject<ComputedRef<ReadonlySet<string>> | undefined>('space:terminal-runs', undefined)
 const terminals = computed(() => spaceRuns
   ? allTerminals.value.filter(instance => instance.sourceKind === 'agent' && instance.runId && spaceRuns.value.has(instance.runId))
   : allTerminals.value)
@@ -92,6 +94,46 @@ const localTerminalAvailable = computed(() => !spaceRuns && isTerminalAvailable(
 
 // ---- Actions ----
 
+let lastReportedCreationError: { message: string; retryable: boolean } | null = null
+
+function reportTerminalCreationError(fallbackError?: unknown): void {
+  if (spaceRuns) return
+  if (fallbackError) {
+    notify.error(fallbackError, {
+      key: TERMINAL_CREATE_KEY,
+      title: t('terminal.createFailed'),
+      source: 'terminal',
+      action: { label: t('terminal.retry'), run: () => handleNewTerminal(activeTerminal.value?.shellId) },
+    })
+    return
+  }
+  const errDetail = creationError.value?.message
+  const message = errDetail
+    ? t('terminal.createFailedWith', { error: errDetail })
+    : t('terminal.createFailed')
+  notify.error(message, {
+    key: TERMINAL_CREATE_KEY,
+    title: t('terminal.createFailed'),
+    source: 'terminal',
+    ...(isConnectionLevelError(errDetail) ? { category: 'connection' } : {}),
+    ...(creationError.value?.retryable !== false
+      ? { action: { label: t('terminal.retry'), run: () => handleNewTerminal(activeTerminal.value?.shellId) } }
+      : {}),
+  })
+}
+
+watch(creationError, (errObj) => {
+  if (!errObj) {
+    lastReportedCreationError = null
+    dismissByKey(TERMINAL_CREATE_KEY)
+    return
+  }
+  if (!spaceRuns && errObj !== lastReportedCreationError) {
+    lastReportedCreationError = errObj
+    reportTerminalCreationError()
+  }
+})
+
 /**
  * Create a new terminal with the given shell profile.
  */
@@ -108,9 +150,18 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
     })
     
     if (!result) {
-      notify.error(t('terminal.createFailed'))
+      if (creationError.value && creationError.value !== lastReportedCreationError) {
+        lastReportedCreationError = creationError.value
+        reportTerminalCreationError()
+      } else if (!creationError.value) {
+        reportTerminalCreationError()
+      }
       return
     }
+
+    lastReportedCreationError = null
+    clearCreationError()
+    dismissByKey(TERMINAL_CREATE_KEY)
     
     // Fit after creation
     await nextTick()
@@ -119,7 +170,7 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
       setTimeout(() => focusTerminal(activeTerminalId.value!), 100)
     }
   } catch (err) {
-    notify.error(err, { title: t('terminal.createFailed') })
+    reportTerminalCreationError(err)
   }
 }
 
@@ -144,15 +195,23 @@ async function handleRestart(id: string): Promise<void> {
       title: oldInstance?.title ?? t('terminal.defaultTitle'),
     })
     if (!result) {
-      notify.error(t('terminal.createFailed'))
+      if (creationError.value && creationError.value !== lastReportedCreationError) {
+        lastReportedCreationError = creationError.value
+        reportTerminalCreationError()
+      } else if (!creationError.value) {
+        reportTerminalCreationError()
+      }
       return
     }
+    lastReportedCreationError = null
+    clearCreationError()
+    dismissByKey(TERMINAL_CREATE_KEY)
     await nextTick()
     if (activeTerminalId.value) {
       fitTerminal(activeTerminalId.value)
     }
   } catch (err) {
-    notify.error(err, { title: t('terminal.createFailed') })
+    reportTerminalCreationError(err)
   }
 }
 
@@ -289,6 +348,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  dismissByKey(TERMINAL_CREATE_KEY)
   document.removeEventListener('click', handleDocumentClick)
   document.removeEventListener('keydown', handleKeydown)
 })
@@ -400,32 +460,22 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
         </div>
       </div>
 
-      <!-- Persistent reason the panel has no shell (a failed create is not a no-op) -->
-      <div v-if="!spaceRuns && creationError" class="terminal-error" role="alert">
-        <span class="terminal-error-text">
-          {{ t('terminal.createFailedWith', { error: creationError.message }) }}
-        </span>
-        <button
-          v-if="creationError.retryable"
-          class="terminal-error-btn"
-          @click="handleNewTerminal(activeTerminal?.shellId)"
-        >
-          {{ t('terminal.retry') }}
-        </button>
-        <button class="terminal-error-close" :aria-label="t('terminal.dismiss')" @click="clearCreationError()">
-          <X :size="12" />
-        </button>
-      </div>
-
       <!-- Terminal content area -->
       <div class="terminal-content">
         <!-- Empty state -->
         <div v-if="!hasTerminals" class="terminal-empty">
           <TerminalSquare :size="32" />
           <p>{{ t('terminal.emptyHint') }}</p>
-          <button v-if="localTerminalAvailable" class="terminal-empty-btn" @click="handleNewTerminal()">
-            <Plus :size="14" />
-            <span>{{ t('terminal.newTerminal') }}</span>
+          <button
+            v-if="localTerminalAvailable"
+            type="button"
+            class="terminal-empty-btn"
+            data-testid="terminal-empty-action"
+            @click="handleNewTerminal()"
+          >
+            <RotateCcw v-if="creationError?.retryable" :size="14" />
+            <Plus v-else :size="14" />
+            <span>{{ creationError?.retryable ? t('terminal.retry') : t('terminal.newTerminal') }}</span>
           </button>
         </div>
 
@@ -695,60 +745,6 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   height: 1px;
   background: var(--border-muted);
   margin: 4px 0;
-}
-
-/* ---- Creation error strip ---- */
-/* A descendant row, never a material root: it consumes the inherited surface token
-   and the fixed semantic error colour, and adds no second backdrop-filter. */
-.terminal-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  flex-shrink: 0;
-  background: var(--surface-section);
-  border-bottom: 1px solid var(--border-default);
-  font-size: 11.5px;
-  color: var(--text-error);
-}
-
-.terminal-error-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-error-btn,
-.terminal-error-close {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-family: inherit;
-  color: var(--text-secondary);
-  background: var(--bg-button);
-  border: 1px solid var(--border-default);
-  border-radius: 5px;
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.terminal-error-close {
-  padding: 2px;
-  background: transparent;
-  border-color: transparent;
-}
-
-.terminal-error-btn:hover {
-  background: var(--bg-button-hover);
-  color: var(--text-primary);
-}
-
-.terminal-error-close:hover {
-  color: var(--text-error);
 }
 
 /* ---- Content area ---- */

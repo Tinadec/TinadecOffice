@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Activity, AlertTriangle, KeyRound, Pencil, Plus, Server, Trash2, Wrench } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiSheet, UiSwitch } from '@/components/ui'
 import { api, type ImportMcpJsonResultDto, type McpServerTestResultDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
-import { toErrorState } from '@/composables/useErrorState'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
 import type { ToolMcpResource } from '@/settings/toolSettings'
 import {
   getSecurityWarnings,
@@ -15,16 +16,19 @@ import {
 } from './mcpFormUtils'
 import McpEditorModal from './McpEditorModal.vue'
 
+const MCP_SERVERS_KEY = 'mcp-servers'
+
 const props = defineProps<{
   projectId?: string
 }>()
 
 const { t } = useI18n()
-const { notify } = useNotifications()
+const { notify, dismissByKey } = useNotifications()
+const { canAccessBackend } = useHostAccess()
 
 const servers = ref<ToolMcpResource[]>([])
 const loading = ref(false)
-const loadError = ref('')
+const loadFailed = ref(false)
 const search = ref('')
 const filter = ref<'all' | 'enabled' | 'disabled'>('all')
 const modalOpen = ref(false)
@@ -52,13 +56,23 @@ const filteredServers = computed(() => {
 const drawerTestResult = computed(() => (drawerServer.value ? testResults.value[drawerServer.value.id] ?? null : null))
 
 async function refresh() {
+  if (!canAccessBackend.value) {
+    loadFailed.value = true
+    return
+  }
   loading.value = true
-  loadError.value = ''
   try {
     servers.value = await api.listConfiguredMcpServers(props.projectId || undefined)
+    loadFailed.value = false
+    dismissByKey(MCP_SERVERS_KEY)
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.mcp')
-    loadError.value = errState.details || errState.message
+    if (!isAbortError(err)) {
+      loadFailed.value = true
+      notify.error(err, {
+        key: MCP_SERVERS_KEY,
+        action: { label: t('common.retry'), run: () => refresh() },
+      })
+    }
   } finally {
     loading.value = false
   }
@@ -68,8 +82,19 @@ watch(() => props.projectId, () => {
   void refresh()
 })
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(MCP_SERVERS_KEY)
+    void refresh()
+  }
+})
+
 onMounted(() => {
   void refresh()
+})
+
+onBeforeUnmount(() => {
+  dismissByKey(MCP_SERVERS_KEY)
 })
 
 function openCreate() {
@@ -87,9 +112,9 @@ async function onToggleEnabled(server: ToolMcpResource, next: boolean) {
   try {
     const updated = await api.setMcpServerEnabled(server.id, next, props.projectId || undefined)
     servers.value = servers.value.map(item => (item.id === server.id ? updated : item))
+    dismissByKey(MCP_SERVERS_KEY)
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.mcp')
-    notify.error(errState.details || errState.message)
+    notify.error(err, { key: MCP_SERVERS_KEY })
   } finally {
     togglingId.value = ''
   }
@@ -101,14 +126,14 @@ async function onTestConnection(server: ToolMcpResource, openDrawer = false) {
     const res = await api.testMcpServer(server.id, props.projectId || undefined)
     testResults.value = { ...testResults.value, [server.id]: res }
     if (res.status === 'connected') {
+      dismissByKey(MCP_SERVERS_KEY)
       notify.success(t('toolsSettings.center.mcp.testSuccess', { count: res.tool_count }))
     } else {
-      notify.error(res.reason || t('toolsSettings.center.mcp.testFailed'))
+      notify.error(res.reason || t('toolsSettings.center.mcp.testFailed'), { key: MCP_SERVERS_KEY })
     }
     if (openDrawer) drawerServer.value = server
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.mcp')
-    notify.error(errState.details || errState.message || t('toolsSettings.center.mcp.testFailed'))
+    notify.error(err, { key: MCP_SERVERS_KEY, title: t('toolsSettings.center.mcp.testFailed') })
   } finally {
     testingId.value = ''
   }
@@ -120,9 +145,9 @@ async function onDelete(server: ToolMcpResource) {
     await api.deleteMcpServer(server.id, props.projectId || undefined)
     servers.value = servers.value.filter(item => item.id !== server.id)
     if (drawerServer.value?.id === server.id) drawerServer.value = null
+    dismissByKey(MCP_SERVERS_KEY)
   } catch (err) {
-    const errState = toErrorState(err, 'toolsSettings.mcp')
-    notify.error(errState.details || errState.message)
+    notify.error(err, { key: MCP_SERVERS_KEY })
   }
 }
 
@@ -204,14 +229,21 @@ defineExpose({ refresh })
       </UiButton>
     </div>
 
-    <p v-if="loadError" class="error-hint" role="alert">{{ loadError }}</p>
-
     <div v-if="loading && !servers.length" class="tool-center-empty">
       {{ t('common.loading') }}
     </div>
     <div v-else-if="!filteredServers.length" class="tool-center-empty">
       <Server :size="24" />
       <span>{{ t('toolsSettings.center.mcp.empty') }}</span>
+      <UiButton
+        v-if="loadFailed && !servers.length"
+        size="sm"
+        variant="outline"
+        :disabled="loading || !canAccessBackend"
+        @click="refresh"
+      >
+        {{ t('common.retry') }}
+      </UiButton>
     </div>
 
     <div v-else class="tool-center-card-grid">

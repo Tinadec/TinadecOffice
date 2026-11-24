@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RefreshCw } from '@lucide/vue'
 import { UiBadge, UiButton, UiSelectField } from '@/components/ui'
-import type { AgentDefinitionDto } from '@/api'
+import { api, type AgentDefinitionDto } from '@/api'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isAbortError } from '@/lib/isAbortError'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
 import {
   capabilityReason,
+  formatSettings,
   type SettingsIssue,
   type ToolCapabilities,
   type ToolJsonSchema,
@@ -13,6 +18,8 @@ import {
 } from '@/settings/toolSettings'
 
 const ToolJsonEditor = defineAsyncComponent(() => import('@/settings/sections/ToolJsonEditor.vue'))
+
+const TOOLS_ADVANCED_KEY = 'tools-advanced'
 
 const props = defineProps<{
   agentId: string
@@ -42,13 +49,100 @@ const emit = defineEmits<{
 }>()
 
 const { t, te } = useI18n()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const localDocument = ref<ToolSettingsDocument | null>(null)
+const localEffective = ref<ToolSettingsEffective | null>(null)
+const localCapabilities = ref<ToolCapabilities | null>(null)
+const reloading = ref(false)
+let reloadGeneration = 0
+
+const resolvedDocument = computed(() => props.document ?? localDocument.value)
+const resolvedEffective = computed(() => props.effective ?? localEffective.value)
+const resolvedCapabilities = computed(() => props.capabilities ?? localCapabilities.value)
+
+async function reloadAdvanced() {
+  if (!canAccessBackend.value || reloading.value) return
+  const token = ++reloadGeneration
+  reloading.value = true
+  try {
+    const agentArg = props.agentId || undefined
+    const [docRes, effRes, capRes] = await Promise.all([
+      agentArg ? api.getAgentToolSettings(agentArg) : api.getToolSettingsDefaults(),
+      api.getEffectiveToolSettings(agentArg).catch(() => null),
+      api.getToolCapabilities(agentArg).catch(() => null),
+    ])
+    if (token !== reloadGeneration) return
+    localDocument.value = docRes
+    localEffective.value = effRes
+    localCapabilities.value = capRes
+    if (!props.draft) {
+      emit('update:draft', formatSettings(docRes.settings ?? {}))
+    }
+    dismissByKey(TOOLS_ADVANCED_KEY)
+  } catch (err) {
+    if (token !== reloadGeneration || isAbortError(err)) return
+    notify.error(err, {
+      key: TOOLS_ADVANCED_KEY,
+      action: { label: t('common.retry'), run: () => reloadAdvanced() },
+    })
+  } finally {
+    if (token === reloadGeneration) reloading.value = false
+  }
+}
+
+watch(
+  () => [props.error, props.stale] as const,
+  ([errorText, isStale]) => {
+    if (errorText) {
+      notify.error(errorText, {
+        key: TOOLS_ADVANCED_KEY,
+        ...(isConnectionLevelError(errorText) || !canAccessBackend.value ? { category: 'connection' } : {}),
+        action: { label: t('common.retry'), run: () => reloadAdvanced() },
+      })
+    } else if (isStale) {
+      notify.warning({
+        key: TOOLS_ADVANCED_KEY,
+        message: t('toolsSettings.stale'),
+      })
+    } else {
+      dismissByKey(TOOLS_ADVANCED_KEY)
+    }
+  },
+  { immediate: true },
+)
+
+watch(() => props.document, (doc) => {
+  if (doc) localDocument.value = null
+})
+
+watch(() => props.agentId, () => {
+  localDocument.value = null
+  localEffective.value = null
+  localCapabilities.value = null
+})
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey(TOOLS_ADVANCED_KEY)
+    if (!props.document || props.error) {
+      void reloadAdvanced()
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  ++reloadGeneration
+  dismissByKey(TOOLS_ADVANCED_KEY)
+})
 
 const agentOptions = computed(() => [
   { value: '', label: t('toolsSettings.sharedDefaults') },
   ...props.agents.map(agent => ({ value: agent.id, label: agent.display_name || agent.slug || agent.id })),
 ])
 
-const diagnostics = computed(() => props.effective?.resource_diagnostics ?? [])
+const diagnostics = computed(() => resolvedEffective.value?.resource_diagnostics ?? [])
 
 function diagnosticText(item: { kind: string; status: string; reason?: string | null }): string {
   if (item.kind === 'mcp_program') {
@@ -62,12 +156,14 @@ function diagnosticText(item: { kind: string; status: string; reason?: string | 
 }
 
 const capabilityText = computed(() => {
-  const cap = props.capabilities?.capabilities
-  if (!cap) return capabilityReason(props.capabilities ? { reason: props.capabilities.reason ?? undefined } : undefined, { t, te }) || t('toolsSettings.unavailable')
+  const cap = resolvedCapabilities.value?.capabilities
+  if (!cap) return capabilityReason(resolvedCapabilities.value ? { reason: resolvedCapabilities.value.reason ?? undefined } : undefined, { t, te }) || t('toolsSettings.unavailable')
   const rg = cap.ripgrep?.available ? t('toolsSettings.detected') : t('toolsSettings.unavailable')
   const sb = cap.sandbox?.supported ? t('toolsSettings.detected') : t('toolsSettings.unavailable')
   return t('toolsSettings.capabilitySummary', { rg, sandbox: sb })
 })
+
+defineExpose({ reloadAdvanced })
 </script>
 
 <template>
@@ -93,7 +189,7 @@ const capabilityText = computed(() => {
           <UiSelectField
             :model-value="agentId"
             :options="agentOptions"
-            :disabled="loading"
+            :disabled="loading || reloading"
             @update:model-value="val => emit('update:agentId', String(val))"
           />
         </label>
@@ -106,8 +202,8 @@ const capabilityText = computed(() => {
     <div class="tools-command-bar tool-center-command-bar">
       <div class="tool-center-inline-row">
         <UiBadge v-if="schemaVersion" variant="outline">{{ t('toolsSettings.schemaVersion', { version: schemaVersion }) }}</UiBadge>
-        <UiBadge v-if="document?.revision !== undefined" variant="outline">
-          {{ t('toolsSettings.revision') }} #{{ document.revision }}
+        <UiBadge v-if="resolvedDocument?.revision !== undefined" variant="outline">
+          {{ t('toolsSettings.revision') }} #{{ resolvedDocument.revision }}
         </UiBadge>
         <UiBadge v-if="diff.length" variant="outline">
           {{ t('toolsSettings.diff', { count: diff.length }) }}
@@ -130,21 +226,33 @@ const capabilityText = computed(() => {
       </div>
     </div>
 
-    <p v-if="stale" class="error-hint" role="alert">{{ t('toolsSettings.stale') }}</p>
-    <p v-if="error" class="error-hint" role="alert">{{ error }}</p>
+    <div v-if="!resolvedDocument && !loading && !reloading" class="tool-center-empty">
+      <span>{{ t('toolsSettings.noSettings') }}</span>
+      <UiButton
+        size="sm"
+        variant="outline"
+        :disabled="!canAccessBackend || loading || reloading"
+        @click="reloadAdvanced"
+      >
+        <RefreshCw :size="14" />
+        {{ t('common.retry') }}
+      </UiButton>
+    </div>
 
-    <ul v-if="validationIssues.length" class="tool-center-validation-list" role="alert">
-      <li v-for="(issue, idx) in validationIssues" :key="idx">
-        <code>{{ issue.path }}</code>: {{ issue.message }}
-      </li>
-    </ul>
+    <template v-else>
+      <ul v-if="validationIssues.length" class="tool-center-validation-list" role="alert">
+        <li v-for="(issue, idx) in validationIssues" :key="idx">
+          <code>{{ issue.path }}</code>: {{ issue.message }}
+        </li>
+      </ul>
 
-    <ToolJsonEditor
-      :model-value="draft"
-      :schema="editorSchema"
-      :label="t('toolsSettings.advanced')"
-      @update:model-value="val => emit('update:draft', val)"
-      @save="emit('save')"
-    />
+      <ToolJsonEditor
+        :model-value="draft"
+        :schema="editorSchema"
+        :label="t('toolsSettings.advanced')"
+        @update:model-value="val => emit('update:draft', val)"
+        @save="emit('save')"
+      />
+    </template>
   </div>
 </template>

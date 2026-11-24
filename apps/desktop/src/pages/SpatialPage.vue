@@ -140,6 +140,7 @@ import {
   type UpdateProjectBoardTaskInput,
 } from '@/api'
 import { selectionIdentity } from '@/lib/storageScope'
+import { useHostAccess } from '@/lib/hostAccess'
 import { useNotifications } from '@/composables/useNotifications'
 import {
   buildSpatialSelectionPrompt,
@@ -160,7 +161,10 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { usePageTransition } from '@/composables/usePageTransition'
 
 const { t, te, locale } = useI18n()
-const { notify } = useNotifications()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
+
+const SPATIAL_TOPOLOGY_ERROR_KEY = 'spatial-topology-load'
 
 function resolveOptionalRoute(): RouteLocationNormalizedLoaded | null {
   try {
@@ -256,7 +260,6 @@ let surfaceObserver: ResizeObserver | null = null
 const gesturing = ref(false)
 const dragGuides = ref<SmartGuideLine[]>([])
 const topology = shallowRef<SessionTopologyDto | null>(null)
-const loadError = ref('')
 const loading = ref(false)
 const sessionKey = computed(() => c.selectedSessionId.value ?? `draft:${c.selectedProjectId.value ?? 'free'}`)
 const projectPath = computed(() =>
@@ -964,27 +967,44 @@ async function loadTopology() {
     return
   }
   const read = ++generation
-  topologyFlight = id
   topologyAbort?.abort()
-  topologyAbort = new AbortController()
+  const controller = new AbortController()
+  topologyAbort = controller
   if (!id) {
     topology.value = null
     loading.value = false
+    topologyFlight = null
+    dismissByKey(SPATIAL_TOPOLOGY_ERROR_KEY)
     return
   }
+  if (!canAccessBackend.value) {
+    loading.value = false
+    topologyFlight = null
+    return
+  }
+  topologyFlight = id
   loading.value = true
   try {
     const data = await api.getSessionTopology(
       id,
       { include_finished: true, max_runs: 40, max_tasks: 200 },
-      AbortSignal.any([topologyAbort.signal, AbortSignal.timeout(10000)]),
+      AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
     )
     if (!alive || read !== generation || id !== c.selectedSessionId.value) return
     if (data.session_id !== id) throw new Error(t('space.cluster.scopeMismatch'))
     topology.value = data
-    loadError.value = ''
+    dismissByKey(SPATIAL_TOPOLOGY_ERROR_KEY)
   } catch (error) {
-    if (alive && read === generation) loadError.value = error instanceof Error ? error.message : String(error)
+    if (alive && read === generation && !controller.signal.aborted) {
+      notify.error(error, {
+        title: t(topology.value ? 'space.cluster.stale' : 'space.cluster.loadFailed'),
+        key: SPATIAL_TOPOLOGY_ERROR_KEY,
+        action: {
+          label: t('space.retry'),
+          run: () => loadTopology(),
+        },
+      })
+    }
   } finally {
     if (alive && read === generation) {
       loading.value = false
@@ -1008,7 +1028,7 @@ function enterSession() {
   topologyFlight = null
   topologyDirty = false
   topology.value = null
-  loadError.value = ''
+  dismissByKey(SPATIAL_TOPOLOGY_ERROR_KEY)
   measuredHeights.clear()
   focusedRun.value = ''
   selectedId.value = null
@@ -1028,6 +1048,15 @@ function enterSession() {
   void nextTick(restoreViewport)
 }
 watch(sessionKey, enterSession)
+
+watch(canAccessBackend, (readyNow, wasReady) => {
+  if (readyNow && wasReady === false && ready.value) {
+    dismissByKey(SPATIAL_TOPOLOGY_ERROR_KEY)
+    void loadTopology()
+    void spatialProjectBoard.refresh()
+    void git.refresh()
+  }
+})
 
 function measureSurface() {
   const rect = surface.value?.getBoundingClientRect()
@@ -1068,6 +1097,7 @@ onBeforeUnmount(() => {
   alive = false
   generation++
   topologyAbort?.abort()
+  dismissByKey(SPATIAL_TOPOLOGY_ERROR_KEY)
   unsubscribe?.()
   clearTimeout(refreshTimer)
   if (pulseTimer !== null) clearTimeout(pulseTimer)
@@ -3024,19 +3054,16 @@ function collaboratorInitial(name: string): string {
             </button>
           </div>
 
-          <!-- Compact unobtrusive telemetry / stale recovery strip (only shown when topology/error/loading active) -->
+          <!-- Compact unobtrusive telemetry strip (only shown when topology/loading active) -->
           <div
-            v-if="topology || loadError || loading"
+            v-if="topology || loading"
             class="space-data-status"
-            :class="{ 'is-error': Boolean(loadError) }"
             role="status"
           >
-            <span v-if="topology && !loadError" :title="`${t('space.cluster.fetchedAt')} ${new Date(topology.generated_at).toLocaleTimeString(locale)}`">
+            <span v-if="topology" :title="`${t('space.cluster.fetchedAt')} ${new Date(topology.generated_at).toLocaleTimeString(locale)}`">
               {{ t('space.figma.statusSummary', { runs: topology.runs.length, tasks: topology.runs.reduce((n, r) => n + r.tasks.length, 0) }) }}
             </span>
             <span v-if="incomplete">{{ t('space.cluster.truncated') }}</span>
-            <span v-if="loadError">{{ t(topology ? 'space.cluster.stale' : 'space.cluster.loadFailed') }}: {{ loadError }}</span>
-            <button v-if="loadError" type="button" @click="loadTopology">{{ t('space.retry') }}</button>
             <span v-if="loading">{{ t('space.loading') }}</span>
           </div>
 
@@ -4123,21 +4150,6 @@ function collaboratorInitial(name: string): string {
   backdrop-filter: blur(12px);
   font-size: 11px;
   color: var(--text-secondary);
-}
-
-.space-data-status.is-error {
-  border-color: color-mix(in srgb, var(--accent-danger, #ef4444) 45%, var(--border-muted));
-  color: var(--accent-danger, #ef4444);
-}
-
-.space-data-status button {
-  border: 1px solid var(--border-muted);
-  border-radius: 999px;
-  padding: 1px 8px;
-  background: var(--surface-section);
-  color: var(--text-primary);
-  font-size: 11px;
-  cursor: pointer;
 }
 
 /* Collapsible Layers / Outline Drawer */

@@ -45,8 +45,16 @@ import {
 import { api } from '@/api'
 import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
+import { useHostAccess } from '@/lib/hostAccess'
+import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
+
+const COMPOSER_SEND_KEY = 'composer-send'
+const COMPOSER_SETTINGS_KEY = 'composer-settings'
+const COMPOSER_ATTACHMENT_KEY = 'composer-attachment'
 
 const { t, te } = useI18n()
+const { canAccessBackend } = useHostAccess()
+const { notify, dismissByKey } = useNotifications()
 const { runStatusLabel } = useStatusLabels()
 const router = useRouter()
 
@@ -151,13 +159,68 @@ const attachmentPreparing = ref(false)
  * they show as idle attachments until the upload starts (or the pick is abandoned).
  */
 const preparingFiles = ref<Array<{ key: string; name: string; size: number; type: string }>>([])
-const attachmentError = ref<string | null>(null)
 let disposed = false
 
 const queued = homeController.queuedMessages
 const activeRuns = homeController.activeRuns
-// 发送失败可见化（此前 invokeError 被写入但从未渲染，用户看不到失败原因）。
+// 发送失败归口灵动通知，不在输入框上方滞留野生错误条。
 const invokeError = computed(() => (homeController.invokeError as unknown as { value: string | null } | undefined)?.value ?? null)
+let sendErrorDraftSnapshot: string | null = null
+
+function clearControllerInvokeError() {
+  const refLike = homeController.invokeError as unknown as { value: string | null } | undefined
+  if (refLike && typeof refLike === 'object' && 'value' in refLike) {
+    refLike.value = null
+  }
+}
+
+function clearComposerErrorNotifications() {
+  sendErrorDraftSnapshot = null
+  clearControllerInvokeError()
+  dismissByKey(COMPOSER_SEND_KEY)
+  dismissByKey(COMPOSER_SETTINGS_KEY)
+  dismissByKey(COMPOSER_ATTACHMENT_KEY)
+}
+
+function isOfflineSendError(message: string): boolean {
+  if (!canAccessBackend.value) return true
+  if (message === t('home.sendError.offline') || message === t('home.sendError.recovering')) return true
+  return isConnectionLevelError(message)
+}
+
+watch(
+  invokeError,
+  (errText) => {
+    if (!errText) {
+      sendErrorDraftSnapshot = null
+      dismissByKey(COMPOSER_SEND_KEY)
+      return
+    }
+    sendErrorDraftSnapshot = props.modelValue
+    notify.error({
+      key: COMPOSER_SEND_KEY,
+      message: errText,
+      ...(isOfflineSendError(errText) ? { category: 'connection' } : {}),
+    })
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.settingsError,
+  (errText) => {
+    if (!errText) {
+      dismissByKey(COMPOSER_SETTINGS_KEY)
+      return
+    }
+    notify.error({
+      key: COMPOSER_SETTINGS_KEY,
+      message: errText,
+      ...(!canAccessBackend.value || isConnectionLevelError(errText) ? { category: 'connection' } : {}),
+    })
+  },
+  { immediate: true },
+)
 const steeringId = ref<string | null>(null)
 const steerTarget = ref('')
 
@@ -242,7 +305,13 @@ function manageModels() {
   requestSettingsSection('model')
   if (router.currentRoute.value.name !== 'settings') void router.push({ name: 'settings' })
 }
-watch(() => props.modelValue, (value) => {
+watch(() => props.modelValue, (value, previous) => {
+  if (value !== previous && (sendErrorDraftSnapshot === null || value !== sendErrorDraftSnapshot)) {
+    sendErrorDraftSnapshot = null
+    clearControllerInvokeError()
+    dismissByKey(COMPOSER_SEND_KEY)
+    dismissByKey(COMPOSER_SETTINGS_KEY)
+  }
   commandsDismissed.value = false
   if (!showPlusMenu.value && composerSlashQuery(value) !== null) commandPage.value = 'root'
   void refreshMentions()
@@ -418,6 +487,10 @@ function insertCommandTemplate(template: string) {
 function changeSpaceOptions(value: SpaceOptionsDto) { consumeSettingsSlash(); emit('update:spaceOptions', value) }
 
 function updateDraft(value: string) {
+  sendErrorDraftSnapshot = null
+  clearControllerInvokeError()
+  dismissByKey(COMPOSER_SEND_KEY)
+  dismissByKey(COMPOSER_SETTINGS_KEY)
   homeController.updateDraft(value)
   emit('update:modelValue', value)
 }
@@ -521,6 +594,10 @@ function acceptMention(entry: DirEntryView) {
 function onDraftInput(event: Event) {
   const el = event.target as HTMLTextAreaElement
   caretPos.value = el.selectionStart ?? el.value.length
+  sendErrorDraftSnapshot = null
+  clearControllerInvokeError()
+  dismissByKey(COMPOSER_SEND_KEY)
+  dismissByKey(COMPOSER_SETTINGS_KEY)
   emit('update:modelValue', el.value)
   autoResize()
 }
@@ -595,7 +672,7 @@ async function enqueueAttachableFiles(files: readonly AttachableFile[]) {
   if (!files.length || !canAttach.value) return
   const projectId = props.selectedProjectId
   const spatial = props.spatial
-  attachmentError.value = null
+  dismissByKey(COMPOSER_ATTACHMENT_KEY)
   attachmentPreparing.value = true
   if (!props.sessionId) {
     preparingFiles.value = files.map((file, index) => ({
@@ -612,7 +689,12 @@ async function enqueueAttachableFiles(files: readonly AttachableFile[]) {
     // send path creates the session, uploads them, then submits the message.
     await attachFiles(files, sessionId, { projectId })
   } catch (error) {
-    if (!disposed) attachmentError.value = `${t('commandPanel.attachmentError')} ${error instanceof Error ? error.message : String(error)}`
+    if (!disposed) {
+      notify.error(error, {
+        key: COMPOSER_ATTACHMENT_KEY,
+        title: t('commandPanel.attachmentError'),
+      })
+    }
   } finally {
     attachmentPreparing.value = false
     preparingFiles.value = []
@@ -848,6 +930,14 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    clearComposerErrorNotifications()
+    void defaultModel.load()
+    void agentModels.load()
+  }
+})
+
 onMounted(() => {
   void defaultModel.load()
   void agentModels.load()
@@ -857,7 +947,13 @@ onMounted(() => {
   void refreshMentions()
 })
 
-onUnmounted(() => { disposed = true; document.removeEventListener('click', handleClickOutside) })
+onUnmounted(() => {
+  disposed = true
+  document.removeEventListener('click', handleClickOutside)
+  dismissByKey(COMPOSER_SEND_KEY)
+  dismissByKey(COMPOSER_SETTINGS_KEY)
+  dismissByKey(COMPOSER_ATTACHMENT_KEY)
+})
 
 function submit(pref?: DispatchPref, asText = false) {
   if (props.settingsSaving || modelSaving.value || attachmentPreparing.value) return
@@ -867,6 +963,7 @@ function submit(pref?: DispatchPref, asText = false) {
   if (commandPanelOpen.value) closeCommandPanel()
   if (props.hero) {
     // Start-page send: full welcome payload, no dispatch menu.
+    clearComposerErrorNotifications()
     resetTextareaHeight()
     emit('welcome-submit', {
       content,
@@ -883,6 +980,7 @@ function submit(pref?: DispatchPref, asText = false) {
     return
   }
   showAskMenu.value = false
+  clearComposerErrorNotifications()
   resetTextareaHeight()
   emit('submit', {
     dispatch_mode: p,
@@ -944,9 +1042,6 @@ function confirmSteer(id: string, interrupt = false) {
 
 <template>
   <div class="composer" :class="{ 'composer--hero': hero }">
-    <div v-if="invokeError" class="composer-error" role="alert">{{ invokeError }}</div>
-    <div v-if="settingsError && !commandPanelOpen" class="composer-error" role="alert">{{ settingsError }}</div>
-    <div v-if="attachmentError" class="composer-error" role="alert">{{ attachmentError }}</div>
     <div v-if="meetingModelOverride || enabledSpaceLabels.length" class="composer-settings-summary">
       <button
         v-if="meetingModelOverride"
@@ -1530,18 +1625,6 @@ function confirmSteer(id: string, interrupt = false) {
 .composer-settings-summary button { display: inline-flex; align-items: center; background: var(--surface-section); border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 9px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-secondary); cursor: pointer; max-width: 100%; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)), color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .composer-settings-summary button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .composer-settings-summary .composer-pinned-model.is-unavailable { color: var(--accent-warning); border-color: color-mix(in srgb, var(--accent-warning) 40%, transparent); }
-.composer-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 8px;
-  padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent-danger, #ef4444) 35%, transparent);
-  border-radius: var(--radius-card, 10px);
-  background: color-mix(in srgb, var(--accent-danger, #ef4444) 8%, transparent);
-  color: var(--accent-danger, #ef4444);
-  font-size: 13px;
-}
 .composer-queued {
   display: flex;
   flex-direction: column;
