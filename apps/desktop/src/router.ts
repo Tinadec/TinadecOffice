@@ -10,6 +10,16 @@ const router = createRouter({
       component: () => import('./pages/HomePage.vue'),
     },
     {
+      path: '/board',
+      name: 'board',
+      component: () => import('./pages/GlobalBoardPage.vue'),
+    },
+    {
+      path: '/projects/:projectId',
+      name: 'project-hub',
+      component: () => import('./pages/ProjectHubPage.vue'),
+    },
+    {
       path: '/space',
       name: 'space',
       component: () => import('./pages/SpatialPage.vue'),

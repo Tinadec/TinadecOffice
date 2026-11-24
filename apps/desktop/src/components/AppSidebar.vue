@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useWorkspaceList, freeWorkspaceKey, recentSessionRows, recentWorkspaceSessions, type SidebarSection } from '@/composables/useWorkspaceList'
 import { ACTIVITY_LIMIT, useRecentActivity, type ActivityCandidate } from '@/composables/useRecentActivity'
 import { presentActivity, type ActivityFacts } from '@/lib/recentActivity'
 import { workspaceIcons, type WorkspaceLoadState } from '@/lib/workspaces'
 import { selectionKey, selectionIdentity, selectedStorage } from '@/lib/storageScope'
+import { useHostAccess } from '@/lib/hostAccess'
+import { filterOrdinarySidebarSessions } from '@/components/board/boardSessionFilter'
 import {
   Archive,
   ArrowRightLeft,
   ChevronRight,
   FolderOpen,
   GripVertical,
+  ListChecks,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
@@ -31,7 +35,7 @@ import {
   ArrowDown,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import type { ProjectDto, SessionDto } from '../api'
+import { api, type BoardEventStreamHandle, type ProjectDto, type SessionDto } from '../api'
 import BrandLogo from '@/components/BrandLogo.vue'
 import SidebarActivityCard from '@/components/SidebarActivityCard.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
@@ -79,6 +83,7 @@ const emit = defineEmits<{
   'go-settings': []
   'go-personal': []
   'go-companion-center': []
+  'go-board': []
   /** Companion-domain shortcuts: which view the centre should show next. */
   'companion-nav': [target: 'all' | 'attention' | 'settings']
   'change-view': [mode: 'flat' | 'space']
@@ -199,7 +204,7 @@ const migrationSession = ref<MenuTarget | null>(null)
 const migrationProject = ref('')
 const migrationProjects = computed(() => props.projects.filter(project => project.storage_id
   && project.availability !== 'error' && project.lifecycle_status === 'active'))
-const migrationAllowed = computed(() => menuTarget.value?.kind === 'session' && props.sessions.some(session => selectionKey(session) === menuTarget.value?.id && !session.project_id) && migrationProjects.value.length > 0)
+const migrationAllowed = computed(() => menuTarget.value?.kind === 'session' && ordinarySessions.value.some(session => selectionKey(session) === menuTarget.value?.id && !session.project_id) && migrationProjects.value.length > 0)
 
 const menuProject = computed(() => menuTarget.value?.kind === 'project'
   ? props.projects.find(row => selectionKey(row) === menuTarget.value!.id || row.id === menuTarget.value!.id)
@@ -345,12 +350,16 @@ const projectWorkspaces = computed(() => workspaces.value.filter(workspace => wo
 // its first message generates one, so hiding that title made every fresh free conversation
 // invisible. Declared with the other session derivations because `allSessions` reads it while
 // the option lists below are being evaluated.
+// Sidebar Hygiene Rule: filter out background task sessions (`origin === 'board_task'`) from
+// ordinary sidebar conversation lists so parallel board runs never spam ordinary chat lists.
+const ordinarySessions = computed(() => filterOrdinarySidebarSessions(props.sessions))
+
 const freeSessions = computed(() =>
-  props.sessions.filter((s) => !s.project_id && s.title)
+  ordinarySessions.value.filter((s) => !s.project_id && s.title)
 )
 function allSessions(key: string): SessionDto[] { return key === freeWorkspaceKey ? freeSessions.value : getProjectSessions(key) }
 function shownSessions(key: string) {
-  const active = props.sessions.find(isActiveSession)
+  const active = ordinarySessions.value.find(isActiveSession)
   return recentWorkspaceSessions(allSessions(key), active ? selectionKey(active) : null, list.state.value.allKeys.includes(key))
 }
 function isActiveSession(session: SessionDto) { return session.id === props.selectedSessionId && (!session.storage_id || session.storage_id === selectedStorage.value) }
@@ -531,9 +540,99 @@ const orderedSectionOptions = computed(() => list.state.value.sectionOrder.flatM
   return option ? [option] : []
 }))
 
+const instance = getCurrentInstance()
+let injectedRoute: ReturnType<typeof useRoute> | undefined
+let injectedRouter: ReturnType<typeof useRouter> | undefined
+try {
+  if (instance?.appContext.config.globalProperties.$router) {
+    injectedRoute = useRoute()
+    injectedRouter = useRouter()
+  }
+} catch {
+  injectedRoute = undefined
+  injectedRouter = undefined
+}
+
+const currentRoutePath = computed(() => injectedRoute?.path ?? '')
+const isGlobalBoardActive = computed(() => currentRoutePath.value === '/board')
+
+function isProjectHubActive(project: ProjectDto | null): boolean {
+  if (!project) return false
+  return currentRoutePath.value === `/projects/${project.id}`
+    || currentRoutePath.value === `/projects/${encodeURIComponent(project.id)}`
+}
+
+function isProjectRowActive(project: ProjectDto | null): boolean {
+  if (!project) {
+    return !isGlobalBoardActive.value && !currentRoutePath.value.startsWith('/projects/') && !props.selectedProjectId
+  }
+  if (isProjectHubActive(project)) return true
+  if (isGlobalBoardActive.value || currentRoutePath.value.startsWith('/projects/')) return false
+  return project.id === props.selectedProjectId && (!project.storage_id || project.storage_id === selectedStorage.value)
+}
+
+const { canAccessBackend } = useHostAccess()
+const boardNeedsActionCount = ref(0)
+let boardSummaryStream: BoardEventStreamHandle | null = null
+
+async function refreshGlobalBoardBadge() {
+  if (props.companionDomain || !canAccessBackend.value) return
+  try {
+    const summary = await api.getGlobalBoardSummary()
+    boardNeedsActionCount.value = Math.max(0, summary.needs_action_count || 0)
+  } catch {
+    // Graceful offline degradation: keep 0 / previous count silently without error banners.
+  }
+}
+
+function onBoardSummaryEvent(event: Event) {
+  const detail = (event as CustomEvent<{ needs_action_count?: number }>).detail
+  if (typeof detail?.needs_action_count === 'number' && Number.isFinite(detail.needs_action_count)) {
+    boardNeedsActionCount.value = Math.max(0, detail.needs_action_count)
+    return
+  }
+  void refreshGlobalBoardBadge()
+}
+
+function connectGlobalBoardBadgeStream() {
+  boardSummaryStream?.close()
+  boardSummaryStream = null
+  if (props.companionDomain || !canAccessBackend.value) return
+  try {
+    boardSummaryStream = api.subscribeGlobalBoardEvents((evt) => {
+      if (evt.summary) {
+        boardNeedsActionCount.value = Math.max(0, evt.summary.needs_action_count || 0)
+      } else {
+        void refreshGlobalBoardBadge()
+      }
+    })
+  } catch {
+    boardSummaryStream = null
+  }
+}
+
+watch(
+  [canAccessBackend, () => props.companionDomain],
+  ([ready, companion]) => {
+    if (ready && !companion) {
+      void refreshGlobalBoardBadge()
+      connectGlobalBoardBadgeStream()
+    } else {
+      boardSummaryStream?.close()
+      boardSummaryStream = null
+    }
+  },
+  { immediate: true },
+)
+
+function handleOpenGlobalBoard() {
+  emit('go-board')
+  void injectedRouter?.push('/board')
+}
+
 function getProjectSessions(projectKey: string): SessionDto[] {
   const { id, storageId } = selectionIdentity(projectKey)
-  return props.sessions.filter((s) => (s.project_id ?? null) === id && (!storageId || s.storage_id === storageId) && s.title)
+  return ordinarySessions.value.filter((s) => (s.project_id ?? null) === id && (!storageId || s.storage_id === storageId) && s.title)
 }
 
 function isExpanded(projectId: string): boolean {
@@ -544,8 +643,13 @@ function toggleExpand(projectId: string) {
   list.toggle(projectId, 'collapsedKeys')
 }
 
-function handleProjectClick(projectId: string) {
-  toggleExpand(projectId)
+function handleProjectRowClick(workspace: WorkspaceRow) {
+  if (!workspace.project) {
+    toggleExpand(workspace.key)
+    return
+  }
+  emit('select-project', workspace.key)
+  void injectedRouter?.push(`/projects/${encodeURIComponent(workspace.project.id)}`)
 }
 
 function handleSessionClick(sessionId: string) {
@@ -571,6 +675,7 @@ onMounted(() => {
   // only exists while the view does.
   syncActivityClock(list.state.value.activity)
   if (list.state.value.activity) void refreshActivity()
+  window.addEventListener('tinadec:board-summary-changed', onBoardSummaryEvent)
 })
 watch(() => props.busy, (busy, wasBusy) => {
   if (!wasBusy || busy) return
@@ -668,6 +773,9 @@ onBeforeUnmount(() => {
   footerResizeObserver?.disconnect()
   footerResizeObserver = null
   if (activityClock) { clearInterval(activityClock); activityClock = null }
+  boardSummaryStream?.close()
+  boardSummaryStream = null
+  window.removeEventListener('tinadec:board-summary-changed', onBoardSummaryEvent)
 })
 watch([displayName, () => props.collapsed], async () => {
   await nextTick()
@@ -702,6 +810,24 @@ watch([displayName, () => props.collapsed], async () => {
       >
         <MessageSquare :size="16" class="sidebar-icon" />
         <span class="sidebar-label">{{ t('sidebar.newChat') }}</span>
+      </UiButton>
+      <UiButton
+        variant="ghost"
+        size="sm"
+        class="sidebar-nav-item sidebar-nav-board w-full justify-start"
+        :class="{ active: isGlobalBoardActive }"
+        :aria-current="isGlobalBoardActive ? 'page' : undefined"
+        :title="t('board.sidebarGlobalBoard')"
+        data-testid="sidebar-global-board"
+        @click="handleOpenGlobalBoard"
+      >
+        <ListChecks :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('board.sidebarGlobalBoard') }}</span>
+        <span
+          v-if="boardNeedsActionCount > 0 && !collapsed"
+          class="sidebar-board-pill sidebar-extra"
+          data-testid="sidebar-board-needs-action"
+        >{{ boardNeedsActionCount > 99 ? '99+' : boardNeedsActionCount }}</span>
       </UiButton>
     </nav>
 
@@ -804,15 +930,29 @@ watch([displayName, () => props.collapsed], async () => {
             </div>
             <div v-else-if="item.kind === 'workspace'" class="project-group" :class="{ 'free-conversation-group': !item.workspace.project }" :data-workspace-key="item.workspace.key">
               <div class="project-row" :class="{
-                  active: item.workspace.project ? item.workspace.project.id === selectedProjectId && (!item.workspace.project.storage_id || item.workspace.project.storage_id === selectedStorage) : !selectedProjectId,
+                  active: isProjectRowActive(item.workspace.project),
                   'drag-source': draggedWorkspace === item.workspace.key,
                   'drag-over-before': dragOverKey === item.workspace.key && !dragOverAfter,
                   'drag-over-after': dragOverKey === item.workspace.key && dragOverAfter,
                 }"
                 :draggable="item.workspace.project !== null" @dragstart.stop="startDrag($event, item.workspace.key)" @dragend="draggedWorkspace = null; dragOverKey = null"
                 @dragover.prevent="dragOverWorkspace($event, item.workspace.key)" @drop.stop="dropWorkspace($event, item.workspace.key)"
-                @contextmenu.prevent="openMenuAtCursor($event, item.workspace.project ? 'project' : 'free', item.workspace.key, item.workspace.name)" @click="handleProjectClick(item.workspace.key)">
-                <button class="project-row-main" :title="item.workspace.project?.path ?? item.workspace.name" :aria-expanded="isExpanded(item.workspace.key)" :aria-controls="`workspace-sessions-${item.workspace.key}`" :aria-keyshortcuts="'Alt+ArrowUp Alt+ArrowDown'" @keydown="reorderWithKeyboard($event, item.workspace.key)" @click.stop="handleProjectClick(item.workspace.key)">
+                @contextmenu.prevent="openMenuAtCursor($event, item.workspace.project ? 'project' : 'free', item.workspace.key, item.workspace.name)" @click="handleProjectRowClick(item.workspace)">
+                <button
+                  v-if="item.workspace.project"
+                  type="button"
+                  class="project-row-chevron sidebar-extra"
+                  :aria-expanded="isExpanded(item.workspace.key)"
+                  :aria-controls="`workspace-sessions-${item.workspace.key}`"
+                  :aria-label="`${item.workspace.name} · ${isExpanded(item.workspace.key) ? t('sidebar.collapse') : t('sidebar.expand')}`"
+                  :title="isExpanded(item.workspace.key) ? t('sidebar.collapse') : t('sidebar.expand')"
+                  data-testid="project-expand-chevron"
+                  @mousedown.stop
+                  @click.stop="toggleExpand(item.workspace.key)"
+                >
+                  <ChevronRight :size="12" class="project-chevron-icon" :class="{ expanded: isExpanded(item.workspace.key) }" />
+                </button>
+                <button class="project-row-main" :title="item.workspace.project?.path ?? item.workspace.name" :aria-current="isProjectHubActive(item.workspace.project) ? 'page' : undefined" :aria-expanded="!item.workspace.project ? isExpanded(item.workspace.key) : undefined" :aria-controls="!item.workspace.project ? `workspace-sessions-${item.workspace.key}` : undefined" :aria-keyshortcuts="'Alt+ArrowUp Alt+ArrowDown'" :data-testid="item.workspace.project ? 'project-row-main' : 'free-row-main'" @keydown="reorderWithKeyboard($event, item.workspace.key)" @click.stop="handleProjectRowClick(item.workspace)">
                   <component :is="item.workspace.project ? workspaceIcons[item.workspace.project.icon ?? 'folder'] ?? FolderOpen : Sparkles" :size="15" class="sidebar-list-item-icon sidebar-icon" :class="`workspace-color-${item.workspace.project?.color ?? 'default'}`" />
                   <span class="sidebar-list-item-text sidebar-label">{{ item.workspace.name }}</span>
                 </button>
@@ -1009,6 +1149,55 @@ watch([displayName, () => props.collapsed], async () => {
 .sidebar-nav-item:active:not(:disabled),
 .sidebar-footer-action:active:not(:disabled) {
   transform: scale(0.96);
+}
+.sidebar-nav-board.active {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.sidebar-board-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--bg-primary-button, var(--accent-primary));
+  color: var(--text-on-primary, #ffffff);
+}
+.project-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)),
+    background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.project-row-chevron:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.project-chevron-icon {
+  transition: transform var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+}
+.project-chevron-icon.expanded {
+  transform: rotate(90deg);
 }
 .project-row,
 .session-row {

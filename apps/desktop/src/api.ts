@@ -6,7 +6,8 @@ import type { components } from '@/generated/schema'
 import type { MessageAttachmentDto, MessageDto, SseChunk } from '@/generated/client'
 import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
 import { ApiError } from '@/lib/apiError'
-import { captureStorageId, rememberStorageResult, normalizeStorageRequest, storageHeaders, storageFetch, sessionStorageId, selectionIdentity, selectedStorageId, type StorageRequestOptions } from '@/lib/storageScope'
+import { assertHostAccess } from '@/lib/hostAccess'
+import { captureStorageId, rememberStorageResult, normalizeStorageRequest, storageHeaders, storageFetch, projectStorageId, sessionStorageId, selectionIdentity, selectedStorageId, type StorageRequestOptions } from '@/lib/storageScope'
 import { cachedRead, invalidateReadCache, CATALOG_READ_CACHE_TTL_MS } from '@/lib/readCache'
 import type { StorageScopeDto, StorageStatsDto, StorageCleanupPreviewDto, StorageContentPreviewDto, StorageDeletePreviewDto, SessionTransferDto, ConfigurationDocumentDto, StorageConfigureInput } from '@/settings/storage'
 import { ScopedEventSource } from '@/lib/scopedEventSource'
@@ -83,6 +84,17 @@ export interface SessionDto {
   updated_at: string;
   lifecycle_status?: 'active' | 'archived' | 'trashed';
   trashed_at?: string | null;
+  origin?: string | null;
+  board_task_id?: string | null;
+}
+
+export interface CreateSessionInput extends SessionSettingsUpdate {
+  project_id?: string | null;
+  title?: string;
+  mode_version_id?: string | null;
+  view_mode?: 'flat' | 'space';
+  origin?: string | null;
+  board_task_id?: string | null;
 }
 
 /** Persisted by Core and captured with each submitted task, including queued tasks. */
@@ -3829,9 +3841,21 @@ export const api = {
     return request<SessionDto[]>(`/api/v1/sessions${query.size ? '?' + query : ''}`, { signal, storageId, cache: 'no-store' })
   },
   // mode_version_id decides which agent holds the conversation. Omitted = the workspace default.
-  createSession: (projectId?: string | null, title?: string, modeVersionId?: string | null, viewMode: 'flat' | 'space' = 'flat', settings?: SessionSettingsUpdate) => request<SessionDto>('/api/v1/sessions', {
+  createSession: (
+    projectId?: string | null,
+    title?: string,
+    modeVersionId?: string | null,
+    viewMode: 'flat' | 'space' = 'flat',
+    settings?: SessionSettingsUpdate & { origin?: string | null; board_task_id?: string | null },
+  ) => request<SessionDto>('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ project_id: projectId ?? undefined, title, mode_version_id: modeVersionId ?? undefined, ...(viewMode === 'space' ? { view_mode: viewMode } : {}), ...settings })
+    body: JSON.stringify({
+      project_id: projectId ?? undefined,
+      title,
+      mode_version_id: modeVersionId ?? undefined,
+      ...(viewMode === 'space' ? { view_mode: viewMode } : {}),
+      ...settings,
+    }),
   }).then(session => {
     if (viewMode === 'space' && session.view_mode !== 'space') throw new Error(i18n.global.t('space.sessionUnsupported'))
     return session
@@ -4948,6 +4972,339 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+
+  /** Rollup project overview: active runs, open governance reports, resource leases, and session count. */
+  async getProjectOverview(
+    projectId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectOverviewDto> {
+    const raw = await request<Partial<ProjectOverviewDto> & Record<string, unknown>>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/overview`,
+      { ...options, cache: 'no-store' },
+    );
+    const sessions = typeof raw?.sessions === 'number'
+      ? raw.sessions
+      : typeof raw?.session_count === 'number'
+        ? raw.session_count
+        : 0;
+    const heldResources = Array.isArray(raw?.held_resources)
+      ? (raw.held_resources as ProjectOverviewLeaseDto[])
+      : Array.isArray(raw?.leases)
+        ? (raw.leases as ProjectOverviewLeaseDto[])
+        : [];
+    return {
+      project_id: typeof raw?.project_id === 'string' ? raw.project_id : selectionIdentity(projectId).id,
+      name: typeof raw?.name === 'string' ? raw.name : '',
+      sessions,
+      session_count: sessions,
+      active_runs: Array.isArray(raw?.active_runs) ? (raw.active_runs as ProjectOverviewRunDto[]) : [],
+      open_reports: Array.isArray(raw?.open_reports) ? (raw.open_reports as ProjectOverviewReportDto[]) : [],
+      held_resources: heldResources,
+      leases: heldResources,
+      reports_truncated: Boolean(raw?.reports_truncated),
+    };
+  },
+
+  // --- Project Hub & Composable Project Board (Phase 1 #54) ---
+  getProjectBoardSettings(
+    projectId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardSettingsDto> {
+    return request<ProjectBoardSettingsDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/settings`,
+      { ...options, cache: 'no-store' },
+    );
+  },
+
+  updateProjectBoardSettings(
+    projectId: string,
+    input: UpdateProjectBoardSettingsInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardSettingsDto> {
+    return request<ProjectBoardSettingsDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/settings`,
+      {
+        ...options,
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    );
+  },
+
+  syncProjectBoard(
+    projectId: string,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardSyncResultDto> {
+    return request<ProjectBoardSyncResultDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/sync`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify({}),
+      },
+    );
+  },
+
+  listProjectBoardTasks(
+    projectId: string,
+    params: ListBoardTasksQuery = {},
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardTaskDto[]> {
+    const qs = serializeBoardTaskQuery(params);
+    return request<ProjectBoardTaskDto[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks${qs}`,
+      { ...options, cache: 'no-store' },
+    ).then((rows) => (Array.isArray(rows) ? rows.map(normalizeBoardTaskDto) : []));
+  },
+
+  createProjectBoardTask(
+    projectId: string,
+    input: CreateProjectBoardTaskInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  getProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}`,
+      { ...options, cache: 'no-store' },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  updateProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    input: UpdateProjectBoardTaskInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}`,
+      {
+        ...options,
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  deleteProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    options?: { storageId?: string },
+  ): Promise<void> {
+    return request<void>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}`,
+      { ...options, method: 'DELETE' },
+    );
+  },
+
+  resolveProjectBoardConflict(
+    projectId: string,
+    taskId: string,
+    input: ResolveProjectBoardConflictInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/resolve-conflict`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  dispatchProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    input: DispatchProjectBoardTaskInput = {},
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/dispatch`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  getProjectBoardTaskDiff(
+    projectId: string,
+    taskId: string,
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardTaskDiffDto> {
+    return request<ProjectBoardTaskDiffDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/diff`,
+      { ...options, cache: 'no-store' },
+    ).then((raw) => ({
+      worktree_path: raw?.worktree_path ?? null,
+      diff_text: typeof raw?.diff_text === 'string' ? raw.diff_text : '',
+      files: Array.isArray(raw?.files) ? raw.files : [],
+    }));
+  },
+
+  approveProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    input: ApproveProjectBoardTaskInput = {},
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/approve`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  requestProjectBoardTaskChanges(
+    projectId: string,
+    taskId: string,
+    input: RequestTaskChangesInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/request-changes`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  cancelProjectBoardTask(
+    projectId: string,
+    taskId: string,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardTaskDto> {
+    return request<ProjectBoardTaskDto>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/board/tasks/${encodeURIComponent(taskId)}/cancel`,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify({}),
+      },
+    ).then(normalizeBoardTaskDto);
+  },
+
+  listGlobalBoardTasks(
+    params: ListBoardTasksQuery = {},
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardTaskDto[]> {
+    const qs = serializeBoardTaskQuery(params);
+    return request<ProjectBoardTaskDto[]>(`/api/v1/board/tasks${qs}`, {
+      storageId: options?.storageId ?? 'user',
+      ...(options?.signal ? { signal: options.signal } : {}),
+      cache: 'no-store',
+    }).then((rows) => (Array.isArray(rows) ? rows.map(normalizeBoardTaskDto) : []));
+  },
+
+  getGlobalBoardSummary(
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardSummaryDto> {
+    return request<Partial<ProjectBoardSummaryDto> & Record<string, unknown>>('/api/v1/board/summary', {
+      storageId: options?.storageId ?? 'user',
+      ...(options?.signal ? { signal: options.signal } : {}),
+      cache: 'no-store',
+    }).then(normalizeBoardSummaryDto);
+  },
+
+  listBoardViews(
+    params: { scope?: ProjectBoardViewScope; project_id?: string | null } = {},
+    options?: { signal?: AbortSignal; storageId?: string },
+  ): Promise<ProjectBoardViewDto[]> {
+    const query = new URLSearchParams();
+    if (params.scope) query.set('scope', params.scope);
+    if (params.project_id) query.set('project_id', selectionIdentity(params.project_id).id);
+    const qs = query.toString();
+    const resolvedStorage = options?.storageId
+      ?? (params.project_id ? projectStorageId(params.project_id) : 'user');
+    return request<ProjectBoardViewDto[]>(`/api/v1/board/views${qs ? `?${qs}` : ''}`, {
+      storageId: resolvedStorage,
+      ...(options?.signal ? { signal: options.signal } : {}),
+      cache: 'no-store',
+    }).then((rows) => (Array.isArray(rows) ? rows : []));
+  },
+
+  createBoardView(
+    input: CreateProjectBoardViewInput,
+    options?: { storageId?: string },
+  ): Promise<ProjectBoardViewDto> {
+    const resolvedStorage = options?.storageId
+      ?? (input.project_id ? projectStorageId(input.project_id) : 'user');
+    return request<ProjectBoardViewDto>('/api/v1/board/views', {
+      storageId: resolvedStorage,
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  updateBoardView(
+    viewId: string,
+    input: UpdateProjectBoardViewInput,
+    options?: { storageId?: string; projectId?: string | null },
+  ): Promise<ProjectBoardViewDto> {
+    const resolvedStorage = options?.storageId
+      ?? (options?.projectId ? projectStorageId(options.projectId) : 'user');
+    return request<ProjectBoardViewDto>(`/api/v1/board/views/${encodeURIComponent(viewId)}`, {
+      storageId: resolvedStorage,
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  deleteBoardView(
+    viewId: string,
+    options?: { storageId?: string; projectId?: string | null },
+  ): Promise<void> {
+    const resolvedStorage = options?.storageId
+      ?? (options?.projectId ? projectStorageId(options.projectId) : 'user');
+    return request<void>(`/api/v1/board/views/${encodeURIComponent(viewId)}`, {
+      storageId: resolvedStorage,
+      method: 'DELETE',
+    });
+  },
+
+  subscribeProjectBoardEvents(
+    projectId: string,
+    onEvent: (event: ProjectBoardSseEventDto) => void,
+    options: BoardEventStreamOptions = {},
+  ): BoardEventStreamHandle {
+    const identity = selectionIdentity(projectId);
+    const storageId = options.storageId ?? identity.storageId ?? projectStorageId(projectId);
+    return openBoardEventStream(
+      `/api/v1/projects/${encodeURIComponent(identity.id)}/board/events`,
+      onEvent,
+      { ...options, storageId },
+    );
+  },
+
+  subscribeGlobalBoardEvents(
+    onEvent: (event: ProjectBoardSseEventDto) => void,
+    options: BoardEventStreamOptions = {},
+  ): BoardEventStreamHandle {
+    return openBoardEventStream('/api/v1/board/events', onEvent, {
+      ...options,
+      storageId: options.storageId ?? 'user',
+    });
+  },
 };
 
 export type ModelProbeResultDto = ReadinessItemDto;
@@ -5264,3 +5621,718 @@ export interface CreateHostDirectoryResponseDto {
 
 export const browseFilesystem = api.browseFilesystem;
 export const createHostDirectory = api.createHostDirectory;
+
+// ---------------------------------------------------------------------------
+// Project Overview & Project Board Types + Helpers (Phase 1 #54)
+// ---------------------------------------------------------------------------
+
+export interface ProjectOverviewRunDto {
+  run_id: string;
+  session_id: string;
+  status: string;
+  phase?: string | null;
+  started_at: string;
+}
+
+export interface ProjectOverviewReportDto {
+  session_id: string;
+  report_id: string;
+  author_display_name: string;
+  report_kind: string;
+  severity: string;
+  finding: string;
+  created_at: string;
+}
+
+export interface ProjectOverviewLeaseDto {
+  lease_id: string;
+  kind: string;
+  resource_key: string;
+  purpose: string;
+  run_id?: string | null;
+  reason?: string | null;
+}
+
+export interface ProjectOverviewDto {
+  project_id: string;
+  name: string;
+  sessions: number;
+  session_count: number;
+  active_runs: ProjectOverviewRunDto[];
+  open_reports: ProjectOverviewReportDto[];
+  held_resources: ProjectOverviewLeaseDto[];
+  leases: ProjectOverviewLeaseDto[];
+  reports_truncated: boolean;
+}
+
+export type ProjectBoardStorageMode = 'repo_tinadec' | 'app_data' | 'custom_dir';
+export type ProjectBoardTaskStatus = 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'done';
+export type ProjectBoardTaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
+export type ProjectBoardAssigneeKind = 'human' | 'native' | 'cli' | 'coordinator';
+export type ProjectBoardLayoutMode = 'kanban' | 'list' | 'swimlane';
+export type ProjectBoardGroupBy = 'status' | 'project' | 'assignee' | 'priority' | 'none';
+export type ProjectBoardSwimlaneBy = 'project' | 'assignee';
+export type ProjectBoardSortBy = 'manual' | 'priority' | 'updated_at' | 'dependency';
+export type ProjectBoardViewScope = 'global' | 'project';
+export type ProjectBoardConflictResolution = 'keep_file' | 'keep_board';
+export type ProjectBoardVisibleField =
+  | 'project_badge'
+  | 'live_digest'
+  | 'diff_stats'
+  | 'dependencies'
+  | 'conflict_badge'
+  | 'spatial_ref'
+  | 'labels'
+  | 'checklist'
+  | (string & {});
+
+export type ProjectBoardEventType =
+  | 'snapshot'
+  | 'task_upserted'
+  | 'task_deleted'
+  | 'settings_updated'
+  | 'view_upserted'
+  | 'view_deleted'
+  | 'sync_completed'
+  | (string & {});
+
+export interface ProjectBoardSettingsDto {
+  project_id: string;
+  key_prefix: string;
+  next_sequence: number;
+  storage_mode: ProjectBoardStorageMode;
+  custom_sync_root?: string | null;
+  resolved_board_dir?: string | null;
+  project_instructions?: string | null;
+  default_assignee_kind: ProjectBoardAssigneeKind;
+  max_concurrency: number;
+  autopilot_enabled: boolean;
+  updated_at_unix_ms: number;
+}
+
+export interface UpdateProjectBoardSettingsInput {
+  key_prefix?: string | null;
+  storage_mode?: ProjectBoardStorageMode | null;
+  custom_sync_root?: string | null;
+  project_instructions?: string | null;
+  default_assignee_kind?: ProjectBoardAssigneeKind | null;
+  max_concurrency?: number | null;
+  autopilot_enabled?: boolean | null;
+}
+
+export interface ProjectBoardChecklistItemDto {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface ProjectBoardAssigneeDto {
+  kind: ProjectBoardAssigneeKind;
+  id?: string | null;
+  display_name?: string | null;
+  mode_version_id?: string | null;
+  harness_id?: string | null;
+}
+
+export interface ProjectBoardSpatialRefDto {
+  session_id: string;
+  object_id: string;
+  viewport_hint?: { x: number; y: number; zoom: number } | Record<string, unknown> | null;
+}
+
+export interface ProjectBoardDiffStatsDto {
+  added: number;
+  removed: number;
+  files: number;
+}
+
+export interface ProjectBoardDeclarativeSnapshotDto {
+  title?: string;
+  description_md?: string | null;
+  checklist?: ProjectBoardChecklistItemDto[];
+  status?: ProjectBoardTaskStatus;
+  priority?: ProjectBoardTaskPriority;
+  blocked?: boolean;
+  blocked_reason?: string | null;
+  assignee?: ProjectBoardAssigneeDto | null;
+  parent_task_id?: string | null;
+  depends_on?: string[];
+  labels?: string[];
+  spatial_ref?: ProjectBoardSpatialRefDto | null;
+  sort_key?: string;
+  revision?: number;
+  updated_at_unix_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface ProjectBoardSyncConflictDto {
+  file_rel_path: string;
+  detected_at_unix_ms: number;
+  file_snapshot: ProjectBoardDeclarativeSnapshotDto;
+  board_snapshot: ProjectBoardDeclarativeSnapshotDto;
+  conflicting_fields: string[];
+}
+
+export interface ProjectBoardTaskDto {
+  task_id: string;
+  project_id: string;
+  project_name?: string | null;
+  task_key: string;
+  title: string;
+  description_md: string;
+  checklist: ProjectBoardChecklistItemDto[];
+  status: ProjectBoardTaskStatus;
+  priority: ProjectBoardTaskPriority;
+  blocked: boolean;
+  blocked_reason?: string | null;
+  assignee?: ProjectBoardAssigneeDto | null;
+  parent_task_id?: string | null;
+  depends_on: string[];
+  labels: string[];
+  spatial_ref?: ProjectBoardSpatialRefDto | null;
+  sort_key: string;
+  active_session_id?: string | null;
+  active_run_id?: string | null;
+  run_status?: string | null;
+  worktree_path?: string | null;
+  lease_id?: string | null;
+  live_digest_summary?: string | null;
+  diff_stats?: ProjectBoardDiffStatsDto | null;
+  has_sync_conflict: boolean;
+  sync_conflict?: ProjectBoardSyncConflictDto | null;
+  revision: number;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+}
+
+export interface CreateProjectBoardTaskInput {
+  title: string;
+  description_md?: string | null;
+  checklist?: ProjectBoardChecklistItemDto[] | null;
+  status?: ProjectBoardTaskStatus | null;
+  priority?: ProjectBoardTaskPriority | null;
+  blocked?: boolean | null;
+  blocked_reason?: string | null;
+  assignee?: ProjectBoardAssigneeDto | null;
+  parent_task_id?: string | null;
+  depends_on?: string[] | null;
+  labels?: string[] | null;
+  spatial_ref?: ProjectBoardSpatialRefDto | null;
+  sort_key?: string | null;
+}
+
+export interface UpdateProjectBoardTaskInput {
+  title?: string | null;
+  description_md?: string | null;
+  checklist?: ProjectBoardChecklistItemDto[] | null;
+  status?: ProjectBoardTaskStatus | null;
+  priority?: ProjectBoardTaskPriority | null;
+  blocked?: boolean | null;
+  blocked_reason?: string | null;
+  assignee?: ProjectBoardAssigneeDto | null;
+  clear_assignee?: boolean | null;
+  parent_task_id?: string | null;
+  clear_parent_task_id?: boolean | null;
+  depends_on?: string[] | null;
+  labels?: string[] | null;
+  spatial_ref?: ProjectBoardSpatialRefDto | null;
+  clear_spatial_ref?: boolean | null;
+  sort_key?: string | null;
+  expected_revision?: number | null;
+}
+
+export interface ProjectBoardFiltersDto {
+  project_ids?: string[];
+  assignee_kinds?: ProjectBoardAssigneeKind[];
+  statuses?: ProjectBoardTaskStatus[];
+  priorities?: ProjectBoardTaskPriority[];
+  labels?: string[];
+  needs_my_action?: boolean;
+  has_conflict?: boolean;
+  query?: string;
+}
+
+export interface ProjectBoardViewConfigDto {
+  layout: ProjectBoardLayoutMode;
+  group_by: ProjectBoardGroupBy;
+  swimlane_by?: ProjectBoardSwimlaneBy | null;
+  sort_by: ProjectBoardSortBy;
+  filters: ProjectBoardFiltersDto;
+  visible_fields: ProjectBoardVisibleField[];
+}
+
+export interface ProjectBoardViewDto {
+  view_id: string;
+  scope: ProjectBoardViewScope;
+  project_id?: string | null;
+  name: string;
+  config: ProjectBoardViewConfigDto;
+  sort_order: number;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+}
+
+export interface CreateProjectBoardViewInput {
+  scope: ProjectBoardViewScope;
+  project_id?: string | null;
+  name: string;
+  config: ProjectBoardViewConfigDto;
+  sort_order?: number | null;
+}
+
+export interface UpdateProjectBoardViewInput {
+  name?: string | null;
+  config?: ProjectBoardViewConfigDto | null;
+  sort_order?: number | null;
+}
+
+export interface ProjectBoardSummaryProjectItemDto {
+  project_id: string;
+  project_name: string;
+  total_tasks: number;
+  in_progress_count: number;
+  in_review_count: number;
+  blocked_count: number;
+  conflict_count: number;
+  needs_action_count: number;
+}
+
+export interface ProjectBoardSummaryDto {
+  total_tasks: number;
+  backlog_count: number;
+  ready_count: number;
+  in_progress_count: number;
+  in_review_count: number;
+  done_count: number;
+  blocked_count: number;
+  conflict_count: number;
+  active_run_count: number;
+  needs_action_count: number;
+  projects: ProjectBoardSummaryProjectItemDto[];
+  updated_at_unix_ms: number;
+}
+
+export interface ProjectBoardSyncResultDto {
+  project_id: string;
+  storage_mode: ProjectBoardStorageMode;
+  resolved_board_dir?: string | null;
+  imported_count: number;
+  exported_count: number;
+  merged_count: number;
+  unchanged_count: number;
+  conflict_count: number;
+  synced_at_unix_ms: number;
+}
+
+export interface ResolveProjectBoardConflictInput {
+  resolution: ProjectBoardConflictResolution;
+}
+
+export interface DispatchProjectBoardTaskInput {
+  assignee_override?: ProjectBoardAssigneeDto | null;
+  use_worktree?: boolean | null;
+  extra_prompt?: string | null;
+}
+
+export interface ProjectBoardTaskDiffFileDto {
+  path: string;
+  status: string;
+  added: number;
+  removed: number;
+}
+
+export interface ProjectBoardTaskDiffDto {
+  worktree_path?: string | null;
+  diff_text: string;
+  files: ProjectBoardTaskDiffFileDto[];
+}
+
+export interface ApproveProjectBoardTaskInput {
+  merge_or_clean_worktree?: boolean | null;
+  note?: string | null;
+}
+
+export interface RequestTaskChangesInput {
+  feedback: string;
+}
+
+export interface ListBoardTasksQuery {
+  project_id?: string;
+  project_ids?: string[];
+  status?: ProjectBoardTaskStatus;
+  statuses?: ProjectBoardTaskStatus[];
+  priority?: ProjectBoardTaskPriority;
+  priorities?: ProjectBoardTaskPriority[];
+  assignee_kind?: ProjectBoardAssigneeKind;
+  assignee_kinds?: ProjectBoardAssigneeKind[];
+  labels?: string[];
+  needs_my_action?: boolean;
+  has_conflict?: boolean;
+  query?: string;
+}
+
+export interface ProjectBoardSseEventDto {
+  seq: number;
+  event_type: ProjectBoardEventType;
+  project_id?: string | null;
+  task_id?: string | null;
+  task?: ProjectBoardTaskDto | null;
+  tasks?: ProjectBoardTaskDto[] | null;
+  settings?: ProjectBoardSettingsDto | null;
+  view_id?: string | null;
+  view?: ProjectBoardViewDto | null;
+  views?: ProjectBoardViewDto[] | null;
+  sync_result?: ProjectBoardSyncResultDto | null;
+  summary?: ProjectBoardSummaryDto | null;
+  occurred_at_unix_ms: number;
+}
+
+export interface BoardEventStreamOptions {
+  afterSeq?: number;
+  storageId?: string;
+  fetchImpl?: typeof fetch;
+  idleTimeoutMs?: number;
+  reconnectDelayMs?: number;
+  maxReconnectDelayMs?: number;
+  onOpen?: () => void;
+  onError?: (error: Error) => void;
+}
+
+export interface BoardEventStreamHandle {
+  close: () => void;
+  readonly closed: boolean;
+  readonly lastSeq: number;
+}
+
+function serializeBoardTaskQuery(params: ListBoardTasksQuery): string {
+  const search = new URLSearchParams();
+  if (params.project_id) search.set('project_id', selectionIdentity(params.project_id).id);
+  if (params.project_ids?.length) {
+    search.set('project_ids', params.project_ids.map((id) => selectionIdentity(id).id).join(','));
+  }
+  if (params.status) search.set('status', params.status);
+  if (params.statuses?.length) search.set('statuses', params.statuses.join(','));
+  if (params.priority) search.set('priority', params.priority);
+  if (params.priorities?.length) search.set('priorities', params.priorities.join(','));
+  if (params.assignee_kind) search.set('assignee_kind', params.assignee_kind);
+  if (params.assignee_kinds?.length) search.set('assignee_kinds', params.assignee_kinds.join(','));
+  if (params.labels?.length) search.set('labels', params.labels.join(','));
+  if (params.needs_my_action !== undefined) search.set('needs_my_action', String(params.needs_my_action));
+  if (params.has_conflict !== undefined) search.set('has_conflict', String(params.has_conflict));
+  if (params.query) search.set('query', params.query);
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
+
+function normalizeBoardTaskDto(raw: Partial<ProjectBoardTaskDto>): ProjectBoardTaskDto {
+  return {
+    task_id: typeof raw.task_id === 'string' ? raw.task_id : '',
+    project_id: typeof raw.project_id === 'string' ? raw.project_id : '',
+    project_name: typeof raw.project_name === 'string' ? raw.project_name : null,
+    task_key: typeof raw.task_key === 'string' ? raw.task_key : '',
+    title: typeof raw.title === 'string' ? raw.title : '',
+    description_md: typeof raw.description_md === 'string' ? raw.description_md : '',
+    checklist: Array.isArray(raw.checklist)
+      ? raw.checklist.map((item) => ({
+          id: typeof item?.id === 'string' ? item.id : '',
+          text: typeof item?.text === 'string' ? item.text : '',
+          done: Boolean(item?.done),
+        }))
+      : [],
+    status: (typeof raw.status === 'string' ? raw.status : 'backlog') as ProjectBoardTaskStatus,
+    priority: (typeof raw.priority === 'string' ? raw.priority : 'none') as ProjectBoardTaskPriority,
+    blocked: Boolean(raw.blocked),
+    blocked_reason: typeof raw.blocked_reason === 'string' ? raw.blocked_reason : null,
+    assignee: raw.assignee && typeof raw.assignee === 'object' ? (raw.assignee as ProjectBoardAssigneeDto) : null,
+    parent_task_id: typeof raw.parent_task_id === 'string' ? raw.parent_task_id : null,
+    depends_on: Array.isArray(raw.depends_on) ? raw.depends_on.filter((id): id is string => typeof id === 'string') : [],
+    labels: Array.isArray(raw.labels) ? raw.labels.filter((label): label is string => typeof label === 'string') : [],
+    spatial_ref: raw.spatial_ref && typeof raw.spatial_ref === 'object'
+      ? (raw.spatial_ref as ProjectBoardSpatialRefDto)
+      : null,
+    sort_key: typeof raw.sort_key === 'string' && raw.sort_key.length > 0 ? raw.sort_key : 'V',
+    active_session_id: typeof raw.active_session_id === 'string' ? raw.active_session_id : null,
+    active_run_id: typeof raw.active_run_id === 'string' ? raw.active_run_id : null,
+    run_status: typeof raw.run_status === 'string' ? raw.run_status : null,
+    worktree_path: typeof raw.worktree_path === 'string' ? raw.worktree_path : null,
+    lease_id: typeof raw.lease_id === 'string' ? raw.lease_id : null,
+    live_digest_summary: typeof raw.live_digest_summary === 'string' ? raw.live_digest_summary : null,
+    diff_stats: raw.diff_stats && typeof raw.diff_stats === 'object' ? (raw.diff_stats as ProjectBoardDiffStatsDto) : null,
+    has_sync_conflict: Boolean(raw.has_sync_conflict),
+    sync_conflict: raw.sync_conflict && typeof raw.sync_conflict === 'object'
+      ? (raw.sync_conflict as ProjectBoardSyncConflictDto)
+      : null,
+    revision: typeof raw.revision === 'number' ? raw.revision : 1,
+    created_at_unix_ms: typeof raw.created_at_unix_ms === 'number' ? raw.created_at_unix_ms : Date.now(),
+    updated_at_unix_ms: typeof raw.updated_at_unix_ms === 'number' ? raw.updated_at_unix_ms : Date.now(),
+  };
+}
+
+function normalizeBoardSummaryDto(
+  raw: Partial<ProjectBoardSummaryDto> & Record<string, unknown>,
+): ProjectBoardSummaryDto {
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const inReview = num(raw?.in_review_count);
+  const blocked = num(raw?.blocked_count);
+  const conflict = num(raw?.conflict_count);
+  const needsAction = typeof raw?.needs_action_count === 'number'
+    ? raw.needs_action_count
+    : inReview + blocked + conflict;
+  const activeRuns = typeof raw?.active_run_count === 'number'
+    ? raw.active_run_count
+    : num(raw?.active_runs_count);
+  return {
+    total_tasks: num(raw?.total_tasks),
+    backlog_count: num(raw?.backlog_count),
+    ready_count: num(raw?.ready_count),
+    in_progress_count: num(raw?.in_progress_count),
+    in_review_count: inReview,
+    done_count: num(raw?.done_count),
+    blocked_count: blocked,
+    conflict_count: conflict,
+    active_run_count: activeRuns,
+    needs_action_count: needsAction,
+    projects: Array.isArray(raw?.projects)
+      ? raw.projects.map((p) => ({
+          project_id: typeof p?.project_id === 'string' ? p.project_id : '',
+          project_name: typeof p?.project_name === 'string' ? p.project_name : '',
+          total_tasks: num(p?.total_tasks),
+          in_progress_count: num(p?.in_progress_count),
+          in_review_count: num(p?.in_review_count),
+          blocked_count: num(p?.blocked_count),
+          conflict_count: num(p?.conflict_count),
+          needs_action_count: num(p?.needs_action_count),
+        }))
+      : [],
+    updated_at_unix_ms: typeof raw?.updated_at_unix_ms === 'number' ? raw.updated_at_unix_ms : Date.now(),
+  };
+}
+
+function openBoardEventStream(
+  path: string,
+  onEvent: (event: ProjectBoardSseEventDto) => void,
+  options: BoardEventStreamOptions = {},
+): BoardEventStreamHandle {
+  const storageId = options.storageId ?? captureStorageId(path);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const idleTimeoutMs = options.idleTimeoutMs ?? 45_000;
+  const baseReconnectDelayMs = options.reconnectDelayMs ?? 1_000;
+  const maxReconnectDelayMs = options.maxReconnectDelayMs ?? 10_000;
+
+  let closed = false;
+  let lastSeq = Math.max(0, options.afterSeq ?? 0);
+  let reconnectAttempt = 0;
+  let abortController: AbortController | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function close(): void {
+    closed = true;
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    abortController?.abort();
+    abortController = null;
+  }
+
+  function dispatchBlock(block: string): void {
+    let eventName = 'message';
+    let frameId = '';
+    const dataLines: string[] = [];
+    for (const line of block.replace(/\r/g, '').split('\n')) {
+      if (!line || line.startsWith(':')) continue;
+      const sep = line.indexOf(':');
+      const key = sep < 0 ? line : line.slice(0, sep);
+      const value = sep < 0 ? '' : line.slice(sep + 1).replace(/^ /, '');
+      if (key === 'event') eventName = value || 'message';
+      else if (key === 'id') frameId = value;
+      else if (key === 'data') dataLines.push(value);
+    }
+
+    if (frameId && /^\d+$/.test(frameId)) {
+      const parsedSeq = Number.parseInt(frameId, 10);
+      if (Number.isFinite(parsedSeq) && parsedSeq > lastSeq) {
+        lastSeq = parsedSeq;
+      }
+    }
+
+    if (eventName === 'heartbeat' || eventName === 'keepalive' || dataLines.length === 0) return;
+
+    let parsed: Record<string, unknown>;
+    try {
+      const json = JSON.parse(dataLines.join('\n'));
+      if (!json || typeof json !== 'object') return;
+      parsed = json as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    const payloadSeq = typeof parsed.seq === 'number' && Number.isFinite(parsed.seq) ? parsed.seq : lastSeq;
+    if (payloadSeq > lastSeq) lastSeq = payloadSeq;
+    const resolvedType = (
+      typeof parsed.event_type === 'string' && parsed.event_type
+        ? parsed.event_type
+        : eventName !== 'message'
+          ? eventName
+          : 'task_upserted'
+    ) as ProjectBoardEventType;
+
+    const normalizedEvent: ProjectBoardSseEventDto = {
+      seq: payloadSeq,
+      event_type: resolvedType,
+      project_id: typeof parsed.project_id === 'string' ? parsed.project_id : null,
+      task_id: typeof parsed.task_id === 'string' ? parsed.task_id : null,
+      task: parsed.task && typeof parsed.task === 'object'
+        ? normalizeBoardTaskDto(parsed.task as Record<string, unknown>)
+        : null,
+      tasks: Array.isArray(parsed.tasks)
+        ? parsed.tasks.map((item) => normalizeBoardTaskDto(item as Record<string, unknown>))
+        : null,
+      settings: parsed.settings && typeof parsed.settings === 'object'
+        ? (parsed.settings as ProjectBoardSettingsDto)
+        : null,
+      view_id: typeof parsed.view_id === 'string' ? parsed.view_id : null,
+      view: parsed.view && typeof parsed.view === 'object' ? (parsed.view as ProjectBoardViewDto) : null,
+      views: Array.isArray(parsed.views) ? (parsed.views as ProjectBoardViewDto[]) : null,
+      sync_result: parsed.sync_result && typeof parsed.sync_result === 'object'
+        ? (parsed.sync_result as ProjectBoardSyncResultDto)
+        : null,
+      summary: parsed.summary && typeof parsed.summary === 'object'
+        ? normalizeBoardSummaryDto(parsed.summary as Record<string, unknown>)
+        : null,
+      occurred_at_unix_ms: typeof parsed.occurred_at_unix_ms === 'number' ? parsed.occurred_at_unix_ms : Date.now(),
+    };
+
+    try {
+      onEvent(normalizedEvent);
+    } catch {
+      // Consumer handler errors must not break the SSE reader loop.
+    }
+  }
+
+  async function connect(): Promise<void> {
+    if (closed) return;
+    const controller = new AbortController();
+    abortController = controller;
+    const normalized = normalizeStorageRequest(path, { storageId });
+    const querySep = normalized.path.includes('?') ? '&' : '?';
+    const pathWithCursor = lastSeq > 0 ? `${normalized.path}${querySep}after_seq=${lastSeq}` : normalized.path;
+    const fullUrl = `${gatewayUrl}${pathWithCursor}`;
+
+    try {
+      await assertHostAccess(pathWithCursor, controller.signal);
+      if (closed || controller.signal.aborted) return;
+
+      const headers = storageHeaders(pathWithCursor, { storageId });
+      headers.set('accept', 'text/event-stream');
+      if (lastSeq > 0) headers.set('last-event-id', String(lastSeq));
+
+      const response = await fetchImpl(fullUrl, {
+        method: 'GET',
+        headers,
+        credentials: 'include',
+        signal: controller.signal,
+      });
+
+      if (closed || controller.signal.aborted) {
+        await response.body?.cancel().catch(() => undefined);
+        return;
+      }
+      if (response.status === 404) {
+        close();
+        return;
+      }
+      if (!response.ok || !response.body) {
+        throw new Error(`Board event stream returned ${response.status}`);
+      }
+
+      reconnectAttempt = 0;
+      options.onOpen?.();
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      const armIdle = () => {
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs);
+      };
+      controller.signal.addEventListener(
+        'abort',
+        () => {
+          if (idleTimer !== null) clearTimeout(idleTimer);
+        },
+        { once: true },
+      );
+      armIdle();
+
+      while (!closed && !controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        armIdle();
+        if (closed || controller.signal.aborted) break;
+        buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
+        let boundary: number;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          dispatchBlock(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          if (closed) break;
+        }
+        if (done) {
+          if (buffer.trim() && !closed) dispatchBlock(buffer);
+          break;
+        }
+      }
+      if (idleTimer !== null) clearTimeout(idleTimer);
+    } catch (error) {
+      if (!closed) {
+        options.onError?.(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+
+    if (!closed) {
+      const delay = Math.min(baseReconnectDelayMs * Math.pow(2, reconnectAttempt), maxReconnectDelayMs);
+      reconnectAttempt += 1;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void connect();
+      }, delay);
+    }
+  }
+
+  void connect();
+
+  return {
+    close,
+    get closed() {
+      return closed;
+    },
+    get lastSeq() {
+      return lastSeq;
+    },
+  };
+}
+
+export const getProjectOverview = api.getProjectOverview;
+export const getProjectBoardSettings = api.getProjectBoardSettings;
+export const updateProjectBoardSettings = api.updateProjectBoardSettings;
+export const syncProjectBoard = api.syncProjectBoard;
+export const listProjectBoardTasks = api.listProjectBoardTasks;
+export const createProjectBoardTask = api.createProjectBoardTask;
+export const getProjectBoardTask = api.getProjectBoardTask;
+export const updateProjectBoardTask = api.updateProjectBoardTask;
+export const deleteProjectBoardTask = api.deleteProjectBoardTask;
+export const resolveProjectBoardConflict = api.resolveProjectBoardConflict;
+export const dispatchProjectBoardTask = api.dispatchProjectBoardTask;
+export const getProjectBoardTaskDiff = api.getProjectBoardTaskDiff;
+export const approveProjectBoardTask = api.approveProjectBoardTask;
+export const requestProjectBoardTaskChanges = api.requestProjectBoardTaskChanges;
+export const cancelProjectBoardTask = api.cancelProjectBoardTask;
+export const listGlobalBoardTasks = api.listGlobalBoardTasks;
+export const getGlobalBoardSummary = api.getGlobalBoardSummary;
+export const listBoardViews = api.listBoardViews;
+export const createBoardView = api.createBoardView;
+export const updateBoardView = api.updateBoardView;
+export const deleteBoardView = api.deleteBoardView;
+export const subscribeProjectBoardEvents = api.subscribeProjectBoardEvents;
+export const subscribeGlobalBoardEvents = api.subscribeGlobalBoardEvents;
+

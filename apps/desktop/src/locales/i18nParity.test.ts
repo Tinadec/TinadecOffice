@@ -165,6 +165,9 @@ const panelSources = import.meta.glob(
     // (AgentModeCanvas is now a thin wrapper around ModeGraphCanvas in ./../components/modeEditor/*.vue.)
     './../components/canvas/PromptPipelineCanvas.vue',
     './../components/liveDigest/*.vue',
+    './../components/board/*.vue',
+    './../pages/GlobalBoardPage.vue',
+    './../pages/ProjectHubPage.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
