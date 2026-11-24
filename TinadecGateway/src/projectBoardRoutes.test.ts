@@ -633,6 +633,322 @@ test('POST /api/v1/projects/:projectId/board/tasks/promote-from-spatial forwards
   assert.equal(((await invalidBoardPropsRes.json()) as Record<string, unknown>).code, 'board_props_invalid');
 });
 
+test('Phase 3 Project Notes, Coordinator Planner, and Autopilot routes forward requests and preserve 400/404/409/502 errors', { concurrency: false }, async () => {
+  const calls: Array<{ path: string; method: string; body: Record<string, unknown> | null; headers: Headers }> = [];
+
+  const mockNotes = {
+    project_id: projectId,
+    content_md: '# TinadecOffice Notes\n\n## 决策与进展记录\n- Initialized Phase 3',
+    resolved_file_path: '/repo/.tinadec/project/notes.md',
+    storage_mode: 'repo_tinadec',
+    revision: 3,
+    last_synced_hash: 'sha256:abc123',
+    updated_at_unix_ms: 1700000010000,
+  };
+
+  const mockDraft = {
+    draft_id: 'draft-1',
+    title: 'Implement living notes sync',
+    description_md: 'Wire bidirectional `.tinadec/project/notes.md` watcher',
+    checklist: [{ id: 'chk-1', text: 'SHA-256 anti-echo', done: false }],
+    priority: 'high',
+    status: 'ready',
+    assignee: { kind: 'native', id: 'coder' },
+    labels: ['autopilot'],
+    depends_on_draft_ids: [],
+    depends_on_task_ids: [],
+  };
+
+  const mockTask = {
+    task_id: taskId,
+    project_id: projectId,
+    project_name: 'TinadecOffice',
+    task_key: 'TIN-21',
+    title: 'Implement living notes sync',
+    description_md: 'Wire bidirectional `.tinadec/project/notes.md` watcher',
+    checklist: [{ id: 'chk-1', text: 'SHA-256 anti-echo', done: false }],
+    status: 'ready',
+    priority: 'high',
+    blocked: false,
+    blocked_reason: null,
+    assignee: { kind: 'native', id: 'coder' },
+    parent_task_id: null,
+    depends_on: [],
+    labels: ['autopilot'],
+    spatial_ref: null,
+    sort_key: 'a0',
+    active_session_id: null,
+    active_run_id: null,
+    run_status: null,
+    worktree_path: null,
+    lease_id: null,
+    live_digest_summary: null,
+    diff_stats: null,
+    has_sync_conflict: false,
+    sync_conflict: null,
+    revision: 1,
+    created_at_unix_ms: 1700000010000,
+    updated_at_unix_ms: 1700000010000,
+  };
+
+  const mockPlanResult = {
+    project_id: projectId,
+    goal: 'Ship living notes and coordinator autopilot',
+    summary: 'Decomposed into 1 actionable task',
+    planner_source: 'heuristic',
+    auto_applied: false,
+    drafts: [mockDraft],
+    created_tasks: [],
+  };
+
+  const mockApplyPlanResult = {
+    project_id: projectId,
+    created_tasks: [mockTask],
+  };
+
+  const mockAutopilotState = {
+    project_id: projectId,
+    autopilot_enabled: true,
+    max_concurrency: 2,
+    active_task_count: 1,
+    active_task_ids: [taskId],
+    queued_ready_count: 2,
+    blocked_task_count: 0,
+    blocked_tasks: [],
+    last_tick_at_unix_ms: 1700000015000,
+    last_error: null,
+    updated_at_unix_ms: 1700000015000,
+  };
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? 'GET';
+    calls.push({
+      path: url.pathname + url.search,
+      method,
+      body: typeof init?.body === 'string' && init.body.length > 0 ? (JSON.parse(init.body) as Record<string, unknown>) : null,
+      headers: new Headers(init?.headers),
+    });
+
+    if (url.pathname.endsWith('/notes')) {
+      return new Response(JSON.stringify(mockNotes), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname.endsWith('/coordinator/plan')) {
+      return new Response(JSON.stringify(mockPlanResult), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname.endsWith('/coordinator/apply-plan')) {
+      return new Response(JSON.stringify(mockApplyPlanResult), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.pathname.endsWith('/coordinator/autopilot')) {
+      return new Response(JSON.stringify(mockAutopilotState), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  // 1. GET /api/v1/projects/:projectId/notes
+  const getNotesRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/notes`, {
+      headers: { 'x-tinadec-storage-id': 'scope-autopilot-56' },
+    }),
+  );
+  assert.equal(getNotesRes.status, 200);
+  assert.deepEqual(await getNotesRes.json(), mockNotes);
+  assert.equal(calls.at(-1)?.method, 'GET');
+  assert.equal(calls.at(-1)?.path, `/api/v1/projects/${projectId}/notes`);
+  assert.equal(calls.at(-1)?.headers.get('x-tinadec-storage-id'), 'scope-autopilot-56');
+
+  // 2. PUT /api/v1/projects/:projectId/notes
+  const putNotesBody = { content_md: mockNotes.content_md, expected_revision: 2 };
+  const putNotesRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/notes`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-tinadec-storage-id': 'scope-autopilot-56',
+      },
+      body: JSON.stringify(putNotesBody),
+    }),
+  );
+  assert.equal(putNotesRes.status, 200);
+  assert.deepEqual(await putNotesRes.json(), mockNotes);
+  assert.equal(calls.at(-1)?.method, 'PUT');
+  assert.deepEqual(calls.at(-1)?.body, putNotesBody);
+
+  // 3. POST /api/v1/projects/:projectId/board/coordinator/plan
+  const planBody = {
+    goal: 'Ship living notes and coordinator autopilot',
+    default_status: 'ready',
+    default_assignee: { kind: 'native', id: 'coder' },
+    auto_apply: false,
+    max_tasks: 6,
+  };
+  const planRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/plan`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-tinadec-storage-id': 'scope-autopilot-56',
+      },
+      body: JSON.stringify(planBody),
+    }),
+  );
+  assert.equal(planRes.status, 200);
+  assert.deepEqual(await planRes.json(), mockPlanResult);
+  assert.equal(calls.at(-1)?.method, 'POST');
+  assert.equal(calls.at(-1)?.path, `/api/v1/projects/${projectId}/board/coordinator/plan`);
+  assert.deepEqual(calls.at(-1)?.body, planBody);
+
+  // 4. POST /api/v1/projects/:projectId/board/coordinator/apply-plan
+  const applyPlanBody = {
+    goal: 'Ship living notes and coordinator autopilot',
+    update_notes: true,
+    drafts: [mockDraft],
+  };
+  const applyPlanRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/apply-plan`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-tinadec-storage-id': 'scope-autopilot-56',
+      },
+      body: JSON.stringify(applyPlanBody),
+    }),
+  );
+  assert.equal(applyPlanRes.status, 200);
+  assert.deepEqual(await applyPlanRes.json(), mockApplyPlanResult);
+  assert.equal(calls.at(-1)?.method, 'POST');
+  assert.equal(calls.at(-1)?.path, `/api/v1/projects/${projectId}/board/coordinator/apply-plan`);
+  assert.deepEqual(calls.at(-1)?.body, applyPlanBody);
+
+  // 5. GET /api/v1/projects/:projectId/board/coordinator/autopilot
+  const getAutopilotRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/autopilot`, {
+      headers: { 'x-tinadec-storage-id': 'scope-autopilot-56' },
+    }),
+  );
+  assert.equal(getAutopilotRes.status, 200);
+  assert.deepEqual(await getAutopilotRes.json(), mockAutopilotState);
+  assert.equal(calls.at(-1)?.method, 'GET');
+  assert.equal(calls.at(-1)?.path, `/api/v1/projects/${projectId}/board/coordinator/autopilot`);
+  assert.equal(calls.at(-1)?.headers.get('x-tinadec-storage-id'), 'scope-autopilot-56');
+
+  // 6. PUT /api/v1/projects/:projectId/board/coordinator/autopilot
+  const putAutopilotBody = { autopilot_enabled: false, max_concurrency: 3, cancel_active: true };
+  const putAutopilotRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/autopilot`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-tinadec-storage-id': 'scope-autopilot-56',
+      },
+      body: JSON.stringify(putAutopilotBody),
+    }),
+  );
+  assert.equal(putAutopilotRes.status, 200);
+  assert.deepEqual(await putAutopilotRes.json(), mockAutopilotState);
+  assert.equal(calls.at(-1)?.method, 'PUT');
+  assert.deepEqual(calls.at(-1)?.body, putAutopilotBody);
+
+  // 409 revision_conflict on PUT /notes
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        status: 409,
+        code: 'revision_conflict',
+        detail: 'Expected notes revision 2, actual revision 3.',
+      }),
+      { status: 409, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const notesConflictRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/notes`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content_md: 'stale edit', expected_revision: 2 }),
+    }),
+  );
+  assert.equal(notesConflictRes.status, 409);
+  assert.equal(((await notesConflictRes.json()) as Record<string, unknown>).code, 'revision_conflict');
+
+  // 409 cycle_detected on POST /coordinator/apply-plan
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        status: 409,
+        code: 'cycle_detected',
+        detail: 'Draft draft-1 and draft-2 form a dependency cycle.',
+      }),
+      { status: 409, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const applyCycleRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/apply-plan`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        drafts: [
+          { ...mockDraft, draft_id: 'draft-1', depends_on_draft_ids: ['draft-2'] },
+          { ...mockDraft, draft_id: 'draft-2', depends_on_draft_ids: ['draft-1'] },
+        ],
+      }),
+    }),
+  );
+  assert.equal(applyCycleRes.status, 409);
+  assert.equal(((await applyCycleRes.json()) as Record<string, unknown>).code, 'cycle_detected');
+
+  // 400 validation & 404 not found & 502 CORE_UNREACHABLE preservation on Phase 3 routes
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({ status: 400, code: 'invalid_goal', detail: 'Goal must not be blank.' }),
+      { status: 400, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const badPlanRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/plan`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ goal: '   ' }),
+    }),
+  );
+  assert.equal(badPlanRes.status, 400);
+  assert.equal(((await badPlanRes.json()) as Record<string, unknown>).code, 'invalid_goal');
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({ status: 404, code: 'project_not_found', detail: 'Project not found.' }),
+      { status: 404, headers: { 'content-type': 'application/problem+json' } },
+    )) as unknown as typeof fetch;
+
+  const missingAutopilotRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/board/coordinator/autopilot`),
+  );
+  assert.equal(missingAutopilotRes.status, 404);
+  assert.equal(((await missingAutopilotRes.json()) as Record<string, unknown>).code, 'project_not_found');
+
+  globalThis.fetch = (async () => {
+    throw new TypeError('connect ECONNREFUSED 127.0.0.1:48731');
+  }) as unknown as typeof fetch;
+
+  const unreachableNotesRes = await app.handle(
+    new Request(`http://gateway.local/api/v1/projects/${projectId}/notes`),
+  );
+  assert.equal(unreachableNotesRes.status, 502);
+  assert.equal(((await unreachableNotesRes.json()) as Record<string, unknown>).code, 'CORE_UNREACHABLE');
+});
+
 function sortKeysRecursively(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysRecursively);
   if (value && typeof value === 'object') {
@@ -654,8 +970,12 @@ test('Project Board OpenAPI paths, schemas, Session origin/board_task_id, and sn
   };
 
   const expectedPaths: Array<[string, string[]]> = [
+    ['/api/v1/projects/{projectId}/notes', ['get', 'put']],
     ['/api/v1/projects/{projectId}/board/settings', ['get', 'put']],
     ['/api/v1/projects/{projectId}/board/sync', ['post']],
+    ['/api/v1/projects/{projectId}/board/coordinator/plan', ['post']],
+    ['/api/v1/projects/{projectId}/board/coordinator/apply-plan', ['post']],
+    ['/api/v1/projects/{projectId}/board/coordinator/autopilot', ['get', 'put']],
     ['/api/v1/projects/{projectId}/board/tasks', ['get', 'post']],
     ['/api/v1/projects/{projectId}/board/tasks/promote-from-spatial', ['post']],
     ['/api/v1/projects/{projectId}/board/tasks/{taskId}', ['get', 'patch', 'delete']],
@@ -718,6 +1038,15 @@ test('Project Board OpenAPI paths, schemas, Session origin/board_task_id, and sn
     'PromoteFromSpatialRequest',
     'SpatialObjectTaskLink',
     'PromoteFromSpatialResult',
+    'ProjectNotes',
+    'UpdateProjectNotesRequest',
+    'CoordinatorTaskDraft',
+    'CoordinatorPlanRequest',
+    'CoordinatorPlanResult',
+    'CoordinatorApplyPlanRequest',
+    'CoordinatorApplyPlanResult',
+    'UpdateProjectAutopilotRequest',
+    'ProjectAutopilotState',
   ]) {
     assert.ok(doc.components.schemas[schemaName], `Missing OpenAPI schema ${schemaName}`);
   }
@@ -746,6 +1075,65 @@ test('Project Board OpenAPI paths, schemas, Session origin/board_task_id, and sn
     'updated_object_links',
     'spatial_seq',
   ]);
+
+  // Verify Phase 3 (#56) Notes, Coordinator Planner, Autopilot, and ProjectBoardEvent wire contracts.
+  assert.deepEqual(doc.components.schemas.ProjectNotes?.required, [
+    'project_id',
+    'content_md',
+    'resolved_file_path',
+    'storage_mode',
+    'revision',
+    'last_synced_hash',
+    'updated_at_unix_ms',
+  ]);
+  assert.deepEqual(doc.components.schemas.UpdateProjectNotesRequest?.required, ['content_md']);
+  assert.deepEqual(doc.components.schemas.CoordinatorTaskDraft?.required, [
+    'draft_id',
+    'title',
+    'description_md',
+    'checklist',
+    'priority',
+    'status',
+    'assignee',
+    'labels',
+    'depends_on_draft_ids',
+    'depends_on_task_ids',
+  ]);
+  assert.deepEqual(doc.components.schemas.CoordinatorPlanRequest?.required, ['goal']);
+  assert.deepEqual(doc.components.schemas.CoordinatorPlanResult?.required, [
+    'project_id',
+    'goal',
+    'summary',
+    'planner_source',
+    'auto_applied',
+    'drafts',
+    'created_tasks',
+  ]);
+  assert.deepEqual(doc.components.schemas.CoordinatorApplyPlanRequest?.required, ['drafts']);
+  assert.deepEqual(doc.components.schemas.CoordinatorApplyPlanResult?.required, ['project_id', 'created_tasks']);
+  assert.deepEqual(doc.components.schemas.ProjectAutopilotState?.required, [
+    'project_id',
+    'autopilot_enabled',
+    'max_concurrency',
+    'active_task_count',
+    'active_task_ids',
+    'queued_ready_count',
+    'blocked_task_count',
+    'blocked_tasks',
+    'last_tick_at_unix_ms',
+    'last_error',
+    'updated_at_unix_ms',
+  ]);
+
+  const boardEventProps = doc.components.schemas.ProjectBoardEvent?.properties as Record<string, Record<string, unknown>>;
+  assert.ok(boardEventProps?.notes, 'ProjectBoardEvent.notes must be exposed in OpenAPI');
+  assert.ok(boardEventProps?.autopilot, 'ProjectBoardEvent.autopilot must be exposed in OpenAPI');
+  const boardEventTypeEnum = boardEventProps?.event_type?.enum as string[] | undefined;
+  assert.ok(boardEventTypeEnum?.includes('notes_updated'), 'ProjectBoardEvent.event_type must include "notes_updated"');
+  assert.ok(
+    boardEventTypeEnum?.includes('autopilot_updated'),
+    'ProjectBoardEvent.event_type must include "autopilot_updated"',
+  );
 
   const sessionProps = doc.components.schemas.Session?.properties as Record<string, unknown>;
   const createSessionProps = doc.components.schemas.CreateSessionRequest?.properties as Record<string, unknown>;

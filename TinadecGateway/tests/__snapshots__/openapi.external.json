@@ -4188,6 +4188,215 @@
         ],
         "type": "object"
       },
+      "CoordinatorApplyPlanRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/CoordinatorTaskDraft"
+            },
+            "type": "array"
+          },
+          "goal": {
+            "nullable": true,
+            "type": "string"
+          },
+          "update_notes": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "drafts"
+        ],
+        "type": "object"
+      },
+      "CoordinatorApplyPlanResult": {
+        "properties": {
+          "created_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardTask"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "created_tasks"
+        ],
+        "type": "object"
+      },
+      "CoordinatorPlanRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_apply": {
+            "type": "boolean"
+          },
+          "default_assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "max_tasks": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "type": "object"
+      },
+      "CoordinatorPlanResult": {
+        "properties": {
+          "auto_applied": {
+            "type": "boolean"
+          },
+          "created_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardTask"
+            },
+            "type": "array"
+          },
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/CoordinatorTaskDraft"
+            },
+            "type": "array"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "planner_source": {
+            "enum": [
+              "llm",
+              "heuristic"
+            ],
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "goal",
+          "summary",
+          "planner_source",
+          "auto_applied",
+          "drafts",
+          "created_tasks"
+        ],
+        "type": "object"
+      },
+      "CoordinatorTaskDraft": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBoardAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardChecklistItem"
+            },
+            "type": "array"
+          },
+          "depends_on_draft_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "depends_on_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description_md": {
+            "type": "string"
+          },
+          "draft_id": {
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "high",
+              "medium",
+              "low",
+              "none"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "done"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "title",
+          "description_md",
+          "checklist",
+          "priority",
+          "status",
+          "assignee",
+          "labels",
+          "depends_on_draft_ids",
+          "depends_on_task_ids"
+        ],
+        "type": "object"
+      },
       "CreateProjectBoardTaskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -7619,6 +7828,67 @@
         ],
         "type": "object"
       },
+      "ProjectAutopilotState": {
+        "properties": {
+          "active_task_count": {
+            "type": "integer"
+          },
+          "active_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "autopilot_enabled": {
+            "type": "boolean"
+          },
+          "blocked_task_count": {
+            "type": "integer"
+          },
+          "blocked_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBoardTask"
+            },
+            "type": "array"
+          },
+          "last_error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "last_tick_at_unix_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "max_concurrency": {
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "queued_ready_count": {
+            "type": "integer"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "autopilot_enabled",
+          "max_concurrency",
+          "active_task_count",
+          "active_task_ids",
+          "queued_ready_count",
+          "blocked_task_count",
+          "blocked_tasks",
+          "last_tick_at_unix_ms",
+          "last_error",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
+      },
       "ProjectBoardAssignee": {
         "properties": {
           "display_name": {
@@ -7716,6 +7986,16 @@
       },
       "ProjectBoardEvent": {
         "properties": {
+          "autopilot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectAutopilotState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "event_type": {
             "enum": [
               "snapshot",
@@ -7724,9 +8004,21 @@
               "settings_updated",
               "view_upserted",
               "view_deleted",
-              "sync_completed"
+              "sync_completed",
+              "notes_updated",
+              "autopilot_updated"
             ],
             "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectNotes"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "occurred_at_unix_ms": {
             "type": "integer"
@@ -8550,6 +8842,47 @@
           "$ref": "#/components/schemas/Project"
         },
         "type": "array"
+      },
+      "ProjectNotes": {
+        "properties": {
+          "content_md": {
+            "type": "string"
+          },
+          "last_synced_hash": {
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resolved_file_path": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "storage_mode": {
+            "enum": [
+              "repo_tinadec",
+              "app_data",
+              "custom_dir"
+            ],
+            "type": "string"
+          },
+          "updated_at_unix_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "content_md",
+          "resolved_file_path",
+          "storage_mode",
+          "revision",
+          "last_synced_hash",
+          "updated_at_unix_ms"
+        ],
+        "type": "object"
       },
       "PromoteFromSpatialRequest": {
         "additionalProperties": false,
@@ -13626,6 +13959,24 @@
         ],
         "type": "object"
       },
+      "UpdateProjectAutopilotRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "autopilot_enabled": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "cancel_active": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "max_concurrency": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "UpdateProjectBoardSettingsRequest": {
         "additionalProperties": false,
         "properties": {
@@ -13792,6 +14143,22 @@
             "type": "integer"
           }
         },
+        "type": "object"
+      },
+      "UpdateProjectNotesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content_md": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_md"
+        ],
         "type": "object"
       },
       "UpdateSessionRequest": {
@@ -19890,6 +20257,308 @@
         ]
       }
     },
+    "/api/v1/projects/{projectId}/board/coordinator/apply-plan": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardCoordinatorApply-plan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinatorApplyPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoordinatorApplyPlanResult"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid coordinator apply-plan request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Dependency cycle detected"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/coordinator/apply-plan",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/coordinator/autopilot": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdBoardCoordinatorAutopilot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAutopilotState"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid autopilot request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/board/coordinator/autopilot",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1ProjectsByProjectIdBoardCoordinatorAutopilot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectAutopilotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAutopilotState"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid autopilot update request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Autopilot state conflict"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "PUT /api/v1/projects/{projectId}/board/coordinator/autopilot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/board/coordinator/plan": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdBoardCoordinatorPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinatorPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoordinatorPlanResult"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid coordinator plan request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Dependency cycle or revision conflict"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "POST /api/v1/projects/{projectId}/board/coordinator/plan",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/projects/{projectId}/board/events": {
       "get": {
         "description": "Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed).",
@@ -20605,6 +21274,146 @@
         "summary": "List project attachment exposures",
         "tags": [
           "Attachments"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/notes": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdNotes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectNotes"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid project notes request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "GET /api/v1/projects/{projectId}/notes",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1ProjectsByProjectIdNotes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectNotes"
+                }
+              }
+            },
+            "description": "Core-owned Project Board response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid project notes update request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Notes revision conflict"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable"
+          }
+        },
+        "summary": "PUT /api/v1/projects/{projectId}/notes",
+        "tags": [
+          "Projects"
         ]
       }
     },

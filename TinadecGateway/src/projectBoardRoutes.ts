@@ -15,6 +15,7 @@ const VIEW_GROUP_BYS = ['status', 'project', 'assignee', 'priority', 'none'] as 
 const VIEW_SWIMLANE_BYS = ['project', 'assignee'] as const;
 const VIEW_SORT_BYS = ['manual', 'priority', 'updated_at', 'dependency'] as const;
 const SPATIAL_PROMOTION_MODES = ['merge_single', 'split_many', 'parent_with_children'] as const;
+const PLANNER_SOURCES = ['llm', 'heuristic'] as const;
 const SPATIAL_OBJECT_KINDS = [
   'work',
   'section',
@@ -33,6 +34,8 @@ const BOARD_EVENT_TYPES = [
   'view_upserted',
   'view_deleted',
   'sync_completed',
+  'notes_updated',
+  'autopilot_updated',
 ] as const;
 
 export const projectBoardSchemas = {
@@ -486,6 +489,8 @@ export const projectBoardSchemas = {
       settings: nullableRef('ProjectBoardSettings'),
       view_id: { type: 'string', format: 'uuid', nullable: true },
       view: nullableRef('ProjectBoardView'),
+      notes: nullableRef('ProjectNotes'),
+      autopilot: nullableRef('ProjectAutopilotState'),
       occurred_at_unix_ms: { type: 'integer' },
     },
     required: ['seq', 'event_type', 'occurred_at_unix_ms'],
@@ -634,6 +639,152 @@ export const projectBoardSchemas = {
     },
     required: ['mode', 'parent_task_id', 'tasks', 'updated_object_links', 'spatial_seq'],
   },
+  ProjectNotes: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', format: 'uuid' },
+      content_md: { type: 'string' },
+      resolved_file_path: { type: 'string' },
+      storage_mode: { type: 'string', enum: [...STORAGE_MODES] },
+      revision: { type: 'integer' },
+      last_synced_hash: { type: 'string' },
+      updated_at_unix_ms: { type: 'integer' },
+    },
+    required: [
+      'project_id',
+      'content_md',
+      'resolved_file_path',
+      'storage_mode',
+      'revision',
+      'last_synced_hash',
+      'updated_at_unix_ms',
+    ],
+  },
+  UpdateProjectNotesRequest: {
+    type: 'object',
+    properties: {
+      content_md: { type: 'string' },
+      expected_revision: { type: 'integer', nullable: true },
+    },
+    required: ['content_md'],
+    additionalProperties: false,
+  },
+  CoordinatorTaskDraft: {
+    type: 'object',
+    properties: {
+      draft_id: { type: 'string' },
+      title: { type: 'string' },
+      description_md: { type: 'string' },
+      checklist: { type: 'array', items: ref('ProjectBoardChecklistItem') },
+      priority: { type: 'string', enum: [...TASK_PRIORITIES] },
+      status: { type: 'string', enum: [...TASK_STATUSES] },
+      assignee: nullableRef('ProjectBoardAssignee'),
+      labels: { type: 'array', items: { type: 'string' } },
+      depends_on_draft_ids: { type: 'array', items: { type: 'string' } },
+      depends_on_task_ids: { type: 'array', items: { type: 'string', format: 'uuid' } },
+    },
+    required: [
+      'draft_id',
+      'title',
+      'description_md',
+      'checklist',
+      'priority',
+      'status',
+      'assignee',
+      'labels',
+      'depends_on_draft_ids',
+      'depends_on_task_ids',
+    ],
+  },
+  CoordinatorPlanRequest: {
+    type: 'object',
+    properties: {
+      goal: { type: 'string' },
+      default_status: { type: 'string', enum: [...TASK_STATUSES], nullable: true },
+      default_assignee: nullableRef('ProjectBoardAssignee'),
+      auto_apply: { type: 'boolean' },
+      max_tasks: { type: 'integer', nullable: true },
+    },
+    required: ['goal'],
+    additionalProperties: false,
+  },
+  CoordinatorPlanResult: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', format: 'uuid' },
+      goal: { type: 'string' },
+      summary: { type: 'string' },
+      planner_source: { type: 'string', enum: [...PLANNER_SOURCES] },
+      auto_applied: { type: 'boolean' },
+      drafts: { type: 'array', items: ref('CoordinatorTaskDraft') },
+      created_tasks: { type: 'array', items: ref('ProjectBoardTask') },
+    },
+    required: [
+      'project_id',
+      'goal',
+      'summary',
+      'planner_source',
+      'auto_applied',
+      'drafts',
+      'created_tasks',
+    ],
+  },
+  CoordinatorApplyPlanRequest: {
+    type: 'object',
+    properties: {
+      goal: { type: 'string', nullable: true },
+      update_notes: { type: 'boolean', nullable: true },
+      drafts: { type: 'array', items: ref('CoordinatorTaskDraft') },
+    },
+    required: ['drafts'],
+    additionalProperties: false,
+  },
+  CoordinatorApplyPlanResult: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', format: 'uuid' },
+      created_tasks: { type: 'array', items: ref('ProjectBoardTask') },
+    },
+    required: ['project_id', 'created_tasks'],
+  },
+  UpdateProjectAutopilotRequest: {
+    type: 'object',
+    properties: {
+      autopilot_enabled: { type: 'boolean', nullable: true },
+      max_concurrency: { type: 'integer', nullable: true },
+      cancel_active: { type: 'boolean', nullable: true },
+    },
+    additionalProperties: false,
+  },
+  ProjectAutopilotState: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', format: 'uuid' },
+      autopilot_enabled: { type: 'boolean' },
+      max_concurrency: { type: 'integer' },
+      active_task_count: { type: 'integer' },
+      active_task_ids: { type: 'array', items: { type: 'string', format: 'uuid' } },
+      queued_ready_count: { type: 'integer' },
+      blocked_task_count: { type: 'integer' },
+      blocked_tasks: { type: 'array', items: ref('ProjectBoardTask') },
+      last_tick_at_unix_ms: { type: 'integer', nullable: true },
+      last_error: { type: 'string', nullable: true },
+      updated_at_unix_ms: { type: 'integer' },
+    },
+    required: [
+      'project_id',
+      'autopilot_enabled',
+      'max_concurrency',
+      'active_task_count',
+      'active_task_ids',
+      'queued_ready_count',
+      'blocked_task_count',
+      'blocked_tasks',
+      'last_tick_at_unix_ms',
+      'last_error',
+      'updated_at_unix_ms',
+    ],
+  },
 };
 
 function keepStreamOpen(server: unknown, request: Request) {
@@ -780,6 +931,85 @@ export function registerProjectBoardRoutes(
       path: '/api/v1/projects/:projectId/board/sync',
       openApiPath: '/api/v1/projects/{projectId}/board/sync',
       responseSchema: 'ProjectBoardSyncResult',
+    },
+    // Phase 3 (#56): Project living document (`notes.md`), Coordinator planner, and Autopilot
+    {
+      method: 'GET',
+      path: '/api/v1/projects/:projectId/notes',
+      openApiPath: '/api/v1/projects/{projectId}/notes',
+      responseSchema: 'ProjectNotes',
+      errorResponses: {
+        400: 'Invalid project notes request',
+        404: 'Project not found',
+        502: 'Upstream Core unreachable',
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/api/v1/projects/:projectId/notes',
+      openApiPath: '/api/v1/projects/{projectId}/notes',
+      bodySchema: 'UpdateProjectNotesRequest',
+      bodyRequired: true,
+      responseSchema: 'ProjectNotes',
+      errorResponses: {
+        400: 'Invalid project notes update request',
+        404: 'Project not found',
+        409: 'Notes revision conflict',
+        502: 'Upstream Core unreachable',
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/projects/:projectId/board/coordinator/plan',
+      openApiPath: '/api/v1/projects/{projectId}/board/coordinator/plan',
+      bodySchema: 'CoordinatorPlanRequest',
+      bodyRequired: true,
+      responseSchema: 'CoordinatorPlanResult',
+      errorResponses: {
+        400: 'Invalid coordinator plan request',
+        404: 'Project not found',
+        409: 'Dependency cycle or revision conflict',
+        502: 'Upstream Core unreachable',
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/projects/:projectId/board/coordinator/apply-plan',
+      openApiPath: '/api/v1/projects/{projectId}/board/coordinator/apply-plan',
+      bodySchema: 'CoordinatorApplyPlanRequest',
+      bodyRequired: true,
+      responseSchema: 'CoordinatorApplyPlanResult',
+      errorResponses: {
+        400: 'Invalid coordinator apply-plan request',
+        404: 'Project not found',
+        409: 'Dependency cycle detected',
+        502: 'Upstream Core unreachable',
+      },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/projects/:projectId/board/coordinator/autopilot',
+      openApiPath: '/api/v1/projects/{projectId}/board/coordinator/autopilot',
+      responseSchema: 'ProjectAutopilotState',
+      errorResponses: {
+        400: 'Invalid autopilot request',
+        404: 'Project not found',
+        502: 'Upstream Core unreachable',
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/api/v1/projects/:projectId/board/coordinator/autopilot',
+      openApiPath: '/api/v1/projects/{projectId}/board/coordinator/autopilot',
+      bodySchema: 'UpdateProjectAutopilotRequest',
+      bodyRequired: true,
+      responseSchema: 'ProjectAutopilotState',
+      errorResponses: {
+        400: 'Invalid autopilot update request',
+        404: 'Project not found',
+        409: 'Autopilot state conflict',
+        502: 'Upstream Core unreachable',
+      },
     },
     // Project task actions (registered before /tasks/:taskId)
     {

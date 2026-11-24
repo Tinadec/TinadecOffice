@@ -824,6 +824,20 @@ export interface paths {
     /** Archive project */
     post: operations["postApiV1ProjectsByProjectIdArchive"];
   };
+  "/api/v1/projects/{projectId}/board/coordinator/apply-plan": {
+    /** POST /api/v1/projects/{projectId}/board/coordinator/apply-plan */
+    post: operations["postApiV1ProjectsByProjectIdBoardCoordinatorApply-plan"];
+  };
+  "/api/v1/projects/{projectId}/board/coordinator/autopilot": {
+    /** GET /api/v1/projects/{projectId}/board/coordinator/autopilot */
+    get: operations["getApiV1ProjectsByProjectIdBoardCoordinatorAutopilot"];
+    /** PUT /api/v1/projects/{projectId}/board/coordinator/autopilot */
+    put: operations["putApiV1ProjectsByProjectIdBoardCoordinatorAutopilot"];
+  };
+  "/api/v1/projects/{projectId}/board/coordinator/plan": {
+    /** POST /api/v1/projects/{projectId}/board/coordinator/plan */
+    post: operations["postApiV1ProjectsByProjectIdBoardCoordinatorPlan"];
+  };
   "/api/v1/projects/{projectId}/board/events": {
     /**
      * GET /api/v1/projects/{projectId}/board/events
@@ -886,6 +900,12 @@ export interface paths {
   "/api/v1/projects/{projectId}/exposures": {
     /** List project attachment exposures */
     get: operations["getApiV1ProjectsByProjectIdExposures"];
+  };
+  "/api/v1/projects/{projectId}/notes": {
+    /** GET /api/v1/projects/{projectId}/notes */
+    get: operations["getApiV1ProjectsByProjectIdNotes"];
+    /** PUT /api/v1/projects/{projectId}/notes */
+    put: operations["putApiV1ProjectsByProjectIdNotes"];
   };
   "/api/v1/projects/{projectId}/overview": {
     /** Project overview rollup */
@@ -2769,6 +2789,49 @@ export interface components {
       total_matches: number;
       verbatim_snippets: components["schemas"]["RecallVerbatimSnippet"][];
     };
+    CoordinatorApplyPlanRequest: {
+      drafts: components["schemas"]["CoordinatorTaskDraft"][];
+      goal?: string | null;
+      update_notes?: boolean | null;
+    };
+    CoordinatorApplyPlanResult: {
+      created_tasks: components["schemas"]["ProjectBoardTask"][];
+      /** Format: uuid */
+      project_id: string;
+    };
+    CoordinatorPlanRequest: {
+      auto_apply?: boolean;
+      default_assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
+      /** @enum {string|null} */
+      default_status?: "backlog" | "ready" | "in_progress" | "in_review" | "done" | null;
+      goal: string;
+      max_tasks?: number | null;
+    };
+    CoordinatorPlanResult: {
+      auto_applied: boolean;
+      created_tasks: components["schemas"]["ProjectBoardTask"][];
+      drafts: components["schemas"]["CoordinatorTaskDraft"][];
+      goal: string;
+      /** @enum {string} */
+      planner_source: "llm" | "heuristic";
+      /** Format: uuid */
+      project_id: string;
+      summary: string;
+    };
+    CoordinatorTaskDraft: {
+      assignee: components["schemas"]["ProjectBoardAssignee"] | null;
+      checklist: components["schemas"]["ProjectBoardChecklistItem"][];
+      depends_on_draft_ids: string[];
+      depends_on_task_ids: string[];
+      description_md: string;
+      draft_id: string;
+      labels: string[];
+      /** @enum {string} */
+      priority: "urgent" | "high" | "medium" | "low" | "none";
+      /** @enum {string} */
+      status: "backlog" | "ready" | "in_progress" | "in_review" | "done";
+      title: string;
+    };
     CreateProjectBoardTaskRequest: {
       assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
       blocked?: boolean | null;
@@ -3627,6 +3690,20 @@ export interface components {
       updated_at: string | null;
       [key: string]: unknown;
     };
+    ProjectAutopilotState: {
+      active_task_count: number;
+      active_task_ids: string[];
+      autopilot_enabled: boolean;
+      blocked_task_count: number;
+      blocked_tasks: components["schemas"]["ProjectBoardTask"][];
+      last_error: string | null;
+      last_tick_at_unix_ms: number | null;
+      max_concurrency: number;
+      /** Format: uuid */
+      project_id: string;
+      queued_ready_count: number;
+      updated_at_unix_ms: number;
+    };
     ProjectBoardAssignee: {
       display_name?: string | null;
       harness_id?: string | null;
@@ -3653,8 +3730,10 @@ export interface components {
       removed: number;
     };
     ProjectBoardEvent: {
+      autopilot?: components["schemas"]["ProjectAutopilotState"] | null;
       /** @enum {string} */
-      event_type: "snapshot" | "task_upserted" | "task_deleted" | "settings_updated" | "view_upserted" | "view_deleted" | "sync_completed";
+      event_type: "snapshot" | "task_upserted" | "task_deleted" | "settings_updated" | "view_upserted" | "view_deleted" | "sync_completed" | "notes_updated" | "autopilot_updated";
+      notes?: components["schemas"]["ProjectNotes"] | null;
       occurred_at_unix_ms: number;
       /** Format: uuid */
       project_id?: string | null;
@@ -3836,6 +3915,17 @@ export interface components {
       statuses?: (("backlog" | "ready" | "in_progress" | "in_review" | "done")[]) | null;
     };
     ProjectList: components["schemas"]["Project"][];
+    ProjectNotes: {
+      content_md: string;
+      last_synced_hash: string;
+      /** Format: uuid */
+      project_id: string;
+      resolved_file_path: string;
+      revision: number;
+      /** @enum {string} */
+      storage_mode: "repo_tinadec" | "app_data" | "custom_dir";
+      updated_at_unix_ms: number;
+    };
     PromoteFromSpatialRequest: {
       assignee?: components["schemas"]["ProjectBoardAssignee"] | null;
       labels?: string[] | null;
@@ -5076,6 +5166,11 @@ export interface components {
       workspace_root?: string | null;
       [key: string]: unknown;
     };
+    UpdateProjectAutopilotRequest: {
+      autopilot_enabled?: boolean | null;
+      cancel_active?: boolean | null;
+      max_concurrency?: number | null;
+    };
     UpdateProjectBoardSettingsRequest: {
       autopilot_enabled?: boolean | null;
       custom_sync_root?: string | null;
@@ -5110,6 +5205,10 @@ export interface components {
       config?: components["schemas"]["ProjectBoardViewConfig"] | null;
       name?: string | null;
       sort_order?: number | null;
+    };
+    UpdateProjectNotesRequest: {
+      content_md: string;
+      expected_revision?: number | null;
     };
     UpdateSessionRequest: {
       clear_meeting_model_override?: boolean;
@@ -8381,6 +8480,175 @@ export interface operations {
       };
     };
   };
+  /** POST /api/v1/projects/{projectId}/board/coordinator/apply-plan */
+  "postApiV1ProjectsByProjectIdBoardCoordinatorApply-plan": {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoordinatorApplyPlanRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CoordinatorApplyPlanResult"];
+        };
+      };
+      /** @description Invalid coordinator apply-plan request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Dependency cycle detected */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/board/coordinator/autopilot */
+  getApiV1ProjectsByProjectIdBoardCoordinatorAutopilot: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectAutopilotState"];
+        };
+      };
+      /** @description Invalid autopilot request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/projects/{projectId}/board/coordinator/autopilot */
+  putApiV1ProjectsByProjectIdBoardCoordinatorAutopilot: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProjectAutopilotRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectAutopilotState"];
+        };
+      };
+      /** @description Invalid autopilot update request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Autopilot state conflict */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** POST /api/v1/projects/{projectId}/board/coordinator/plan */
+  postApiV1ProjectsByProjectIdBoardCoordinatorPlan: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoordinatorPlanRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CoordinatorPlanResult"];
+        };
+      };
+      /** @description Invalid coordinator plan request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Dependency cycle or revision conflict */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   /**
    * GET /api/v1/projects/{projectId}/board/events
    * @description Unbuffered SSE stream for single-project board events (snapshot, task_upserted, task_deleted, settings_updated, view_upserted, view_deleted, sync_completed).
@@ -8729,6 +8997,85 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["MessageAttachmentList"];
+        };
+      };
+    };
+  };
+  /** GET /api/v1/projects/{projectId}/notes */
+  getApiV1ProjectsByProjectIdNotes: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectNotes"];
+        };
+      };
+      /** @description Invalid project notes request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** PUT /api/v1/projects/{projectId}/notes */
+  putApiV1ProjectsByProjectIdNotes: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProjectNotesRequest"];
+      };
+    };
+    responses: {
+      /** @description Core-owned Project Board response */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ProjectNotes"];
+        };
+      };
+      /** @description Invalid project notes update request */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Project not found */
+      404: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Notes revision conflict */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
         };
       };
     };
