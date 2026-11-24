@@ -308,11 +308,10 @@ public sealed class ProjectTaskExecutionService
             ?? current.Assignee
             ?? new ProjectBoardAssigneeDto { Kind = settings.DefaultAssigneeKind };
 
-        Interlocked.Increment(ref _dispatchCount);
-
         // 1. Human assignee: mark in_progress without starting any AI session or CLI run.
         if (effectiveAssignee.Kind == ProjectBoardAssigneeKinds.Human)
         {
+            Interlocked.Increment(ref _dispatchCount);
             return await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
             {
                 row.AssigneeJson = JsonSerializer.Serialize(effectiveAssignee, ProjectBoardMarkdownCodec.CanonicalJson);
@@ -378,9 +377,14 @@ public sealed class ProjectTaskExecutionService
             {
                 leaseId = decision.Lease.Id;
             }
+            else if (request.FailOnLeaseContention && decision.Conflicts.Count > 0)
+            {
+                throw new ProjectBoardLeaseContentionException(ResourceLeaseMessages.Describe(claim, decision.Conflicts));
+            }
         }
 
-        var prompt = BuildDispatchPrompt(project, settings, current, workingDirectory, request.ExtraPrompt);
+        Interlocked.Increment(ref _dispatchCount);
+        var prompt = await BuildDispatchPromptAsync(project, settings, current, workingDirectory, request.ExtraPrompt, cancellationToken).ConfigureAwait(false);
 
         // 4A. External CLI Harness execution
         if (effectiveAssignee.Kind == ProjectBoardAssigneeKinds.Cli && cliHarnessSpec is not null)
@@ -413,7 +417,7 @@ public sealed class ProjectTaskExecutionService
                     session.Id,
                     taskId), cliCts.Token).ConfigureAwait(false);
 
-                if (outcome.Succeeded)
+                if (outcome.Succeeded && !IsHumanDecisionRequiredOutput(outcome.OutputSummary, out _))
                 {
                     await _sessionStore.AddMessageAsync(session.Id, outcome.OutputSummary, "assistant", null, CancellationToken.None).ConfigureAwait(false);
                     var diff = ComputeGitDiff(workingDirectory, worktreePath);
@@ -424,7 +428,7 @@ public sealed class ProjectTaskExecutionService
                         Removed = diff.Files.Sum(f => f.Removed)
                     };
 
-                    return await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
+                    var completedTask = await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
                     {
                         row.Status = ProjectBoardTaskStatuses.InReview;
                         row.RunStatus = "completed";
@@ -433,15 +437,33 @@ public sealed class ProjectTaskExecutionService
                         row.LiveDigestSummary = outcome.OutputSummary;
                         row.DiffStatsJson = JsonSerializer.Serialize(diffStats, ProjectBoardMarkdownCodec.CanonicalJson);
                     }, exportDeclarativeMarkdown: true, CancellationToken.None).ConfigureAwait(false);
+
+                    await TryAppendTaskProgressNoteAsync(
+                        projectId,
+                        $"- [{current.TaskKey}] Completed ({cliHarnessSpec.DisplayName}): {current.Title} — {outcome.OutputSummary}",
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    return completedTask;
                 }
+
+                _ = IsHumanDecisionRequiredOutput(outcome.OutputSummary, out var humanDecisionReason);
+                await TryReleaseLeaseSafeAsync(leaseId).ConfigureAwait(false);
 
                 return await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
                 {
-                    row.RunStatus = "failed";
+                    row.RunStatus = outcome.Succeeded ? "awaiting_user" : "failed";
+                    row.LeaseId = null;
                     row.Blocked = true;
-                    row.BlockedReason = outcome.ErrorMessage ?? $"CLI harness '{cliHarnessSpec.DisplayName}' failed.";
+                    row.BlockedReason = humanDecisionReason
+                        ?? outcome.ErrorMessage
+                        ?? $"CLI harness '{cliHarnessSpec.DisplayName}' failed.";
                     row.LiveDigestSummary = row.BlockedReason;
                 }, exportDeclarativeMarkdown: true, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cliCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                await TryReleaseLeaseSafeAsync(leaseId).ConfigureAwait(false);
+                return await _coordinator.GetTaskAsync(projectId, taskId, CancellationToken.None).ConfigureAwait(false);
             }
             finally
             {
@@ -582,7 +604,7 @@ public sealed class ProjectTaskExecutionService
             }
         }
 
-        return await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
+        var approvedTask = await _coordinator.MutateTaskRuntimeStateAsync(projectId, taskId, row =>
         {
             row.Status = ProjectBoardTaskStatuses.Done;
             row.Blocked = false;
@@ -595,6 +617,17 @@ public sealed class ProjectTaskExecutionService
             if (!string.IsNullOrWhiteSpace(request.Note))
                 row.LiveDigestSummary = $"Approved: {request.Note.Trim()}";
         }, exportDeclarativeMarkdown: true, cancellationToken).ConfigureAwait(false);
+
+        if (approvedTask is not null)
+        {
+            var noteSuffix = string.IsNullOrWhiteSpace(request.Note) ? string.Empty : $" — {request.Note.Trim()}";
+            await TryAppendTaskProgressNoteAsync(
+                projectId,
+                $"- [{task.TaskKey}] Approved & Done: {task.Title}{noteSuffix}",
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return approvedTask;
     }
 
     public async Task<ProjectBoardTaskDto?> RequestTaskChangesAsync(
@@ -824,6 +857,14 @@ public sealed class ProjectTaskExecutionService
             || nextBlocked != task.Blocked
             || !string.Equals(nextBlockedReason, task.BlockedReason, StringComparison.Ordinal);
 
+        var transitionedToComplete = mappedRunStatus == "completed"
+            && task.Status is not (ProjectBoardTaskStatuses.InReview or ProjectBoardTaskStatuses.Done);
+        var releaseLeaseOnFailure = mappedRunStatus is "failed" or "cancelled" && task.LeaseId.HasValue;
+        if (releaseLeaseOnFailure)
+        {
+            await TryReleaseLeaseSafeAsync(task.LeaseId).ConfigureAwait(false);
+        }
+
         var updated = await _coordinator.MutateTaskRuntimeStateAsync(projectId, task.TaskId, row =>
         {
             row.Status = nextTaskStatus;
@@ -832,9 +873,20 @@ public sealed class ProjectTaskExecutionService
             row.ActiveRunId = nextActiveRunId;
             row.RunStatus = mappedRunStatus;
             row.LiveDigestSummary = digestHeadline;
+            if (releaseLeaseOnFailure)
+                row.LeaseId = null;
             if (computedDiffStats is not null)
                 row.DiffStatsJson = JsonSerializer.Serialize(computedDiffStats, ProjectBoardMarkdownCodec.CanonicalJson);
         }, exportDeclarativeMarkdown: declarativeChanged, cancellationToken).ConfigureAwait(false);
+
+        if (transitionedToComplete && updated is not null)
+        {
+            var summaryPart = string.IsNullOrWhiteSpace(digestHeadline) ? "Run completed." : digestHeadline;
+            await TryAppendTaskProgressNoteAsync(
+                projectId,
+                $"- [{task.TaskKey}] Completed (Native Agent): {task.Title} — {summaryPart}",
+                cancellationToken).ConfigureAwait(false);
+        }
 
         return updated ?? task;
     }
@@ -944,12 +996,13 @@ public sealed class ProjectTaskExecutionService
             boardTaskId: task.TaskId).ConfigureAwait(false);
     }
 
-    private string BuildDispatchPrompt(
+    private async Task<string> BuildDispatchPromptAsync(
         ProjectRecord project,
         ProjectBoardSettingsDto settings,
         ProjectBoardTaskDto task,
         string workingDirectory,
-        string? extraPrompt)
+        string? extraPrompt,
+        CancellationToken ct)
     {
         var sb = new StringBuilder(1024);
         sb.Append("# Task ").Append(task.TaskKey).Append(": ").Append(task.Title).Append("\n\n");
@@ -972,26 +1025,45 @@ public sealed class ProjectTaskExecutionService
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(settings.ProjectInstructions))
+        var instructions = settings.ProjectInstructions?.Trim() ?? string.Empty;
+        if (instructions.Length > ProjectBoardFileSyncService.DefaultNotesContextMaxChars)
+            instructions = instructions[..ProjectBoardFileSyncService.DefaultNotesContextMaxChars].TrimEnd() + "\n…";
+
+        if (!string.IsNullOrWhiteSpace(instructions))
         {
-            sb.Append("\n## Project Instructions\n").Append(settings.ProjectInstructions.Trim()).Append('\n');
+            sb.Append("\n## Project Instructions\n").Append(instructions).Append('\n');
         }
 
-        var notesPath = Path.Combine(project.RootPath, ".tinadec", "project", "notes.md");
-        if (File.Exists(notesPath))
+        string notesSummary = string.Empty;
+        if (_services.GetService<IProjectNotesContextReader>() is { } contextReader)
         {
-            try
+            var snap = await contextReader.ReadProjectContextAsync(
+                project.Id,
+                ProjectBoardFileSyncService.DefaultNotesContextMaxChars,
+                ct).ConfigureAwait(false);
+            if (snap is not null)
+                notesSummary = snap.NotesSummaryMarkdown;
+        }
+        else
+        {
+            var notesPath = Path.Combine(project.RootPath, ".tinadec", "project", "notes.md");
+            if (File.Exists(notesPath))
             {
-                var notes = File.ReadAllText(notesPath).Trim();
-                if (notes.Length > 0)
+                try
                 {
-                    if (notes.Length > 4000) notes = notes[..4000] + "\n…";
-                    sb.Append("\n## Project Notes (.tinadec/project/notes.md)\n").Append(notes).Append('\n');
+                    notesSummary = ProjectBoardFileSyncService.SummarizeProjectNotes(
+                        await File.ReadAllTextAsync(notesPath, ct).ConfigureAwait(false),
+                        ProjectBoardFileSyncService.DefaultNotesContextMaxChars);
+                }
+                catch
+                {
                 }
             }
-            catch
-            {
-            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(notesSummary))
+        {
+            sb.Append("\n## Project Notes (notes.md)\n").Append(notesSummary).Append('\n');
         }
 
         if (!string.IsNullOrWhiteSpace(task.DescriptionMd))
@@ -1014,6 +1086,54 @@ public sealed class ProjectTaskExecutionService
         }
 
         return sb.ToString();
+    }
+
+    private async Task TryAppendTaskProgressNoteAsync(Guid projectId, string entry, CancellationToken ct)
+    {
+        try
+        {
+            if (_coordinator.GetSyncHook() is { } syncHook)
+            {
+                _ = await syncHook.AppendProjectNoteEntryAsync(projectId, entry, ct).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogDebug(ex, "Could not append task progress note for project {ProjectId}.", projectId);
+        }
+    }
+
+    private async Task TryReleaseLeaseSafeAsync(Guid? leaseId)
+    {
+        if (!leaseId.HasValue || _services.GetService<IResourceLeaseService>() is not { } leaseService)
+            return;
+
+        try
+        {
+            await leaseService.ReleaseAsync(leaseId.Value, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsHumanDecisionRequiredOutput(string? output, out string? reason)
+    {
+        reason = null;
+        if (string.IsNullOrWhiteSpace(output))
+            return false;
+
+        var trimmed = output.Trim();
+        foreach (var prefix in new[] { "[BLOCKED]", "BLOCKED:", "HUMAN_DECISION_REQUIRED:" })
+        {
+            if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var detail = trimmed[prefix.Length..].Trim();
+                reason = string.IsNullOrEmpty(detail) ? "Task requires human decision before continuing." : detail;
+                return true;
+            }
+        }
+        return false;
     }
 
     private string? TryAllocateGitWorktree(ProjectRecord project, string taskKey, Guid taskId)

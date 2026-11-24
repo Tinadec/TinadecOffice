@@ -705,6 +705,9 @@ public sealed class DispatchProjectBoardTaskRequest
 
     [JsonPropertyName("extra_prompt")]
     public string? ExtraPrompt { get; init; }
+
+    [JsonIgnore]
+    public bool FailOnLeaseContention { get; init; }
 }
 
 public sealed class ProjectBoardDiffFileDto
@@ -775,6 +778,12 @@ public sealed class ProjectBoardEventDto
 
     [JsonPropertyName("view")]
     public ProjectBoardViewDto? View { get; init; }
+
+    [JsonPropertyName("notes")]
+    public ProjectNotesDto? Notes { get; init; }
+
+    [JsonPropertyName("autopilot")]
+    public ProjectAutopilotStateDto? Autopilot { get; init; }
 
     [JsonPropertyName("occurred_at_unix_ms")]
     public long OccurredAtUnixMs { get; init; }
@@ -851,4 +860,190 @@ public sealed class PromoteFromSpatialResultDto
 
     [JsonPropertyName("spatial_seq")]
     public long SpatialSeq { get; init; }
+}
+
+public sealed class ProjectNotesDto
+{
+    [JsonPropertyName("project_id")]
+    public Guid ProjectId { get; init; }
+
+    [JsonPropertyName("content_md")]
+    public string ContentMd { get; init; } = string.Empty;
+
+    [JsonPropertyName("resolved_file_path")]
+    public string ResolvedFilePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("storage_mode")]
+    public string StorageMode { get; init; } = ProjectBoardStorageModes.RepoTinadec;
+
+    [JsonPropertyName("revision")]
+    public long Revision { get; init; } = 1;
+
+    [JsonPropertyName("last_synced_hash")]
+    public string LastSyncedHash { get; init; } = string.Empty;
+
+    [JsonPropertyName("updated_at_unix_ms")]
+    public long UpdatedAtUnixMs { get; init; }
+}
+
+public sealed class UpdateProjectNotesRequest
+{
+    [JsonPropertyName("content_md")]
+    public string? ContentMd { get; init; }
+
+    [JsonPropertyName("expected_revision")]
+    public long? ExpectedRevision { get; init; }
+}
+
+public static class CoordinatorPlannerSources
+{
+    public const string Llm = "llm";
+    public const string Heuristic = "heuristic";
+}
+
+public sealed class CoordinatorTaskDraftDto
+{
+    [JsonPropertyName("draft_id")]
+    public string DraftId { get; init; } = string.Empty;
+
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("description_md")]
+    public string DescriptionMd { get; init; } = string.Empty;
+
+    [JsonPropertyName("checklist")]
+    public List<ProjectBoardChecklistItemDto> Checklist { get; init; } = [];
+
+    [JsonPropertyName("priority")]
+    public string Priority { get; init; } = ProjectBoardPriorities.Medium;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = ProjectBoardTaskStatuses.Ready;
+
+    [JsonPropertyName("assignee")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public ProjectBoardAssigneeDto? Assignee { get; init; }
+
+    [JsonPropertyName("labels")]
+    public List<string> Labels { get; init; } = [];
+
+    [JsonPropertyName("depends_on_draft_ids")]
+    public List<string> DependsOnDraftIds { get; init; } = [];
+
+    [JsonPropertyName("depends_on_task_ids")]
+    public List<Guid> DependsOnTaskIds { get; init; } = [];
+}
+
+public sealed class CoordinatorPlanRequest
+{
+    [JsonPropertyName("goal")]
+    public string Goal { get; init; } = string.Empty;
+
+    [JsonPropertyName("default_status")]
+    public string? DefaultStatus { get; init; }
+
+    [JsonPropertyName("default_assignee")]
+    public ProjectBoardAssigneeDto? DefaultAssignee { get; init; }
+
+    [JsonPropertyName("auto_apply")]
+    public bool AutoApply { get; init; }
+
+    [JsonPropertyName("max_tasks")]
+    public int? MaxTasks { get; init; }
+}
+
+public sealed class CoordinatorPlanResultDto
+{
+    [JsonPropertyName("project_id")]
+    public Guid ProjectId { get; init; }
+
+    [JsonPropertyName("goal")]
+    public string Goal { get; init; } = string.Empty;
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; init; } = string.Empty;
+
+    [JsonPropertyName("planner_source")]
+    public string PlannerSource { get; init; } = CoordinatorPlannerSources.Heuristic;
+
+    [JsonPropertyName("auto_applied")]
+    public bool AutoApplied { get; init; }
+
+    [JsonPropertyName("drafts")]
+    public List<CoordinatorTaskDraftDto> Drafts { get; init; } = [];
+
+    [JsonPropertyName("created_tasks")]
+    public List<ProjectBoardTaskDto> CreatedTasks { get; init; } = [];
+}
+
+public sealed class CoordinatorApplyPlanRequest
+{
+    [JsonPropertyName("goal")]
+    public string? Goal { get; init; }
+
+    [JsonPropertyName("update_notes")]
+    public bool? UpdateNotes { get; init; }
+
+    [JsonPropertyName("drafts")]
+    public List<CoordinatorTaskDraftDto> Drafts { get; init; } = [];
+}
+
+public sealed class CoordinatorApplyPlanResultDto
+{
+    [JsonPropertyName("project_id")]
+    public Guid ProjectId { get; init; }
+
+    [JsonPropertyName("created_tasks")]
+    public List<ProjectBoardTaskDto> CreatedTasks { get; init; } = [];
+}
+
+public sealed class UpdateProjectAutopilotRequest
+{
+    [JsonPropertyName("autopilot_enabled")]
+    public bool? AutopilotEnabled { get; init; }
+
+    [JsonPropertyName("max_concurrency")]
+    public int? MaxConcurrency { get; init; }
+
+    [JsonPropertyName("cancel_active")]
+    public bool? CancelActive { get; init; }
+}
+
+public sealed class ProjectAutopilotStateDto
+{
+    [JsonPropertyName("project_id")]
+    public Guid ProjectId { get; init; }
+
+    [JsonPropertyName("autopilot_enabled")]
+    public bool AutopilotEnabled { get; init; }
+
+    [JsonPropertyName("max_concurrency")]
+    public int MaxConcurrency { get; init; } = 2;
+
+    [JsonPropertyName("active_task_count")]
+    public int ActiveTaskCount { get; init; }
+
+    [JsonPropertyName("active_task_ids")]
+    public List<Guid> ActiveTaskIds { get; init; } = [];
+
+    [JsonPropertyName("queued_ready_count")]
+    public int QueuedReadyCount { get; init; }
+
+    [JsonPropertyName("blocked_task_count")]
+    public int BlockedTaskCount { get; init; }
+
+    [JsonPropertyName("blocked_tasks")]
+    public List<ProjectBoardTaskDto> BlockedTasks { get; init; } = [];
+
+    [JsonPropertyName("last_tick_at_unix_ms")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public long? LastTickAtUnixMs { get; init; }
+
+    [JsonPropertyName("last_error")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? LastError { get; init; }
+
+    [JsonPropertyName("updated_at_unix_ms")]
+    public long UpdatedAtUnixMs { get; init; }
 }

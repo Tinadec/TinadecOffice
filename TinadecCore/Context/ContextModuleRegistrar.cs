@@ -48,6 +48,7 @@ internal sealed class ContextProvider : IContextProvider
     private readonly IContextStrategyService _strategyService;
     private readonly IContextMemoryService? _contextMemory;
     private readonly ISessionLocator? _sessionLocator;
+    private readonly IProjectNotesContextReader? _projectNotes;
 
     public ContextProvider(
         IConversationStore conversations,
@@ -57,7 +58,8 @@ internal sealed class ContextProvider : IContextProvider
         ITinaChatRunInput? chatInputs = null,
         IContextStrategyService? strategyService = null,
         IContextMemoryService? contextMemory = null,
-        ISessionLocator? sessionLocator = null)
+        ISessionLocator? sessionLocator = null,
+        IProjectNotesContextReader? projectNotes = null)
     {
         _conversations = conversations;
         _memory = memory;
@@ -67,6 +69,7 @@ internal sealed class ContextProvider : IContextProvider
         _strategyService = strategyService ?? new ContextStrategyService();
         _contextMemory = contextMemory;
         _sessionLocator = sessionLocator;
+        _projectNotes = projectNotes;
     }
 
     public async Task<ContextPack> BuildContextAsync(
@@ -198,6 +201,13 @@ internal sealed class ContextProvider : IContextProvider
         foreach (var block in coreMemoryBlocks)
         {
             candidates.Add(block.Evidence);
+        }
+
+        var projectNotesEvidence = await BuildProjectLivingNotesEvidenceAsync(
+            parsedSessionId, request, tokenBudget, cancellationToken).ConfigureAwait(false);
+        if (projectNotesEvidence is not null)
+        {
+            candidates.Add(projectNotesEvidence);
         }
 
         // A compaction summary heads the raw history: it is the session's compressed view of
@@ -723,6 +733,84 @@ internal sealed class ContextProvider : IContextProvider
         }
 
         return blocks;
+    }
+
+    private async Task<ContextEvidence?> BuildProjectLivingNotesEvidenceAsync(
+        Guid parsedSessionId,
+        ContextBuildRequest request,
+        int tokenBudget,
+        CancellationToken cancellationToken)
+    {
+        if (_projectNotes is null)
+        {
+            return null;
+        }
+
+        Guid? projectId = request.Workspace?.ProjectId is { } wp && wp != Guid.Empty ? wp : null;
+        if (projectId is null && _sessionLocator is not null)
+        {
+            try
+            {
+                var session = await _sessionLocator.FindAsync(parsedSessionId, cancellationToken).ConfigureAwait(false);
+                if (session?.ProjectId is { } sp && sp != Guid.Empty)
+                {
+                    projectId = sp;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        if (projectId is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var maxChars = Math.Clamp(Math.Min(2400, tokenBudget), 256, 2400);
+            var snapshot = await _projectNotes
+                .ReadProjectContextAsync(projectId.Value, maxChars, cancellationToken)
+                .ConfigureAwait(false);
+            if (snapshot is null)
+            {
+                return null;
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Project board instructions and living notes (notes.md) for this project:");
+            if (!string.IsNullOrWhiteSpace(snapshot.ProjectInstructions))
+            {
+                sb.AppendLine();
+                sb.AppendLine("### Project Instructions");
+                sb.AppendLine(snapshot.ProjectInstructions.Trim());
+            }
+            if (!string.IsNullOrWhiteSpace(snapshot.NotesSummaryMarkdown))
+            {
+                sb.AppendLine();
+                sb.AppendLine("### Project Living Notes (notes.md)");
+                sb.AppendLine(snapshot.NotesSummaryMarkdown.Trim());
+            }
+
+            var content = sb.ToString().TrimEnd();
+            return new ContextEvidence
+            {
+                Source = "project_living_notes",
+                Content = content,
+                EstimatedTokens = EstimateTokens(content),
+                Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["project_id"] = snapshot.ProjectId.ToString(),
+                    ["notes_revision"] = snapshot.NotesRevision.ToString(CultureInfo.InvariantCulture)
+                }
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private static void CollectInjectedMemoryFingerprints(

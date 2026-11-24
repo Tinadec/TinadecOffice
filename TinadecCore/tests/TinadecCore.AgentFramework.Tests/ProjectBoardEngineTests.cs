@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -64,6 +65,7 @@ public sealed class ProjectBoardEngineTests : IAsyncLifetime
     {
         if (_provider is not null)
         {
+            _provider.GetService<ProjectAutopilotService>()?.Dispose();
             _provider.GetService<ProjectBoardFileSyncService>()?.Dispose();
             await _provider.DisposeAsync();
         }
@@ -799,6 +801,448 @@ public sealed class ProjectBoardEngineTests : IAsyncLifetime
         Assert.Equal(0, _cliExecutor.CallCount);
     }
 
+    [Fact]
+    public async Task ProjectNotes_SupportsGetPut_OptimisticRevision_ExternalWatcherSync_AntiEcho_AppendProgress_AndContextInjection()
+    {
+        var store = _provider!.GetRequiredService<ProjectSessionStore>();
+        var coordinator = _provider!.GetRequiredService<ProjectBoardCoordinator>();
+        var syncService = _provider!.GetRequiredService<ProjectBoardFileSyncService>();
+        var execution = _provider!.GetRequiredService<ProjectTaskExecutionService>();
+        var contextProvider = _provider!.GetRequiredService<IContextProvider>();
+
+        var repoDir = Path.Combine(_tempRoot, "notes-sync-repo");
+        Directory.CreateDirectory(repoDir);
+        var project = await store.CreateProjectAsync("NotesApp", repoDir);
+        _ = await coordinator.UpdateSettingsAsync(project.Id, new UpdateProjectBoardSettingsRequest
+        {
+            ProjectInstructions = "Never create .agent directories; keep tests deterministic."
+        });
+
+        using var sub = coordinator.SubscribeProjectEvents(project.Id, out var evtReader);
+
+        // 1. Bootstrap GET /notes creates <repo>/.tinadec/project/notes.md cleanly
+        var initialNotes = await syncService.GetProjectNotesAsync(project.Id);
+        Assert.Equal(project.Id, initialNotes.ProjectId);
+        Assert.Equal(ProjectBoardStorageModes.RepoTinadec, initialNotes.StorageMode);
+        Assert.Equal(1L, initialNotes.Revision);
+        Assert.True(File.Exists(initialNotes.ResolvedFilePath));
+        Assert.Contains("## 项目目标", initialNotes.ContentMd);
+        Assert.Contains("## 决策与进展记录", initialNotes.ContentMd);
+
+        // 2. PUT /notes with expected_revision = 1 writes atomically, updates SHA-256 hash & revision = 2, and emits notes_updated SSE
+        var putNotes = await syncService.UpdateProjectNotesAsync(project.Id, new UpdateProjectNotesRequest
+        {
+            ContentMd = "# NotesApp — Project Notes\n\n## 项目目标\nShip Phase 3 Autopilot.\n\n## 架构约定\nMonochrome UI + SQLite LWW.\n",
+            ExpectedRevision = 1L
+        });
+        Assert.Equal(2L, putNotes.Revision);
+        Assert.NotEqual(initialNotes.LastSyncedHash, putNotes.LastSyncedHash);
+        Assert.Contains("Ship Phase 3 Autopilot.", await File.ReadAllTextAsync(putNotes.ResolvedFilePath, Encoding.UTF8));
+
+        // Drain SSE and verify notes_updated arrived
+        var sawPutEvent = false;
+        while (evtReader.TryRead(out var e))
+        {
+            if (e.EventType == "notes_updated" && e.Notes?.Revision == 2L)
+                sawPutEvent = true;
+        }
+        Assert.True(sawPutEvent);
+
+        // 3. Stale expected_revision throws ProjectBoardRevisionConflictException (revision_conflict)
+        var conflictEx = await Assert.ThrowsAsync<ProjectBoardRevisionConflictException>(() =>
+            syncService.UpdateProjectNotesAsync(project.Id, new UpdateProjectNotesRequest
+            {
+                ContentMd = "Stale overwrite",
+                ExpectedRevision = 1L
+            }));
+        Assert.Equal("revision_conflict", conflictEx.Code);
+        Assert.Equal(2L, conflictEx.CurrentRevision);
+
+        // 4. SHA-256 Anti-Echo: SyncProjectAsync without external file changes does NOT bump notes revision or emit echo event
+        _ = await syncService.SyncProjectAsync(project.Id);
+        var afterEchoCheck = await syncService.GetProjectNotesAsync(project.Id);
+        Assert.Equal(2L, afterEchoCheck.Revision);
+        while (evtReader.TryRead(out var echoEvt))
+        {
+            Assert.NotEqual("notes_updated", echoEvt.EventType);
+        }
+
+        // 5. External disk edit on notes.md is picked up by 250ms debounced FileSystemWatcher -> bumps revision = 3 & emits notes_updated SSE!
+        var externallyEditedContent = putNotes.ContentMd + "\n## 外部补充\nEdited directly in VS Code.\n";
+        await File.WriteAllTextAsync(putNotes.ResolvedFilePath, externallyEditedContent, Encoding.UTF8);
+
+        using var watchCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        ProjectNotesDto? watchedNotes = null;
+        while (await evtReader.WaitToReadAsync(watchCts.Token))
+        {
+            while (evtReader.TryRead(out var evt))
+            {
+                if (evt.EventType == "notes_updated" && evt.Notes is not null && evt.Notes.ContentMd.Contains("Edited directly in VS Code."))
+                {
+                    watchedNotes = evt.Notes;
+                    break;
+                }
+            }
+            if (watchedNotes is not null) break;
+        }
+        Assert.NotNull(watchedNotes);
+        Assert.Equal(3L, watchedNotes!.Revision);
+
+        // 6. Task completion & approval automatically append entries under "## 决策与进展记录" AND inject notes into prompt & ContextPack!
+        var session = await store.CreateSessionAsync(project.Id, "Architecture Chat", Guid.NewGuid());
+        await store.AddMessageAsync(session.Id, "What are our project goals?", "user", null);
+        var pack = await contextProvider.BuildContextAsync(new ContextBuildRequest(session.Id.ToString("D"), RunId: null));
+        var livingNotesEvidence = Assert.Single(pack.Evidence, ev => ev.Source == "project_living_notes");
+        Assert.Contains("Never create .agent directories", livingNotesEvidence.Content);
+        Assert.Contains("Ship Phase 3 Autopilot.", livingNotesEvidence.Content);
+
+        var task = await coordinator.CreateTaskAsync(project.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Verify notes prompt & append",
+            Status = ProjectBoardTaskStatuses.Ready
+        });
+        _cliExecutor.OnExecute = _ => new BoardCliHarnessExecutionResult(true, "Verified living document flow");
+        var dispatched = await execution.DispatchTaskAsync(project.Id, task.TaskId, new DispatchProjectBoardTaskRequest
+        {
+            AssigneeOverride = new ProjectBoardAssigneeDto { Kind = ProjectBoardAssigneeKinds.Cli, HarnessId = "claude-code" },
+            UseWorktree = false
+        });
+        Assert.Equal(ProjectBoardTaskStatuses.InReview, dispatched!.Status);
+        Assert.Contains("Ship Phase 3 Autopilot.", _cliExecutor.LastPrompt);
+
+        var approved = await execution.ApproveTaskAsync(project.Id, task.TaskId, new ApproveProjectBoardTaskRequest
+        {
+            Note = "Clean delivery"
+        });
+        Assert.Equal(ProjectBoardTaskStatuses.Done, approved!.Status);
+
+        var finalNotes = await syncService.GetProjectNotesAsync(project.Id);
+        Assert.Contains("## 决策与进展记录", finalNotes.ContentMd);
+        Assert.Contains(task.TaskKey, finalNotes.ContentMd);
+        Assert.Contains("Verified living document flow", finalNotes.ContentMd);
+        Assert.Contains("Approved & Done", finalNotes.ContentMd);
+    }
+
+    [Fact]
+    public async Task CoordinatorPlanner_DecomposesGoalsDeterministically_MaterializesTopologicalDag_AndRejectsCyclicDrafts()
+    {
+        var store = _provider!.GetRequiredService<ProjectSessionStore>();
+        var coordinator = _provider!.GetRequiredService<ProjectBoardCoordinator>();
+        var planner = _provider!.GetRequiredService<IProjectCoordinatorPlanner>();
+
+        var repoDir = Path.Combine(_tempRoot, "planner-repo");
+        Directory.CreateDirectory(repoDir);
+        var project = await store.CreateProjectAsync("PlanProj", repoDir);
+
+        var prereq = await coordinator.CreateTaskAsync(project.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Seed existing auth token task",
+            Status = ProjectBoardTaskStatuses.Done
+        });
+
+        // 1. Deterministic heuristic decomposition with existing task key reference & max_tasks clamping
+        var plan = await planner.PlanAsync(project.Id, new CoordinatorPlanRequest
+        {
+            Goal = $"""
+                ## Phase 1: Database & DTOs
+                - Add SQLite migration after {prereq.TaskKey}
+                - Expose typed DTO contracts
+
+                ## Phase 2: Fastify Proxy & OpenAPI
+                - Proxy routes and update schema snapshot
+
+                ## Phase 3: End-to-End Verification
+                - Run xUnit and Vitest suites
+                """,
+            DefaultStatus = ProjectBoardTaskStatuses.Ready,
+            DefaultAssignee = new ProjectBoardAssigneeDto { Kind = ProjectBoardAssigneeKinds.Cli, HarnessId = "claude-code" },
+            AutoApply = false,
+            MaxTasks = 5
+        });
+
+        Assert.Equal(CoordinatorPlannerSources.Heuristic, plan.PlannerSource);
+        Assert.False(plan.AutoApplied);
+        Assert.Empty(plan.CreatedTasks);
+        Assert.Equal(3, plan.Drafts.Count);
+        Assert.Contains(prereq.TaskId, plan.Drafts[0].DependsOnTaskIds);
+        Assert.Contains("draft-1", plan.Drafts[1].DependsOnDraftIds);
+        Assert.Contains("draft-2", plan.Drafts[2].DependsOnDraftIds);
+
+        // 2. Cyclic drafts on apply-plan throw ProjectBoardCycleException ("cycle_detected") without creating partial tasks!
+        var cyclicEx = await Assert.ThrowsAsync<ProjectBoardCycleException>(() =>
+            planner.ApplyPlanAsync(project.Id, new CoordinatorApplyPlanRequest
+            {
+                Goal = "Cyclic test",
+                Drafts =
+                [
+                    new CoordinatorTaskDraftDto { DraftId = "d-a", Title = "Task A", DependsOnDraftIds = ["d-b"] },
+                    new CoordinatorTaskDraftDto { DraftId = "d-b", Title = "Task B", DependsOnDraftIds = ["d-a"] }
+                ]
+            }));
+        Assert.Equal("cycle_detected", cyclicEx.Code);
+        Assert.Single(await coordinator.ListProjectTasksAsync(project.Id)); // Only prereq exists!
+
+        // 3. Out-of-order topological drafts ("d-ui" listed BEFORE "d-api" which it depends on!) materialize in topological order
+        var applied = await planner.ApplyPlanAsync(project.Id, new CoordinatorApplyPlanRequest
+        {
+            Goal = "Ship modular dashboard",
+            UpdateNotes = true,
+            Drafts =
+            [
+                new CoordinatorTaskDraftDto
+                {
+                    DraftId = "d-ui",
+                    Title = "Build Vue dashboard panel",
+                    DependsOnDraftIds = ["d-api"]
+                },
+                new CoordinatorTaskDraftDto
+                {
+                    DraftId = "d-api",
+                    Title = "Build backend metrics endpoint",
+                    DependsOnTaskIds = [prereq.TaskId]
+                }
+            ]
+        });
+
+        Assert.Equal(2, applied.CreatedTasks.Count);
+        var createdApi = applied.CreatedTasks[0];
+        var createdUi = applied.CreatedTasks[1];
+        Assert.Equal("Build backend metrics endpoint", createdApi.Title);
+        Assert.Equal("Build Vue dashboard panel", createdUi.Title);
+        Assert.Equal([prereq.TaskId], createdApi.DependsOn);
+        Assert.Equal([createdApi.TaskId], createdUi.DependsOn);
+
+        var notesAfterPlan = await coordinator.GetProjectNotesAsync(project.Id);
+        Assert.Contains("[Coordinator Plan]", notesAfterPlan.ContentMd);
+        Assert.Contains(createdApi.TaskKey, notesAfterPlan.ContentMd);
+    }
+
+    [Fact]
+    public async Task Autopilot_EnforcesMaxConcurrency_WaitsForDoneDependencies_RespectsResourceLeases_IsolatesBlockedFailures_AndPausesInstantly()
+    {
+        var store = _provider!.GetRequiredService<ProjectSessionStore>();
+        var coordinator = _provider!.GetRequiredService<ProjectBoardCoordinator>();
+        var execution = _provider!.GetRequiredService<ProjectTaskExecutionService>();
+        var autopilot = _provider!.GetRequiredService<ProjectAutopilotService>();
+        var leases = _provider!.GetRequiredService<IResourceLeaseService>();
+
+        // Part A: Strict max_concurrency = 2 with 4 ready tasks + human exclusion + unmet depends_on gating + instant pause
+        var repoA = Path.Combine(_tempRoot, "autopilot-concurrency-repo");
+        Directory.CreateDirectory(repoA);
+        var projA = await store.CreateProjectAsync("AutoConc", repoA);
+        _ = await coordinator.UpdateSettingsAsync(projA.Id, new UpdateProjectBoardSettingsRequest
+        {
+            DefaultAssigneeKind = ProjectBoardAssigneeKinds.Cli,
+            MaxConcurrency = 2
+        });
+
+        // Create 4 independent ready tasks + 1 human-assigned ready task + 1 dependent ready task (depends on r1 == done)
+        var r1 = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest { Title = "Ready 1", Status = ProjectBoardTaskStatuses.Ready, Priority = ProjectBoardPriorities.Urgent });
+        var r2 = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest { Title = "Ready 2", Status = ProjectBoardTaskStatuses.Ready, Priority = ProjectBoardPriorities.High });
+        var r3 = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest { Title = "Ready 3", Status = ProjectBoardTaskStatuses.Ready, Priority = ProjectBoardPriorities.Medium });
+        var r4 = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest { Title = "Ready 4", Status = ProjectBoardTaskStatuses.Ready, Priority = ProjectBoardPriorities.Low });
+        var humanTask = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Manual Human Task",
+            Status = ProjectBoardTaskStatuses.Ready,
+            Assignee = new ProjectBoardAssigneeDto { Kind = ProjectBoardAssigneeKinds.Human, DisplayName = "Bob" }
+        });
+        var depOnR1 = await coordinator.CreateTaskAsync(projA.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Downstream After R1 Done",
+            Status = ProjectBoardTaskStatuses.Ready,
+            Priority = ProjectBoardPriorities.Urgent,
+            DependsOn = [r1.TaskId]
+        });
+
+        var runningCount = 0;
+        var maxObservedConcurrent = 0;
+        var startedTasks = new ConcurrentDictionary<Guid, TaskCompletionSource<BoardCliHarnessExecutionResult>>();
+        var twoStartedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _cliExecutor.OnExecuteAsync = async (req, ct) =>
+        {
+            var nowRunning = Interlocked.Increment(ref runningCount);
+            while (true)
+            {
+                var prevMax = Volatile.Read(ref maxObservedConcurrent);
+                if (nowRunning <= prevMax || Interlocked.CompareExchange(ref maxObservedConcurrent, nowRunning, prevMax) == prevMax)
+                    break;
+            }
+
+            var gateTcs = startedTasks.GetOrAdd(req.TaskId, static _ => new TaskCompletionSource<BoardCliHarnessExecutionResult>(TaskCreationOptions.RunContinuationsAsynchronously));
+            if (startedTasks.Count >= 2)
+                twoStartedSignal.TrySetResult();
+
+            try
+            {
+                using var reg = ct.Register(() => gateTcs.TrySetCanceled(ct));
+                return await gateTcs.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref runningCount);
+            }
+        };
+
+        var stateEnabled = await autopilot.UpdateAutopilotAsync(projA.Id, new UpdateProjectAutopilotRequest
+        {
+            AutopilotEnabled = true,
+            MaxConcurrency = 2
+        });
+
+        await twoStartedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Strictly 2 tasks claimed (r1 & r2); r3, r4, depOnR1, and humanTask were NOT started!
+        Assert.True(stateEnabled.AutopilotEnabled);
+        Assert.Equal(2, startedTasks.Count);
+        Assert.Contains(r1.TaskId, startedTasks.Keys);
+        Assert.Contains(r2.TaskId, startedTasks.Keys);
+        Assert.DoesNotContain(depOnR1.TaskId, startedTasks.Keys);
+        Assert.DoesNotContain(humanTask.TaskId, startedTasks.Keys);
+        Assert.True(maxObservedConcurrent <= 2, $"Expected max concurrency <= 2, observed {maxObservedConcurrent}.");
+
+        var liveState = await autopilot.GetAutopilotStateAsync(projA.Id);
+        Assert.Equal(2, liveState.ActiveTaskCount);
+        Assert.Equal(3, liveState.QueuedReadyCount); // r3, r4, depOnR1 (humanTask excluded)
+
+        // Instant Pause BEFORE completing r1/r2 -> stops claiming r3 or r4 when r1/r2 finish!
+        var pausedState = await autopilot.UpdateAutopilotAsync(projA.Id, new UpdateProjectAutopilotRequest
+        {
+            AutopilotEnabled = false
+        });
+        Assert.False(pausedState.AutopilotEnabled);
+
+        startedTasks[r1.TaskId].TrySetResult(new BoardCliHarnessExecutionResult(true, "R1 finished"));
+        startedTasks[r2.TaskId].TrySetResult(new BoardCliHarnessExecutionResult(true, "R2 finished"));
+
+        await WaitUntilAsync(async () =>
+        {
+            var t1 = await coordinator.GetTaskAsync(projA.Id, r1.TaskId);
+            var t2 = await coordinator.GetTaskAsync(projA.Id, r2.TaskId);
+            return t1?.Status == ProjectBoardTaskStatuses.InReview && t2?.Status == ProjectBoardTaskStatuses.InReview;
+        }, TimeSpan.FromSeconds(5));
+
+        // Because Autopilot was paused instantly, r3 & r4 MUST still have zero starts!
+        Assert.Equal(2, startedTasks.Count);
+
+        // Now switch executor to immediate completion, re-enable Autopilot with max_concurrency = 2:
+        // Observe that depOnR1 STILL does NOT run yet because r1 is in_review (NOT done), while r3 & r4 run!
+        _cliExecutor.OnExecuteAsync = null;
+        _cliExecutor.OnExecute = req => new BoardCliHarnessExecutionResult(true, $"Done {req.TaskId}");
+
+        _ = await autopilot.UpdateAutopilotAsync(projA.Id, new UpdateProjectAutopilotRequest
+        {
+            AutopilotEnabled = true,
+            MaxConcurrency = 2
+        });
+
+        await WaitUntilAsync(async () =>
+        {
+            var t3 = await coordinator.GetTaskAsync(projA.Id, r3.TaskId);
+            var t4 = await coordinator.GetTaskAsync(projA.Id, r4.TaskId);
+            return t3?.Status == ProjectBoardTaskStatuses.InReview && t4?.Status == ProjectBoardTaskStatuses.InReview;
+        }, TimeSpan.FromSeconds(5));
+
+        // depOnR1 MUST STILL BE READY because r1 is in_review, NOT done!
+        var depBeforeApprove = await coordinator.GetTaskAsync(projA.Id, depOnR1.TaskId);
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, depBeforeApprove!.Status);
+
+        // Approving r1 -> transitions r1 to `done` -> automatically wakes Autopilot and dispatches depOnR1!
+        _ = await execution.ApproveTaskAsync(projA.Id, r1.TaskId, new ApproveProjectBoardTaskRequest { Note = "Ship R1" });
+
+        await WaitUntilAsync(async () =>
+        {
+            var depAfter = await coordinator.GetTaskAsync(projA.Id, depOnR1.TaskId);
+            return depAfter?.Status == ProjectBoardTaskStatuses.InReview;
+        }, TimeSpan.FromSeconds(5));
+
+        // Human task remained untouched in Ready the entire time!
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, (await coordinator.GetTaskAsync(projA.Id, humanTask.TaskId))!.Status);
+        _ = await autopilot.UpdateAutopilotAsync(projA.Id, new UpdateProjectAutopilotRequest { AutopilotEnabled = false });
+
+        // Part B: ResourceLease contention holds candidate in Ready without failing until lease releases,
+        //         AND execution failure sets blocked = true + blocked_reason and halts downstream dependents!
+        var repoB = Path.Combine(_tempRoot, "autopilot-lease-and-block-repo");
+        Directory.CreateDirectory(repoB);
+        var projB = await store.CreateProjectAsync("AutoBlock", repoB);
+        _ = await coordinator.UpdateSettingsAsync(projB.Id, new UpdateProjectBoardSettingsRequest
+        {
+            DefaultAssigneeKind = ProjectBoardAssigneeKinds.Cli,
+            MaxConcurrency = 2
+        });
+
+        // Acquire an exclusive host ResourceLease on repoB BEFORE enabling Autopilot
+        var externalLeaseDecision = await leases.AcquireAsync(new ResourceAcquireRequest(
+            new ResourceClaim(ResourceLeaseKinds.Path, repoB, Exclusive: true),
+            SessionId: null,
+            RunId: null,
+            TaskId: Guid.NewGuid(),
+            Reason: "External exclusive refactoring lock",
+            Purpose: ResourceLeasePurposes.WriteScope));
+        Assert.True(externalLeaseDecision.Granted);
+
+        var failingPrereq = await coordinator.CreateTaskAsync(projB.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Migrate auth provider",
+            Status = ProjectBoardTaskStatuses.Ready
+        });
+        var downstreamHeld = await coordinator.CreateTaskAsync(projB.Id, new CreateProjectBoardTaskRequest
+        {
+            Title = "Deploy auth service",
+            Status = ProjectBoardTaskStatuses.Ready,
+            DependsOn = [failingPrereq.TaskId]
+        });
+
+        _cliExecutor.OnExecute = _ => new BoardCliHarnessExecutionResult(false, string.Empty, "OAuth client_id secret decision needed from human.");
+
+        var stateWhileLeased = await autopilot.UpdateAutopilotAsync(projB.Id, new UpdateProjectAutopilotRequest
+        {
+            AutopilotEnabled = true,
+            MaxConcurrency = 2
+        });
+
+        // Because repoB has an exclusive ResourceLease conflict, failingPrereq stays cleanly in Ready (NOT failed/blocked)!
+        var prereqDuringContention = await coordinator.GetTaskAsync(projB.Id, failingPrereq.TaskId);
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, prereqDuringContention!.Status);
+        Assert.False(prereqDuringContention.Blocked);
+        Assert.Equal(0, stateWhileLeased.BlockedTaskCount);
+
+        // Release external lease -> Autopilot automatically wakes, dispatches failingPrereq -> fails -> sets blocked = true & halts downstreamHeld!
+        await leases.ReleaseAsync(externalLeaseDecision.Lease!.Id);
+
+        await WaitUntilAsync(async () =>
+        {
+            var st = await autopilot.GetAutopilotStateAsync(projB.Id);
+            return st.BlockedTaskCount == 1;
+        }, TimeSpan.FromSeconds(5));
+
+        var blockedState = await autopilot.GetAutopilotStateAsync(projB.Id);
+        Assert.Equal(1, blockedState.BlockedTaskCount);
+        Assert.Equal(0, blockedState.ActiveTaskCount);
+        var blockedTask = Assert.Single(blockedState.BlockedTasks);
+        Assert.Equal(failingPrereq.TaskId, blockedTask.TaskId);
+        Assert.True(blockedTask.Blocked);
+        Assert.Contains("OAuth client_id secret decision needed", blockedTask.BlockedReason);
+
+        // Downstream dependent task MUST remain safely held in Ready (never dispatched)!
+        var heldDownstream = await coordinator.GetTaskAsync(projB.Id, downstreamHeld.TaskId);
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, heldDownstream!.Status);
+        Assert.Null(heldDownstream.ActiveSessionId);
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> predicate, TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (await predicate().ConfigureAwait(false))
+                return;
+            await Task.Delay(25).ConfigureAwait(false);
+        }
+        Assert.True(await predicate().ConfigureAwait(false), $"Condition was not satisfied within {timeout.TotalSeconds:0.#}s.");
+    }
+
     private static string InitGitRepo(string path)
     {
         Directory.CreateDirectory(path);
@@ -830,16 +1274,20 @@ public sealed class ProjectBoardEngineTests : IAsyncLifetime
 
     private sealed class RecordingCliHarnessExecutor : IBoardCliHarnessExecutor
     {
-        public int CallCount { get; private set; }
+        private int _callCount;
+        public int CallCount => Volatile.Read(ref _callCount);
         public string LastPrompt { get; private set; } = string.Empty;
         public Func<BoardCliHarnessExecutionRequest, BoardCliHarnessExecutionResult>? OnExecute { get; set; }
+        public Func<BoardCliHarnessExecutionRequest, CancellationToken, Task<BoardCliHarnessExecutionResult>>? OnExecuteAsync { get; set; }
 
         public Task<BoardCliHarnessExecutionResult> ExecuteAsync(
             BoardCliHarnessExecutionRequest request,
             CancellationToken cancellationToken = default)
         {
-            CallCount++;
+            Interlocked.Increment(ref _callCount);
             LastPrompt = request.Prompt;
+            if (OnExecuteAsync is { } asyncHandler)
+                return asyncHandler(request, cancellationToken);
             var res = OnExecute?.Invoke(request) ?? new BoardCliHarnessExecutionResult(true, "OK");
             return Task.FromResult(res);
         }

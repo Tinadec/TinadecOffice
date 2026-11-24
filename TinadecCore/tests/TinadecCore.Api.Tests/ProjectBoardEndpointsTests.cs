@@ -120,6 +120,10 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
         Assert.Contains("/api/v1/board/views", openApiJson);
         Assert.Contains("/board/tasks", openApiJson);
         Assert.Contains("/api/v1/projects/{projectId}/board/tasks/promote-from-spatial", openApiJson);
+        Assert.Contains("/api/v1/projects/{projectId}/notes", openApiJson);
+        Assert.Contains("/api/v1/projects/{projectId}/board/coordinator/plan", openApiJson);
+        Assert.Contains("/api/v1/projects/{projectId}/board/coordinator/apply-plan", openApiJson);
+        Assert.Contains("/api/v1/projects/{projectId}/board/coordinator/autopilot", openApiJson);
 
         // 2. Create two projects for cross-project global board verification
         var repoA = Path.Combine(_root, "project-alpha");
@@ -432,6 +436,15 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
             var scopedPromoted = (await scopedPromoteResp.Content.ReadFromJsonAsync<PromoteFromSpatialResultDto>(cancellationToken: sseCts.Token))!;
             Assert.Single(scopedPromoted.Tasks);
             Assert.Null(scopedPromoted.ParentTaskId);
+
+            // Verify Phase 3 notes, planner, and autopilot routes resolve child project scopes cleanly
+            var scopedNotes = await client.GetFromJsonAsync<ProjectNotesDto>($"/api/v1/projects/{projectOneId}/notes", sseCts.Token);
+            Assert.NotNull(scopedNotes);
+            Assert.Equal(projectOneId, scopedNotes!.ProjectId);
+
+            var scopedAutopilot = await client.GetFromJsonAsync<ProjectAutopilotStateDto>($"/api/v1/projects/{projectOneId}/board/coordinator/autopilot", sseCts.Token);
+            Assert.NotNull(scopedAutopilot);
+            Assert.False(scopedAutopilot!.AutopilotEnabled);
         }
         finally
         {
@@ -562,6 +575,224 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", cts.Token);
     }
 
+    [Fact]
+    public async Task Phase3Endpoints_CoverNotesSync_CoordinatorPlanner_AutopilotConcurrencyAndBlockedReporting_AndLiveSseEvents()
+    {
+        using var client = _factory!.CreateClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var repoDir = Path.Combine(_root, "phase3-autopilot-http");
+        Directory.CreateDirectory(repoDir);
+        var projResp = await client.PostAsJsonAsync("/api/v1/projects", new { name = "CursorHub", path = repoDir }, cts.Token);
+        projResp.EnsureSuccessStatusCode();
+        var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token)).GetProperty("id").GetGuid();
+
+        _ = await client.PutAsJsonAsync($"/api/v1/projects/{projectId}/board/settings", new
+        {
+            default_assignee_kind = "cli",
+            project_instructions = "Keep wire DTOs strict."
+        }, cts.Token);
+
+        // Subscribe to project-level SSE stream to verify notes_updated and autopilot_updated frames
+        using var sseReq = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/projects/{projectId}/board/events");
+        using var sseResp = await client.SendAsync(sseReq, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        sseResp.EnsureSuccessStatusCode();
+        await using var sseStream = await sseResp.Content.ReadAsStreamAsync(cts.Token);
+        using var sseReader = new StreamReader(sseStream, Encoding.UTF8);
+        var initSse = await ReadNextSseEventAsync(sseReader, cts.Token);
+        Assert.Equal("snapshot", initSse.EventType);
+
+        // 1. GET & PUT /api/v1/projects/{projectId}/notes + 409 revision_conflict + SSE notes_updated
+        var getNotesResp = await client.GetAsync($"/api/v1/projects/{projectId}/notes", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, getNotesResp.StatusCode);
+        var initialNotes = (await getNotesResp.Content.ReadFromJsonAsync<ProjectNotesDto>(cancellationToken: cts.Token))!;
+        Assert.Equal(1L, initialNotes.Revision);
+        Assert.True(File.Exists(initialNotes.ResolvedFilePath));
+
+        var putNotesResp = await client.PutAsJsonAsync($"/api/v1/projects/{projectId}/notes", new
+        {
+            content_md = "# CursorHub Notes\n\n## 项目目标\nAutomate DAG tasks.\n\n## 决策与进展记录\n",
+            expected_revision = 1L
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, putNotesResp.StatusCode);
+        var updatedNotes = (await putNotesResp.Content.ReadFromJsonAsync<ProjectNotesDto>(cancellationToken: cts.Token))!;
+        Assert.Equal(2L, updatedNotes.Revision);
+
+        var notesSse = await ReadNextSseEventOfTypeAsync(sseReader, "notes_updated", cts.Token);
+        Assert.Contains("\"revision\":2", notesSse.Data);
+
+        var staleNotesResp = await client.PutAsJsonAsync($"/api/v1/projects/{projectId}/notes", new
+        {
+            content_md = "Stale write",
+            expected_revision = 1L
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.Conflict, staleNotesResp.StatusCode);
+        var staleErr = await staleNotesResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+        Assert.Equal("revision_conflict", staleErr.GetProperty("code").GetString());
+
+        // 2. POST /board/coordinator/plan (validation + explicit null assignee serialization) & /apply-plan (409 cycle_detected + DAG materialization)
+        var blankGoalResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/plan", new { goal = "   " }, cts.Token);
+        Assert.Equal(HttpStatusCode.BadRequest, blankGoalResp.StatusCode);
+
+        var planResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/plan", new
+        {
+            goal = "1. Build core schema\n2. Build API routes\n3. Verify integration tests",
+            default_status = "ready",
+            auto_apply = false,
+            max_tasks = 5
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, planResp.StatusCode);
+        var planRawJson = await planResp.Content.ReadAsStringAsync(cts.Token);
+        using (var planDoc = JsonDocument.Parse(planRawJson))
+        {
+            // Verify required nullable field "assignee": null is explicitly present on drafts for Fastify/OpenAPI parity!
+            var firstDraft = planDoc.RootElement.GetProperty("drafts")[0];
+            Assert.True(firstDraft.TryGetProperty("assignee", out var assigneeEl));
+            Assert.Equal(JsonValueKind.Null, assigneeEl.ValueKind);
+        }
+
+        var planResult = JsonSerializer.Deserialize<CoordinatorPlanResultDto>(planRawJson, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        })!;
+        Assert.Equal("heuristic", planResult.PlannerSource);
+        Assert.False(planResult.AutoApplied);
+        Assert.Equal(3, planResult.Drafts.Count);
+        Assert.Equal(["draft-1"], planResult.Drafts[1].DependsOnDraftIds);
+        Assert.Equal(["draft-2"], planResult.Drafts[2].DependsOnDraftIds);
+
+        var emptyApplyResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/apply-plan", new
+        {
+            drafts = Array.Empty<object>()
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.BadRequest, emptyApplyResp.StatusCode);
+
+        var cyclicApplyResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/apply-plan", new
+        {
+            goal = "Cyclic drafts",
+            drafts = new object[]
+            {
+                new { draft_id = "d1", title = "Step 1", depends_on_draft_ids = new[] { "d2" } },
+                new { draft_id = "d2", title = "Step 2", depends_on_draft_ids = new[] { "d1" } }
+            }
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.Conflict, cyclicApplyResp.StatusCode);
+        var cyclicErr = await cyclicApplyResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+        Assert.Equal("cycle_detected", cyclicErr.GetProperty("code").GetString());
+
+        var applyResp = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/apply-plan", new
+        {
+            goal = planResult.Goal,
+            update_notes = true,
+            drafts = planResult.Drafts
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, applyResp.StatusCode);
+        var applied = (await applyResp.Content.ReadFromJsonAsync<CoordinatorApplyPlanResultDto>(cancellationToken: cts.Token))!;
+        Assert.Equal(3, applied.CreatedTasks.Count);
+        var step1 = applied.CreatedTasks[0];
+        var step2 = applied.CreatedTasks[1];
+        var step3 = applied.CreatedTasks[2];
+        Assert.Empty(step1.DependsOn);
+        Assert.Equal([step1.TaskId], step2.DependsOn);
+        Assert.Equal([step2.TaskId], step3.DependsOn);
+
+        // 3. GET & PUT /board/coordinator/autopilot (explicit null last_tick_at_unix_ms / last_error + DAG scheduling + Blocked reporting)
+        var initialAutopilotResp = await client.GetAsync($"/api/v1/projects/{projectId}/board/coordinator/autopilot", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, initialAutopilotResp.StatusCode);
+        var initialAutoJson = await initialAutopilotResp.Content.ReadAsStringAsync(cts.Token);
+        using (var autoDoc = JsonDocument.Parse(initialAutoJson))
+        {
+            Assert.True(autoDoc.RootElement.TryGetProperty("last_tick_at_unix_ms", out var tickEl));
+            Assert.Equal(JsonValueKind.Null, tickEl.ValueKind);
+            Assert.True(autoDoc.RootElement.TryGetProperty("last_error", out var errEl));
+            Assert.Equal(JsonValueKind.Null, errEl.ValueKind);
+        }
+
+        // Enable Autopilot: step1 has no unmet depends_on so it runs -> moves to in_review; step2 & step3 wait because step1 != done!
+        var enableResp = await client.PutAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/autopilot", new
+        {
+            autopilot_enabled = true,
+            max_concurrency = 2
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, enableResp.StatusCode);
+
+        var autoSse = await ReadNextSseEventOfTypeAsync(sseReader, "autopilot_updated", cts.Token);
+        Assert.Contains("\"autopilot_enabled\":true", autoSse.Data);
+
+        await WaitUntilHttpAsync(async () =>
+        {
+            var t = await client.GetFromJsonAsync<ProjectBoardTaskDto>($"/api/v1/projects/{projectId}/board/tasks/{step1.TaskId}", cts.Token);
+            return t?.Status == ProjectBoardTaskStatuses.InReview;
+        }, cts.Token);
+
+        // step2 MUST NOT have started yet because step1 is in_review, not done!
+        var step2BeforeApprove = (await client.GetFromJsonAsync<ProjectBoardTaskDto>($"/api/v1/projects/{projectId}/board/tasks/{step2.TaskId}", cts.Token))!;
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, step2BeforeApprove.Status);
+
+        // Make step2 fail on execution so we also verify Blocked intervention reporting over REST!
+        _factory.StubCli.NextFailureMessage = "Database port 5432 conflict requires manual config.";
+
+        // Approve step1 -> transitions step1 to done -> unlocks step2 -> step2 fails and becomes Blocked -> step3 stays safely in Ready!
+        var approveStep1 = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/board/tasks/{step1.TaskId}/approve", new
+        {
+            note = "Schema ready"
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, approveStep1.StatusCode);
+
+        await WaitUntilHttpAsync(async () =>
+        {
+            var st = await client.GetFromJsonAsync<ProjectAutopilotStateDto>($"/api/v1/projects/{projectId}/board/coordinator/autopilot", cts.Token);
+            return st?.BlockedTaskCount == 1;
+        }, cts.Token);
+
+        var blockedAutopilot = (await client.GetFromJsonAsync<ProjectAutopilotStateDto>($"/api/v1/projects/{projectId}/board/coordinator/autopilot", cts.Token))!;
+        Assert.Equal(1, blockedAutopilot.BlockedTaskCount);
+        Assert.Equal(step2.TaskId, blockedAutopilot.BlockedTasks[0].TaskId);
+        Assert.Contains("Database port 5432 conflict", blockedAutopilot.BlockedTasks[0].BlockedReason);
+
+        var step3Held = (await client.GetFromJsonAsync<ProjectBoardTaskDto>($"/api/v1/projects/{projectId}/board/tasks/{step3.TaskId}", cts.Token))!;
+        Assert.Equal(ProjectBoardTaskStatuses.Ready, step3Held.Status);
+
+        // Pause Autopilot cleanly and verify notes.md captured plan & step1 completion/approval entries
+        var pauseResp = await client.PutAsJsonAsync($"/api/v1/projects/{projectId}/board/coordinator/autopilot", new
+        {
+            autopilot_enabled = false,
+            cancel_active = true
+        }, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, pauseResp.StatusCode);
+        var pausedState = (await pauseResp.Content.ReadFromJsonAsync<ProjectAutopilotStateDto>(cancellationToken: cts.Token))!;
+        Assert.False(pausedState.AutopilotEnabled);
+
+        var finalNotes = (await client.GetFromJsonAsync<ProjectNotesDto>($"/api/v1/projects/{projectId}/notes", cts.Token))!;
+        Assert.Contains("[Coordinator Plan]", finalNotes.ContentMd);
+        Assert.Contains(step1.TaskKey, finalNotes.ContentMd);
+    }
+
+    private static async Task<(string EventType, string Data)> ReadNextSseEventOfTypeAsync(
+        StreamReader reader,
+        string expectedType,
+        CancellationToken ct)
+    {
+        for (var i = 0; i < 32; i++)
+        {
+            var evt = await ReadNextSseEventAsync(reader, ct);
+            if (evt.EventType == expectedType)
+                return evt;
+        }
+        throw new TimeoutException($"Did not observe SSE event '{expectedType}'.");
+    }
+
+    private static async Task WaitUntilHttpAsync(Func<Task<bool>> predicate, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (await predicate())
+                return;
+            await Task.Delay(25, ct);
+        }
+        ct.ThrowIfCancellationRequested();
+    }
+
     private static async Task<JsonElement> ReadWsFrameOfTypeAsync(WebSocket socket, string expectedType, CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
@@ -654,13 +885,24 @@ public sealed class ProjectBoardEndpointsTests : IAsyncLifetime
 
     private sealed class StubCliExecutor : IBoardCliHarnessExecutor
     {
-        public int CallCount { get; private set; }
+        private int _callCount;
+        private string? _nextFailureMessage;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+        public string? NextFailureMessage
+        {
+            get => Volatile.Read(ref _nextFailureMessage);
+            set => Volatile.Write(ref _nextFailureMessage, value);
+        }
 
         public Task<BoardCliHarnessExecutionResult> ExecuteAsync(
             BoardCliHarnessExecutionRequest request,
             CancellationToken cancellationToken = default)
         {
-            CallCount++;
+            Interlocked.Increment(ref _callCount);
+            var err = Interlocked.Exchange(ref _nextFailureMessage, null);
+            if (err is not null)
+                return Task.FromResult(new BoardCliHarnessExecutionResult(false, string.Empty, err));
             return Task.FromResult(new BoardCliHarnessExecutionResult(true, $"Completed {request.HarnessId} batch cleanly."));
         }
     }

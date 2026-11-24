@@ -115,6 +115,46 @@ public static class ProjectBoardEndpoints
 
         projectGroup.MapGet("/events", StreamProjectBoardEventsAsync);
 
+        // Phase 3 (#56): Coordinator Smart Task Planner & Autopilot Concurrent Scheduler
+        projectGroup.MapPost("/coordinator/plan", PlanCoordinatorTasksAsync)
+            .Accepts<CoordinatorPlanRequest>("application/json")
+            .Produces<CoordinatorPlanResultDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        projectGroup.MapPost("/coordinator/apply-plan", ApplyCoordinatorPlanAsync)
+            .Accepts<CoordinatorApplyPlanRequest>("application/json")
+            .Produces<CoordinatorApplyPlanResultDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        projectGroup.MapGet("/coordinator/autopilot", GetProjectAutopilotAsync)
+            .Produces<ProjectAutopilotStateDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        projectGroup.MapPut("/coordinator/autopilot", PutProjectAutopilotAsync)
+            .Accepts<UpdateProjectAutopilotRequest>("application/json")
+            .Produces<ProjectAutopilotStateDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Phase 3 (#56): Project Living Document (notes.md)
+        var projectNotesGroup = app.MapGroup("/api/v1/projects/{projectId:guid}")
+            .WithTags("ProjectBoard");
+
+        projectNotesGroup.MapGet("/notes", GetProjectNotesAsync)
+            .Produces<ProjectNotesDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        projectNotesGroup.MapPut("/notes", PutProjectNotesAsync)
+            .Accepts<UpdateProjectNotesRequest>("application/json")
+            .Produces<ProjectNotesDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
         // Cross-project Global Board & Saved Views
         var globalGroup = app.MapGroup("/api/v1/board")
             .WithTags("ProjectBoard");
@@ -423,6 +463,114 @@ public static class ProjectBoardEndpoints
 
         using var sub = coordinator.SubscribeProjectEvents(projectId, out var reader);
         await PumpSseStreamAsync(http, reader, projectId, ct).ConfigureAwait(false);
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 3 (#56): Project Notes, Coordinator Planner & Autopilot Handlers
+    // -------------------------------------------------------------------------
+
+    private static async Task<IResult> GetProjectNotesAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var syncService = scope.Services.GetRequiredService<ProjectBoardFileSyncService>();
+            var notes = await syncService.GetProjectNotesAsync(projectId, ct).ConfigureAwait(false);
+            return Results.Ok(notes);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+    }
+
+    private static async Task<IResult> PutProjectNotesAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        var (request, parseErr) = await ReadRequiredJsonAsync<UpdateProjectNotesRequest>(http.Request, ct).ConfigureAwait(false);
+        if (parseErr is not null) return parseErr;
+
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var syncService = scope.Services.GetRequiredService<ProjectBoardFileSyncService>();
+            var updated = await syncService.UpdateProjectNotesAsync(projectId, request!, ct).ConfigureAwait(false);
+            return Results.Ok(updated);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+        catch (ProjectBoardRevisionConflictException ex)
+        {
+            return Results.Conflict(new { code = ex.Code, message = ex.Message, current_revision = ex.CurrentRevision });
+        }
+        catch (ProjectBoardConflictException ex)
+        {
+            return Results.Conflict(new { code = ex.Code, message = ex.Message, current_revision = ex.CurrentRevision });
+        }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+    }
+
+    private static async Task<IResult> PlanCoordinatorTasksAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        var (request, parseErr) = await ReadRequiredJsonAsync<CoordinatorPlanRequest>(http.Request, ct).ConfigureAwait(false);
+        if (parseErr is not null) return parseErr;
+
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var planner = scope.Services.GetRequiredService<IProjectCoordinatorPlanner>();
+            var result = await planner.PlanAsync(projectId, request!, ct).ConfigureAwait(false);
+            return Results.Ok(result);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+        catch (ProjectBoardCycleException ex) { return Results.Conflict(new { code = ex.Code, message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+    }
+
+    private static async Task<IResult> ApplyCoordinatorPlanAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        var (request, parseErr) = await ReadRequiredJsonAsync<CoordinatorApplyPlanRequest>(http.Request, ct).ConfigureAwait(false);
+        if (parseErr is not null) return parseErr;
+
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var planner = scope.Services.GetRequiredService<IProjectCoordinatorPlanner>();
+            var result = await planner.ApplyPlanAsync(projectId, request!, ct).ConfigureAwait(false);
+            return Results.Ok(result);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+        catch (ProjectBoardCycleException ex) { return Results.Conflict(new { code = ex.Code, message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+    }
+
+    private static async Task<IResult> GetProjectAutopilotAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var autopilot = scope.Services.GetRequiredService<ProjectAutopilotService>();
+            var state = await autopilot.GetAutopilotStateAsync(projectId, ct).ConfigureAwait(false);
+            return Results.Ok(state);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+    }
+
+    private static async Task<IResult> PutProjectAutopilotAsync(Guid projectId, HttpContext http, CancellationToken ct)
+    {
+        var (request, parseErr) = await ReadRequiredJsonAsync<UpdateProjectAutopilotRequest>(http.Request, ct).ConfigureAwait(false);
+        if (parseErr is not null) return parseErr;
+
+        try
+        {
+            await using var scope = await ResolveProjectServicesAsync(http, projectId, ct).ConfigureAwait(false);
+            if (scope is null) return ProjectNotFound();
+            var autopilot = scope.Services.GetRequiredService<ProjectAutopilotService>();
+            var state = await autopilot.UpdateAutopilotAsync(projectId, request!, ct).ConfigureAwait(false);
+            return Results.Ok(state);
+        }
+        catch (KeyNotFoundException) { return ProjectNotFound(); }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
     // -------------------------------------------------------------------------

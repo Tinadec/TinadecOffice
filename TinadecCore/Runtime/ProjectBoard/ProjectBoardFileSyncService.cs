@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
@@ -16,16 +18,25 @@ namespace TinadecCore.Runtime.ProjectBoard;
 /// <para>
 /// Enforces:
 /// 1) Atomic writes (<see cref="FileOptions.WriteThrough"/> temp + <c>File.Move(overwrite: true)</c>);
-/// 2) SHA-256 normalized echo prevention;
+/// 2) SHA-256 normalized echo prevention across both <c>board/tasks/*.md</c> and <c>project/notes.md</c>;
 /// 3) 250ms debounced <see cref="FileSystemWatcher"/> + startup reconciliation;
 /// 4) Non-destructive 3-way field merge (keeping user <c>.md</c> untouched on conflict);
 /// 5) HARD GUARDRAIL: passive file sync NEVER dispatches or starts any Agent or CLI run.
 /// </para>
 /// </summary>
-public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardSyncHook, IDisposable
+public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardSyncHook, IProjectNotesContextReader, IDisposable
 {
+    public const string DecisionsSectionHeading = "## 决策与进展记录";
+    public const int DefaultNotesContextMaxChars = 2400;
+
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan WatcherDebounce = TimeSpan.FromMilliseconds(250);
+    private static readonly Regex DecisionsHeadingRegex = new(
+        @"^##\s+决策与进展记录\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex AnyH2OrH1Regex = new(
+        @"^#{1,2}\s+\S",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly IDbContextFactory<ProjectBoardDbContext> _dbFactory;
     private readonly ProjectSessionStore _sessionStore;
@@ -39,7 +50,9 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
     {
         public required Guid ProjectId { get; init; }
         public required string WatchedDirectory { get; init; }
+        public required string WatchedNotesDirectory { get; init; }
         public required FileSystemWatcher Watcher { get; init; }
+        public FileSystemWatcher? NotesWatcher { get; init; }
         public readonly object DebounceLock = new();
         public CancellationTokenSource? DebounceCts;
 
@@ -53,6 +66,11 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             }
             Watcher.EnableRaisingEvents = false;
             Watcher.Dispose();
+            if (NotesWatcher is not null)
+            {
+                NotesWatcher.EnableRaisingEvents = false;
+                NotesWatcher.Dispose();
+            }
         }
     }
 
@@ -123,6 +141,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
         var gate = _coordinator.GetProjectGate(projectId);
         string boardTasksDir;
+        string notesPath;
 
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -131,6 +150,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             var settings = await _coordinator.GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
             var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
             boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
 
             var taskRow = await db.BoardTasks
                 .FirstOrDefaultAsync(x => x.ProjectId == projectId && x.TaskId == taskId && !x.Deleted, cancellationToken)
@@ -146,7 +166,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             if (syncRow?.HasConflict == true)
                 return;
 
-            EnsureNotesStubIfNeeded(notesFilePath, project.Name);
+            _ = await EnsureOrReconcileNotesUnderLockAsync(db, project, settings, syncRoot, notesFilePath, cancellationToken).ConfigureAwait(false);
             await ExportSingleTaskUnderLockAsync(db, project, syncRoot, tasksDir, taskRow, syncRow, cancellationToken).ConfigureAwait(false);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -155,7 +175,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             gate.Release();
         }
 
-        EnsureWatcher(projectId, boardTasksDir);
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
     }
 
     public async Task DeleteTaskMarkdownAsync(Guid projectId, string taskKey, CancellationToken cancellationToken = default)
@@ -198,8 +218,10 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         int imported = 0, exported = 0, merged = 0, unchanged = 0, conflicts = 0;
         string storageMode;
         string boardTasksDir;
+        string notesPath;
         long syncedAtUnixMs;
         var touchedTaskDtos = new List<ProjectBoardTaskDto>();
+        ProjectNotesDto? externallyUpdatedNotes = null;
 
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -209,10 +231,14 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             storageMode = settings.StorageMode;
             var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
             boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
 
             StorageScopePaths.RejectLinks(syncRoot);
             Directory.CreateDirectory(boardTasksDir);
-            EnsureNotesStubIfNeeded(notesFilePath, project.Name);
+            var (reconciledNotes, notesChangedExternally) = await EnsureOrReconcileNotesUnderLockAsync(
+                db, project, settings, syncRoot, notesFilePath, cancellationToken).ConfigureAwait(false);
+            if (notesChangedExternally)
+                externallyUpdatedNotes = reconciledNotes;
 
             var taskRows = await db.BoardTasks
                 .Where(x => x.ProjectId == projectId && !x.Deleted)
@@ -497,7 +523,18 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             gate.Release();
         }
 
-        EnsureWatcher(projectId, boardTasksDir);
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
+
+        if (externallyUpdatedNotes is not null)
+        {
+            await _coordinator.PublishEventAsync(new ProjectBoardEventDto
+            {
+                EventType = "notes_updated",
+                ProjectId = projectId,
+                Notes = externallyUpdatedNotes,
+                OccurredAtUnixMs = externallyUpdatedNotes.UpdatedAtUnixMs
+            }, cancellationToken).ConfigureAwait(false);
+        }
 
         foreach (var dto in touchedTaskDtos)
         {
@@ -549,14 +586,16 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
         ProjectBoardTaskDto resolvedDto;
         string boardTasksDir;
+        string notesPath;
 
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var settings = await _coordinator.GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
-            var (syncRoot, tasksDir, _) = _coordinator.ResolveStoragePaths(project, settings);
+            var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
             boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
 
             var taskRows = await db.BoardTasks
                 .Where(x => x.ProjectId == projectId && !x.Deleted)
@@ -619,7 +658,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             gate.Release();
         }
 
-        EnsureWatcher(projectId, boardTasksDir);
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
 
         await _coordinator.PublishEventAsync(new ProjectBoardEventDto
         {
@@ -630,8 +669,523 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             OccurredAtUnixMs = resolvedDto.UpdatedAtUnixMs
         }, cancellationToken).ConfigureAwait(false);
 
+        _coordinator.NotifyAutopilot(projectId);
         return resolvedDto;
     }
+
+    // -------------------------------------------------------------------------
+    // Project Living Document (notes.md) Bidirectional Sync & Context Reader
+    // -------------------------------------------------------------------------
+
+    public async Task<ProjectNotesDto> GetProjectNotesAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        var project = await _coordinator.RequireActiveProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var gate = _coordinator.GetProjectGate(projectId);
+
+        ProjectNotesDto dto;
+        bool changedFromDisk;
+        string boardTasksDir;
+        string notesPath;
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var settings = await _coordinator.GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
+            var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
+            boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
+
+            StorageScopePaths.RejectLinks(syncRoot);
+            Directory.CreateDirectory(boardTasksDir);
+
+            (dto, changedFromDisk) = await EnsureOrReconcileNotesUnderLockAsync(
+                db, project, settings, syncRoot, notesFilePath, cancellationToken).ConfigureAwait(false);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
+
+        if (changedFromDisk)
+        {
+            await _coordinator.PublishEventAsync(new ProjectBoardEventDto
+            {
+                EventType = "notes_updated",
+                ProjectId = projectId,
+                Notes = dto,
+                OccurredAtUnixMs = dto.UpdatedAtUnixMs
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        return dto;
+    }
+
+    public async Task<ProjectNotesDto> UpdateProjectNotesAsync(
+        Guid projectId,
+        UpdateProjectNotesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ContentMd is null)
+            throw new ArgumentException("content_md is required.");
+
+        await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        var project = await _coordinator.RequireActiveProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var gate = _coordinator.GetProjectGate(projectId);
+
+        ProjectNotesDto dto;
+        string boardTasksDir;
+        string notesPath;
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var settings = await _coordinator.GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
+            var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
+            boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
+
+            StorageScopePaths.RejectLinks(syncRoot);
+            Directory.CreateDirectory(boardTasksDir);
+
+            _ = await EnsureOrReconcileNotesUnderLockAsync(
+                db, project, settings, syncRoot, notesFilePath, cancellationToken).ConfigureAwait(false);
+
+            var meta = await db.NotesMeta.FirstAsync(x => x.ProjectId == projectId, cancellationToken).ConfigureAwait(false);
+
+            if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != meta.Revision)
+            {
+                throw new ProjectBoardRevisionConflictException(
+                    meta.Revision,
+                    $"Expected notes revision {request.ExpectedRevision.Value}, but current notes revision is {meta.Revision}.");
+            }
+
+            var normalized = ProjectBoardMarkdownCodec.NormalizeLineEndings(request.ContentMd);
+            var sha256 = ProjectBoardMarkdownCodec.ComputeNormalizedSha256(normalized);
+            var nowMs = _coordinator.NowUnixMs();
+
+            await AtomicWriteFileAsync(syncRoot, notesFilePath, normalized, cancellationToken).ConfigureAwait(false);
+
+            meta.ContentMd = normalized;
+            meta.LastSyncedHash = sha256;
+            meta.Revision += 1;
+            meta.UpdatedAtUnixMs = nowMs;
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            dto = ToNotesDto(meta, notesFilePath, settings.StorageMode);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
+
+        await _coordinator.PublishEventAsync(new ProjectBoardEventDto
+        {
+            EventType = "notes_updated",
+            ProjectId = projectId,
+            Notes = dto,
+            OccurredAtUnixMs = dto.UpdatedAtUnixMs
+        }, cancellationToken).ConfigureAwait(false);
+
+        return dto;
+    }
+
+    public async Task<ProjectNotesDto> AppendProjectNoteEntryAsync(
+        Guid projectId,
+        string entryMarkdown,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(entryMarkdown))
+            return await GetProjectNotesAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+        await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        var project = await _coordinator.RequireActiveProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var gate = _coordinator.GetProjectGate(projectId);
+
+        ProjectNotesDto dto;
+        bool appended = false;
+        string boardTasksDir;
+        string notesPath;
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var settings = await _coordinator.GetOrCreateSettingsUnderLockAsync(db, project, cancellationToken).ConfigureAwait(false);
+            var (syncRoot, tasksDir, notesFilePath) = _coordinator.ResolveStoragePaths(project, settings);
+            boardTasksDir = tasksDir;
+            notesPath = notesFilePath;
+
+            StorageScopePaths.RejectLinks(syncRoot);
+            Directory.CreateDirectory(boardTasksDir);
+
+            _ = await EnsureOrReconcileNotesUnderLockAsync(
+                db, project, settings, syncRoot, notesFilePath, cancellationToken).ConfigureAwait(false);
+
+            var meta = await db.NotesMeta.FirstAsync(x => x.ProjectId == projectId, cancellationToken).ConfigureAwait(false);
+            var updatedContent = InsertUnderDecisionsSection(meta.ContentMd, entryMarkdown);
+
+            if (!string.Equals(updatedContent, meta.ContentMd, StringComparison.Ordinal))
+            {
+                var sha256 = ProjectBoardMarkdownCodec.ComputeNormalizedSha256(updatedContent);
+                var nowMs = _coordinator.NowUnixMs();
+
+                await AtomicWriteFileAsync(syncRoot, notesFilePath, updatedContent, cancellationToken).ConfigureAwait(false);
+
+                meta.ContentMd = updatedContent;
+                meta.LastSyncedHash = sha256;
+                meta.Revision += 1;
+                meta.UpdatedAtUnixMs = nowMs;
+                appended = true;
+            }
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            dto = ToNotesDto(meta, notesFilePath, settings.StorageMode);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        EnsureWatcher(projectId, boardTasksDir, notesPath);
+
+        if (appended)
+        {
+            await _coordinator.PublishEventAsync(new ProjectBoardEventDto
+            {
+                EventType = "notes_updated",
+                ProjectId = projectId,
+                Notes = dto,
+                OccurredAtUnixMs = dto.UpdatedAtUnixMs
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        return dto;
+    }
+
+    public async Task<ProjectLivingContextSnapshot?> ReadProjectContextAsync(
+        Guid projectId,
+        int maxChars = DefaultNotesContextMaxChars,
+        CancellationToken cancellationToken = default)
+    {
+        if (projectId == Guid.Empty)
+            return null;
+
+        await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        var project = await _sessionStore.GetProjectAnyStatusAsync(projectId, cancellationToken).ConfigureAwait(false);
+        if (project is null || project.LifecycleStatus != LifecycleStatuses.Active)
+            return null;
+
+        var cap = Math.Clamp(maxChars, 256, 8000);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var settings = await db.BoardSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken)
+            .ConfigureAwait(false);
+        var meta = await db.NotesMeta.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.ProjectId == projectId, cancellationToken)
+            .ConfigureAwait(false);
+
+        var instructions = settings?.ProjectInstructions?.Trim() ?? string.Empty;
+        if (instructions.Length > cap)
+            instructions = instructions[..cap].TrimEnd() + "\n…";
+
+        var rawNotes = meta?.ContentMd;
+        long revision = meta?.Revision ?? 0;
+
+        var effectiveSettings = settings ?? new ProjectBoardSettingsRecord
+        {
+            ProjectId = projectId,
+            StorageMode = ProjectBoardStorageModes.RepoTinadec
+        };
+        var (syncRoot, _, notesFilePath) = _coordinator.ResolveStoragePaths(project, effectiveSettings);
+
+        if (File.Exists(notesFilePath))
+        {
+            try
+            {
+                StorageScopePaths.RejectLinks(syncRoot, notesFilePath);
+                var diskNotes = ProjectBoardMarkdownCodec.NormalizeLineEndings(
+                    await File.ReadAllTextAsync(notesFilePath, Utf8NoBom, cancellationToken).ConfigureAwait(false));
+                if (meta is null || ProjectBoardMarkdownCodec.ComputeNormalizedSha256(diskNotes) != meta.LastSyncedHash)
+                {
+                    rawNotes = diskNotes;
+                    if (revision == 0) revision = 1;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Fall back to DB meta when disk file is transiently locked.
+            }
+        }
+
+        var notesSummary = SummarizeProjectNotes(rawNotes, cap);
+        if (string.IsNullOrWhiteSpace(instructions) && string.IsNullOrWhiteSpace(notesSummary))
+            return null;
+
+        return new ProjectLivingContextSnapshot(projectId, instructions, notesSummary, revision);
+    }
+
+    public static string SummarizeProjectNotes(string? rawNotes, int maxChars = DefaultNotesContextMaxChars)
+    {
+        if (string.IsNullOrWhiteSpace(rawNotes))
+            return string.Empty;
+
+        var normalized = ProjectBoardMarkdownCodec.NormalizeLineEndings(rawNotes).Trim();
+        if (!HasSubstantiveNotesContent(normalized))
+            return string.Empty;
+
+        if (normalized.Length <= maxChars)
+            return normalized;
+
+        // Prioritize upper sections (project goals & conventions) + the latest entries under "## 决策与进展记录".
+        var lines = normalized.Split('\n');
+        var decisionsIdx = -1;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (DecisionsHeadingRegex.IsMatch(lines[i].TrimEnd()))
+            {
+                decisionsIdx = i;
+                break;
+            }
+        }
+
+        if (decisionsIdx < 0)
+            return ClipMarkdownLines(normalized, maxChars);
+
+        var nextHeadingIdx = lines.Length;
+        for (var i = decisionsIdx + 1; i < lines.Length; i++)
+        {
+            if (AnyH2OrH1Regex.IsMatch(lines[i].TrimEnd()))
+            {
+                nextHeadingIdx = i;
+                break;
+            }
+        }
+
+        var headBudget = Math.Max(256, (maxChars * 3) / 5);
+        var headText = string.Join('\n', lines.Take(decisionsIdx)).Trim();
+        var clippedHead = ClipMarkdownLines(headText, headBudget);
+
+        var tailBudget = Math.Max(160, maxChars - clippedHead.Length - DecisionsSectionHeading.Length - 16);
+        var decisionBodyLines = lines[(decisionsIdx + 1)..nextHeadingIdx]
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+
+        var selectedRecent = new List<string>();
+        var used = 0;
+        for (var i = decisionBodyLines.Count - 1; i >= 0; i--)
+        {
+            var line = decisionBodyLines[i];
+            if (used + line.Length + 1 > tailBudget && selectedRecent.Count > 0)
+                break;
+            if (line.Length > tailBudget)
+                line = line[..Math.Max(32, tailBudget - 2)] + "…";
+            selectedRecent.Add(line);
+            used += line.Length + 1;
+        }
+        selectedRecent.Reverse();
+
+        var sb = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(clippedHead))
+            sb.Append(clippedHead).Append("\n\n");
+        sb.Append(DecisionsSectionHeading).Append('\n');
+        if (selectedRecent.Count < decisionBodyLines.Count)
+            sb.Append("…\n");
+        foreach (var item in selectedRecent)
+            sb.Append(item).Append('\n');
+
+        return ClipMarkdownLines(sb.ToString().Trim(), maxChars);
+    }
+
+    private static bool HasSubstantiveNotesContent(string normalized)
+    {
+        foreach (var rawLine in normalized.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    private static string ClipMarkdownLines(string markdown, int maxChars)
+    {
+        if (markdown.Length <= maxChars)
+            return markdown;
+
+        var cut = markdown.LastIndexOf('\n', Math.Min(maxChars - 2, markdown.Length - 1));
+        if (cut > maxChars / 2)
+            return markdown[..cut].TrimEnd() + "\n…";
+        return markdown[..Math.Max(1, maxChars - 1)].TrimEnd() + "…";
+    }
+
+    internal static string InsertUnderDecisionsSection(string currentMarkdown, string entryMarkdown)
+    {
+        var current = ProjectBoardMarkdownCodec.NormalizeLineEndings(currentMarkdown ?? string.Empty);
+        var entry = ProjectBoardMarkdownCodec.NormalizeLineEndings(entryMarkdown).Trim();
+        if (entry.Length == 0)
+            return current;
+
+        if (!entry.StartsWith("- ", StringComparison.Ordinal)
+            && !entry.StartsWith("* ", StringComparison.Ordinal)
+            && !entry.StartsWith("### ", StringComparison.Ordinal))
+        {
+            entry = "- " + entry.Replace("\n", "\n  ", StringComparison.Ordinal);
+        }
+
+        var lines = current.Length == 0 ? [] : current.Split('\n').ToList();
+        var headingIdx = -1;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (DecisionsHeadingRegex.IsMatch(lines[i].TrimEnd()))
+            {
+                headingIdx = i;
+                break;
+            }
+        }
+
+        if (headingIdx < 0)
+        {
+            var trimmedBase = current.TrimEnd();
+            return string.IsNullOrEmpty(trimmedBase)
+                ? $"{DecisionsSectionHeading}\n\n{entry}\n"
+                : $"{trimmedBase}\n\n{DecisionsSectionHeading}\n\n{entry}\n";
+        }
+
+        var nextHeadingIdx = lines.Count;
+        for (var i = headingIdx + 1; i < lines.Count; i++)
+        {
+            if (AnyH2OrH1Regex.IsMatch(lines[i].TrimEnd()))
+            {
+                nextHeadingIdx = i;
+                break;
+            }
+        }
+
+        var insertAt = nextHeadingIdx;
+        while (insertAt > headingIdx + 1 && string.IsNullOrWhiteSpace(lines[insertAt - 1]))
+            insertAt--;
+
+        if (insertAt > headingIdx + 1 && string.Equals(lines[insertAt - 1].Trim(), entry.Trim(), StringComparison.Ordinal))
+            return current;
+
+        var sectionWasEmpty = insertAt == headingIdx + 1;
+        var insertion = new List<string>();
+        if (sectionWasEmpty)
+            insertion.Add(string.Empty);
+        insertion.AddRange(entry.Split('\n'));
+        if (nextHeadingIdx < lines.Count)
+            insertion.Add(string.Empty);
+
+        lines.RemoveRange(insertAt, nextHeadingIdx - insertAt);
+        lines.InsertRange(insertAt, insertion);
+
+        var joined = string.Join('\n', lines).TrimEnd() + "\n";
+        return joined;
+    }
+
+    private async Task<(ProjectNotesDto Dto, bool ChangedFromExternalDisk)> EnsureOrReconcileNotesUnderLockAsync(
+        ProjectBoardDbContext db,
+        ProjectRecord project,
+        ProjectBoardSettingsRecord settings,
+        string syncRoot,
+        string notesFilePath,
+        CancellationToken ct)
+    {
+        StorageScopePaths.RejectLinks(syncRoot);
+        var notesDir = Path.GetDirectoryName(notesFilePath)!;
+        Directory.CreateDirectory(notesDir);
+
+        var meta = await db.NotesMeta
+            .FirstOrDefaultAsync(x => x.ProjectId == project.Id, ct)
+            .ConfigureAwait(false);
+
+        var nowMs = _coordinator.NowUnixMs();
+        var fileExists = File.Exists(notesFilePath);
+
+        if (fileExists)
+        {
+            StorageScopePaths.RejectLinks(syncRoot, notesFilePath);
+            var rawDisk = await File.ReadAllTextAsync(notesFilePath, Utf8NoBom, ct).ConfigureAwait(false);
+            var normalizedDisk = ProjectBoardMarkdownCodec.NormalizeLineEndings(rawDisk);
+            var diskHash = ProjectBoardMarkdownCodec.ComputeNormalizedSha256(normalizedDisk);
+
+            if (meta is null)
+            {
+                meta = new ProjectNotesMetaRecord
+                {
+                    ProjectId = project.Id,
+                    ContentMd = normalizedDisk,
+                    LastSyncedHash = diskHash,
+                    Revision = 1,
+                    UpdatedAtUnixMs = nowMs
+                };
+                db.NotesMeta.Add(meta);
+                return (ToNotesDto(meta, notesFilePath, settings.StorageMode), ChangedFromExternalDisk: false);
+            }
+
+            // SHA-256 Anti-Echo: skip when disk file hash matches our last recorded hash.
+            if (string.Equals(diskHash, meta.LastSyncedHash, StringComparison.Ordinal))
+            {
+                return (ToNotesDto(meta, notesFilePath, settings.StorageMode), ChangedFromExternalDisk: false);
+            }
+
+            meta.ContentMd = normalizedDisk;
+            meta.LastSyncedHash = diskHash;
+            meta.Revision += 1;
+            meta.UpdatedAtUnixMs = nowMs;
+            return (ToNotesDto(meta, notesFilePath, settings.StorageMode), ChangedFromExternalDisk: true);
+        }
+
+        if (meta is not null)
+        {
+            var content = ProjectBoardMarkdownCodec.NormalizeLineEndings(meta.ContentMd);
+            var hash = ProjectBoardMarkdownCodec.ComputeNormalizedSha256(content);
+            await AtomicWriteFileAsync(syncRoot, notesFilePath, content, ct).ConfigureAwait(false);
+            meta.LastSyncedHash = hash;
+            return (ToNotesDto(meta, notesFilePath, settings.StorageMode), ChangedFromExternalDisk: false);
+        }
+
+        var defaultStub = BuildDefaultNotesStub(project.Name);
+        var stubHash = ProjectBoardMarkdownCodec.ComputeNormalizedSha256(defaultStub);
+        await AtomicWriteFileAsync(syncRoot, notesFilePath, defaultStub, ct).ConfigureAwait(false);
+
+        meta = new ProjectNotesMetaRecord
+        {
+            ProjectId = project.Id,
+            ContentMd = defaultStub,
+            LastSyncedHash = stubHash,
+            Revision = 1,
+            UpdatedAtUnixMs = nowMs
+        };
+        db.NotesMeta.Add(meta);
+        return (ToNotesDto(meta, notesFilePath, settings.StorageMode), ChangedFromExternalDisk: false);
+    }
+
+    private static string BuildDefaultNotesStub(string projectName) =>
+        $"# {projectName} — Project Notes\n\n## 项目目标\n\n## 架构约定\n\n{DecisionsSectionHeading}\n";
+
+    private static ProjectNotesDto ToNotesDto(ProjectNotesMetaRecord meta, string resolvedFilePath, string storageMode) => new()
+    {
+        ProjectId = meta.ProjectId,
+        ContentMd = meta.ContentMd,
+        ResolvedFilePath = resolvedFilePath,
+        StorageMode = storageMode,
+        Revision = meta.Revision,
+        LastSyncedHash = meta.LastSyncedHash,
+        UpdatedAtUnixMs = meta.UpdatedAtUnixMs
+    };
 
     private async Task ReconcileProjectOnStartupIfPresentAsync(ProjectRecord project, CancellationToken ct)
     {
@@ -642,9 +1196,14 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         var hasTasks = await db.BoardTasks.AsNoTracking()
             .AnyAsync(x => x.ProjectId == project.Id && !x.Deleted, ct)
             .ConfigureAwait(false);
+        var hasNotesMeta = await db.NotesMeta.AsNoTracking()
+            .AnyAsync(x => x.ProjectId == project.Id, ct)
+            .ConfigureAwait(false);
         var defaultTinadecTasksDir = Path.Combine(project.RootPath, ".tinadec", "board", "tasks");
+        var defaultTinadecNotesFile = Path.Combine(project.RootPath, ".tinadec", "project", "notes.md");
 
-        if (settings is null && !hasTasks && !Directory.Exists(defaultTinadecTasksDir))
+        if (settings is null && !hasTasks && !hasNotesMeta
+            && !Directory.Exists(defaultTinadecTasksDir) && !File.Exists(defaultTinadecNotesFile))
             return;
 
         await SyncProjectAsync(project.Id, ct).ConfigureAwait(false);
@@ -781,34 +1340,21 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         }
     }
 
-    private static void EnsureNotesStubIfNeeded(string notesFilePath, string projectName)
-    {
-        try
-        {
-            if (File.Exists(notesFilePath))
-                return;
-
-            var dir = Path.GetDirectoryName(notesFilePath)!;
-            Directory.CreateDirectory(dir);
-            var stub = $"# {projectName} — Project Notes\n\n";
-            using var fs = new FileStream(notesFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            fs.Write(Utf8NoBom.GetBytes(stub));
-        }
-        catch (IOException)
-        {
-            // Already created concurrently or read-only directory.
-        }
-    }
-
-    private void EnsureWatcher(Guid projectId, string boardTasksDir)
+    private void EnsureWatcher(Guid projectId, string boardTasksDir, string notesFilePath)
     {
         if (_disposed || !Directory.Exists(boardTasksDir))
             return;
 
-        var fullDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(boardTasksDir));
+        var notesDir = Path.GetDirectoryName(notesFilePath) ?? boardTasksDir;
+        Directory.CreateDirectory(notesDir);
+
+        var fullTasksDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(boardTasksDir));
+        var fullNotesDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(notesDir));
+
         if (_watchers.TryGetValue(projectId, out var existing))
         {
-            if (StorageScopeInitializer.SamePath(existing.WatchedDirectory, fullDir))
+            if (StorageScopeInitializer.SamePath(existing.WatchedDirectory, fullTasksDir)
+                && StorageScopeInitializer.SamePath(existing.WatchedNotesDirectory, fullNotesDir))
                 return;
             if (_watchers.TryRemove(projectId, out var stale))
                 stale.Dispose();
@@ -816,17 +1362,29 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
         try
         {
-            var watcher = new FileSystemWatcher(fullDir, "*.md")
+            var tasksWatcher = new FileSystemWatcher(fullTasksDir, "*.md")
             {
                 IncludeSubdirectories = false,
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime
             };
 
+            FileSystemWatcher? notesWatcher = null;
+            if (!StorageScopeInitializer.SamePath(fullTasksDir, fullNotesDir) && Directory.Exists(fullNotesDir))
+            {
+                notesWatcher = new FileSystemWatcher(fullNotesDir, "*.md")
+                {
+                    IncludeSubdirectories = false,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime
+                };
+            }
+
             var reg = new ProjectWatcherRegistration
             {
                 ProjectId = projectId,
-                WatchedDirectory = fullDir,
-                Watcher = watcher
+                WatchedDirectory = fullTasksDir,
+                WatchedNotesDirectory = fullNotesDir,
+                Watcher = tasksWatcher,
+                NotesWatcher = notesWatcher
             };
 
             void OnFsEvent(object _, FileSystemEventArgs e)
@@ -837,18 +1395,27 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
                 ScheduleDebouncedSync(reg);
             }
 
-            watcher.Created += OnFsEvent;
-            watcher.Changed += OnFsEvent;
-            watcher.Deleted += OnFsEvent;
-            watcher.Renamed += (_, e) => OnFsEvent(watcher, e);
-            watcher.EnableRaisingEvents = true;
+            tasksWatcher.Created += OnFsEvent;
+            tasksWatcher.Changed += OnFsEvent;
+            tasksWatcher.Deleted += OnFsEvent;
+            tasksWatcher.Renamed += (_, e) => OnFsEvent(tasksWatcher, e);
+            tasksWatcher.EnableRaisingEvents = true;
+
+            if (notesWatcher is not null)
+            {
+                notesWatcher.Created += OnFsEvent;
+                notesWatcher.Changed += OnFsEvent;
+                notesWatcher.Deleted += OnFsEvent;
+                notesWatcher.Renamed += (_, e) => OnFsEvent(notesWatcher, e);
+                notesWatcher.EnableRaisingEvents = true;
+            }
 
             if (!_watchers.TryAdd(projectId, reg))
                 reg.Dispose();
         }
         catch (Exception ex) when (ex is IOException or ArgumentException or PlatformNotSupportedException)
         {
-            _logger?.LogDebug(ex, "Could not attach FileSystemWatcher on {Dir}.", fullDir);
+            _logger?.LogDebug(ex, "Could not attach FileSystemWatcher on {Dir} / {NotesDir}.", fullTasksDir, fullNotesDir);
         }
     }
 

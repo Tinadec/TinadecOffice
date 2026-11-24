@@ -38,6 +38,7 @@ public sealed class ProjectBoardCoordinator
     private readonly ConcurrentDictionary<Guid, Channel<ProjectBoardEventDto>> _globalSubscribers = new();
 
     private IProjectBoardSyncHook? _syncHook;
+    private IProjectAutopilotWakeHook? _autopilotHook;
 
     public ProjectBoardCoordinator(
         IDbContextFactory<ProjectBoardDbContext> dbFactory,
@@ -54,6 +55,13 @@ public sealed class ProjectBoardCoordinator
     }
 
     internal void AttachSyncHook(IProjectBoardSyncHook hook) => _syncHook = hook;
+    internal void AttachAutopilotHook(IProjectAutopilotWakeHook hook) => _autopilotHook = hook;
+
+    internal void NotifyAutopilot(Guid projectId)
+    {
+        var hook = _autopilotHook ?? _services.GetService<IProjectAutopilotWakeHook>();
+        hook?.NotifyProjectChanged(projectId);
+    }
 
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
     {
@@ -253,7 +261,35 @@ public sealed class ProjectBoardCoordinator
             OccurredAtUnixMs = dto.UpdatedAtUnixMs
         }, cancellationToken).ConfigureAwait(false);
 
+        NotifyAutopilot(projectId);
         return dto;
+    }
+
+    public Task<ProjectNotesDto> GetProjectNotesAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        var syncHook = GetSyncHook()
+            ?? throw new InvalidOperationException("ProjectBoardFileSyncService is not registered.");
+        return syncHook.GetProjectNotesAsync(projectId, cancellationToken);
+    }
+
+    public Task<ProjectNotesDto> UpdateProjectNotesAsync(
+        Guid projectId,
+        UpdateProjectNotesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var syncHook = GetSyncHook()
+            ?? throw new InvalidOperationException("ProjectBoardFileSyncService is not registered.");
+        return syncHook.UpdateProjectNotesAsync(projectId, request, cancellationToken);
+    }
+
+    public Task<ProjectNotesDto> AppendProjectNoteEntryAsync(
+        Guid projectId,
+        string entryMarkdown,
+        CancellationToken cancellationToken = default)
+    {
+        var syncHook = GetSyncHook()
+            ?? throw new InvalidOperationException("ProjectBoardFileSyncService is not registered.");
+        return syncHook.AppendProjectNoteEntryAsync(projectId, entryMarkdown, cancellationToken);
     }
 
     public sealed class TaskQueryFilter
@@ -423,6 +459,7 @@ public sealed class ProjectBoardCoordinator
             OccurredAtUnixMs = createdDto.UpdatedAtUnixMs
         }, cancellationToken).ConfigureAwait(false);
 
+        NotifyAutopilot(projectId);
         return createdDto;
     }
 
@@ -547,6 +584,7 @@ public sealed class ProjectBoardCoordinator
             OccurredAtUnixMs = updatedDto.UpdatedAtUnixMs
         }, cancellationToken).ConfigureAwait(false);
 
+        NotifyAutopilot(projectId);
         return updatedDto;
     }
 
@@ -937,6 +975,7 @@ public sealed class ProjectBoardCoordinator
             OccurredAtUnixMs = updatedDto.UpdatedAtUnixMs
         }, cancellationToken).ConfigureAwait(false);
 
+        NotifyAutopilot(projectId);
         return updatedDto;
     }
 
@@ -1274,6 +1313,8 @@ public sealed class ProjectBoardCoordinator
             Settings = evt.Settings,
             ViewId = evt.ViewId,
             View = evt.View,
+            Notes = evt.Notes,
+            Autopilot = evt.Autopilot,
             OccurredAtUnixMs = evt.OccurredAtUnixMs > 0 ? evt.OccurredAtUnixMs : NowUnixMs()
         };
 
@@ -1313,6 +1354,8 @@ public sealed class ProjectBoardCoordinator
             Settings = evt.Settings,
             ViewId = evt.ViewId,
             View = evt.View,
+            Notes = evt.Notes,
+            Autopilot = evt.Autopilot,
             OccurredAtUnixMs = evt.OccurredAtUnixMs
         };
         PublishLocal(stamped);
@@ -1597,10 +1640,10 @@ public sealed class ProjectBoardCoordinator
 
     internal long NowUnixMs() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
 
-    private IProjectBoardSyncHook? GetSyncHook() =>
+    internal IProjectBoardSyncHook? GetSyncHook() =>
         _syncHook ?? _services.GetService<IProjectBoardSyncHook>();
 
-    private static string NormalizeStatus(string raw)
+    internal static string NormalizeStatus(string raw)
     {
         var norm = raw.Trim().ToLowerInvariant();
         if (!ProjectBoardTaskStatuses.IsValid(norm))
@@ -1608,7 +1651,7 @@ public sealed class ProjectBoardCoordinator
         return norm;
     }
 
-    private static string NormalizePriority(string raw)
+    internal static string NormalizePriority(string raw)
     {
         var norm = raw.Trim().ToLowerInvariant();
         if (!ProjectBoardPriorities.IsValid(norm))
@@ -1639,7 +1682,7 @@ public sealed class ProjectBoardCoordinator
         };
     }
 
-    private static List<ProjectBoardChecklistItemDto> NormalizeChecklist(List<ProjectBoardChecklistItemDto>? items)
+    internal static List<ProjectBoardChecklistItemDto> NormalizeChecklist(List<ProjectBoardChecklistItemDto>? items)
     {
         if (items is null || items.Count == 0) return [];
         var list = new List<ProjectBoardChecklistItemDto>(items.Count);
@@ -1661,7 +1704,7 @@ public sealed class ProjectBoardCoordinator
         return list;
     }
 
-    private static List<string> NormalizeLabels(List<string>? labels) =>
+    internal static List<string> NormalizeLabels(List<string>? labels) =>
         labels is null
             ? []
             : labels
@@ -1671,7 +1714,7 @@ public sealed class ProjectBoardCoordinator
                 .Take(32)
                 .ToList();
 
-    private static List<Guid> NormalizeGuidList(List<Guid>? ids) =>
+    internal static List<Guid> NormalizeGuidList(List<Guid>? ids) =>
         ids is null
             ? []
             : ids.Where(id => id != Guid.Empty).Distinct().ToList();
@@ -1772,4 +1815,12 @@ internal interface IProjectBoardSyncHook
     Task ExportTaskToMarkdownAsync(Guid projectId, Guid taskId, CancellationToken cancellationToken = default);
     Task DeleteTaskMarkdownAsync(Guid projectId, string taskKey, CancellationToken cancellationToken = default);
     Task OnStorageSettingsChangedAsync(Guid projectId, CancellationToken cancellationToken = default);
+    Task<ProjectNotesDto> GetProjectNotesAsync(Guid projectId, CancellationToken cancellationToken = default);
+    Task<ProjectNotesDto> UpdateProjectNotesAsync(Guid projectId, UpdateProjectNotesRequest request, CancellationToken cancellationToken = default);
+    Task<ProjectNotesDto> AppendProjectNoteEntryAsync(Guid projectId, string entryMarkdown, CancellationToken cancellationToken = default);
+}
+
+internal interface IProjectAutopilotWakeHook
+{
+    void NotifyProjectChanged(Guid projectId);
 }

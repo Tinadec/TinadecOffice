@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
 
 namespace TinadecCore.Runtime.ProjectBoard;
@@ -22,9 +23,14 @@ public static class ProjectBoardServiceExtensions
         services.TryAddSingleton<ProjectBoardCoordinator>();
         services.TryAddSingleton<ProjectBoardFileSyncService>();
         services.TryAddSingleton<IProjectBoardSyncHook>(sp => sp.GetRequiredService<ProjectBoardFileSyncService>());
+        services.TryAddSingleton<IProjectNotesContextReader>(sp => sp.GetRequiredService<ProjectBoardFileSyncService>());
         services.AddHostedService(sp => sp.GetRequiredService<ProjectBoardFileSyncService>());
         services.TryAddSingleton<IBoardCliHarnessExecutor, CatalogBoardCliHarnessExecutor>();
         services.TryAddSingleton<ProjectTaskExecutionService>();
+        services.TryAddSingleton<IProjectCoordinatorPlanner, DefaultProjectCoordinatorPlanner>();
+        services.TryAddSingleton<ProjectAutopilotService>();
+        services.TryAddSingleton<IProjectAutopilotWakeHook>(sp => sp.GetRequiredService<ProjectAutopilotService>());
+        services.AddHostedService(sp => sp.GetRequiredService<ProjectAutopilotService>());
         return services;
     }
 }
