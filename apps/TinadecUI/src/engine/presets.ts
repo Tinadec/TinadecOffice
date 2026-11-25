@@ -79,6 +79,7 @@ function buildHomePreset(ctx: PresetContext): UieLayoutSnapshot {
   const chat = card(n(), 'chat')
   const picker = card(n(), 'homePicker')
   const liveDigest = card(n(), 'live-digest')
+  const trajectory = card(n(), 'trajectory')
   const git = card(n(), 'git')
   const approval = card(n(), 'approval')
   const orchestration = card(n(), 'orchestration')
@@ -93,6 +94,7 @@ function buildHomePreset(ctx: PresetContext): UieLayoutSnapshot {
     [chat.id]: chat,
     [picker.id]: picker,
     [liveDigest.id]: liveDigest,
+    [trajectory.id]: trajectory,
     [git.id]: git,
     [approval.id]: approval,
     [orchestration.id]: orchestration,
@@ -111,7 +113,7 @@ function buildHomePreset(ctx: PresetContext): UieLayoutSnapshot {
       HOME_GEOMETRY.rightWidth,
       HOME_GEOMETRY.rightTopInset,
       'float',
-      [picker.id, liveDigest.id, git.id, approval.id, orchestration.id, events.id, doctor.id, browser.id, agent.id, terminal.id],
+      [picker.id, liveDigest.id, trajectory.id, git.id, approval.id, orchestration.id, events.id, doctor.id, browser.id, agent.id, terminal.id],
       picker.id,
     ),
   }

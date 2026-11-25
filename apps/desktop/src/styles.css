@@ -16,6 +16,7 @@
 @import "@vue-flow/core/dist/style.css";
 @import "./components/ui/conversation-primitives.css";
 @import "./components/conversation/conversation.css";
+@import "./styles/observability-geist.css";
 
 @theme {
   /* The code font; lib/codeFont.ts overrides it with the user's choice. Same stack as its default. */

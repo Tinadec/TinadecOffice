@@ -7,9 +7,10 @@ import { selectionIdentity } from '@/lib/storageScope'
 
 const c = homeController
 
+const activeRunId = computed<string | null>(() => c.stoppableRunId?.value ?? null)
+
 const primaryRunId = computed<string | null>(() => {
-  const activeRunId = c.stoppableRunId?.value
-  if (activeRunId) return activeRunId
+  if (activeRunId.value) return activeRunId.value
   return selectPrimaryRunId(c.runs.value)
 })
 
@@ -24,6 +25,9 @@ const storageId = computed<string | undefined>(() => {
   <div class="live-digest-card-host" data-dock-card="live-digest">
     <LiveDigestPanel
       :run-id="primaryRunId"
+      :session-id="c.selectedSessionId.value"
+      :runs="c.runs.value"
+      :active-run-id="activeRunId"
       :storage-id="storageId"
     />
   </div>

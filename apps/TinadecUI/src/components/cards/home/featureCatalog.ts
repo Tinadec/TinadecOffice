@@ -5,6 +5,7 @@ import {
   FileText,
   FolderTree,
   GitBranch,
+  GitCommitHorizontal,
   Globe,
   Layers3,
   ListChecks,
@@ -54,6 +55,7 @@ export interface FeatureCatalogEntry {
 
 export const FEATURE_CATALOG: FeatureCatalogEntry[] = [
   { descriptorId: 'live-digest', titleKey: 'context.homeLiveDigest', descKey: 'context.homeLiveDigestDesc', icon: Radio, color: '#3fb950', group: 'gov' },
+  { descriptorId: 'trajectory', titleKey: 'context.homeTrajectory', descKey: 'context.homeTrajectoryDesc', icon: GitCommitHorizontal, color: '#5b9fe8', group: 'gov' },
   { descriptorId: 'codeEditor', titleKey: 'context.homeCodeEditor', descKey: 'context.homeCodeEditorDesc', icon: FileCode, color: '#746294', group: 'dev' },
   { descriptorId: 'terminal', titleKey: 'context.homeTerminal', descKey: 'context.homeTerminalDesc', icon: TerminalSquare, color: '#3fb950', group: 'dev' },
   // Documents are two entries: the viewer scans the workspace and shows its documents as a

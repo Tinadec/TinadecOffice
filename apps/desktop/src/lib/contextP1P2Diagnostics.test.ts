@@ -87,7 +87,8 @@ import { computeSquarifiedTreemap, resolveContextTreemapModel } from '@/lib/cont
 import { buildTrajectoryTree, resolveContextWindowBuckets } from '@/lib/trajectoryBuilder'
 import { buildDiagnosticDraft, buildOfflineDiagnosticHtml } from '@/lib/offlineDiagnosticReport'
 import ContextOverlapPanel from '@/components/trajectory/ContextOverlapPanel.vue'
-import OrchestrationTab from '@/components/OrchestrationTab.vue'
+import TrajectoryWorkbenchPanel from '@/components/trajectory/TrajectoryWorkbenchPanel.vue'
+import { __resetObservabilityRunSelectionForTests } from '@/composables/useObservabilityRunSelection'
 import MemoryContextSection from '@/settings/sections/MemoryContextSection.vue'
 import { contextMemoryApi } from '@/lib/contextMemoryApi'
 import { companionApi } from '@/lib/companionApi'
@@ -490,6 +491,7 @@ describe('P1 Scoped Local Snapshot Cache & Offline Resilience', () => {
 describe('P1 Component Upgrades & Zero-Blank-Screen Offline Fallback', () => {
   beforeEach(() => {
     clearContextDiagnosticsCache()
+    __resetObservabilityRunSelectionForTests()
     setSelectedStorage('user')
     setHostAccessStatus({ state: 'ready', webAuth: false } as never)
   })
@@ -497,6 +499,7 @@ describe('P1 Component Upgrades & Zero-Blank-Screen Offline Fallback', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     clearContextDiagnosticsCache()
+    __resetObservabilityRunSelectionForTests()
   })
 
   it('ContextOverlapPanel calls Core POST /api/v1/context/audit-overlap without 24x getToolSkill loop and falls back to cache offline', async () => {
@@ -528,41 +531,46 @@ describe('P1 Component Upgrades & Zero-Blank-Screen Offline Fallback', () => {
     expect(wrapper.find('[data-testid="overlap-line-range"]').text()).toBe('L12-L24 <-> L4-L16')
   })
 
-  it('OrchestrationTab renders cached RunContextDiagnosticsDto when backend disconnects (even with null snapshot) and exports offline HTML', async () => {
+  it('TrajectoryWorkbenchPanel renders cached RunContextDiagnosticsDto when backend disconnects (even with null orchestration snapshot) and exports offline HTML', async () => {
     saveCachedRunDiagnostics('run-cached-99', makeCoreRunDiagnostics('run-cached-99'))
-    vi.spyOn(api, 'listAgents').mockResolvedValue([])
     vi.spyOn(api, 'getRunContextDiagnostics').mockRejectedValue(new Error('502 CORE_UNREACHABLE'))
     vi.spyOn(api, 'auditContextOverlap').mockRejectedValue(new Error('502 CORE_UNREACHABLE'))
     vi.spyOn(api, 'listModelInvocations').mockRejectedValue(new Error('502 CORE_UNREACHABLE'))
+    vi.spyOn(api, 'getSessionTopology').mockRejectedValue(new Error('502 CORE_UNREACHABLE'))
+    vi.spyOn(api, 'listToolExecutions').mockRejectedValue(new Error('502 CORE_UNREACHABLE'))
 
-    const wrapper = mount(OrchestrationTab, {
+    const wrapper = mount(TrajectoryWorkbenchPanel, {
       props: {
-        snapshot: null,
-        runId: 'run-cached-99',
+        orchestration: null,
+        activeRunId: 'run-cached-99',
         toolExecutions: [],
       },
       global: {
         plugins: [makeI18n()],
-        stubs: { SessionPlanPanel: true, DeclaredGraphCanvas: true, TeammateSteerPopover: true },
       },
     })
     await flushPromises()
 
-    // Zero blank screen: cached diagnostics block renders with stale banner + executive findings + buckets + export
-    expect(wrapper.find('[data-testid="orchestration-empty"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="trajectory-diagnostics-block"]').exists()).toBe(true)
+    // Zero blank screen: cached diagnostics workbench renders stale banner + executive findings + composition bar
+    expect(wrapper.find('[data-testid="trajectory-workbench-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="diagnostics-offline-banner"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="composition-cached-badge"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="diagnostics-executive-findings"]').text()).toContain('CONTEXT_ROT_HIGH_WATERMARK')
+
+    // Switch to Eval tab while offline -> renders Core cached 5% occupancy buckets cleanly
+    await wrapper.get('[data-testid="trajectory-tab-eval"]').trigger('click')
+    expect(wrapper.find('[data-testid="bucket-cached-badge"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="bucket-peak"]').text()).toContain('78.5%')
 
-    // Switch to Treemap tab while offline -> renders Core cached compaction categories cleanly
-    await wrapper.get('[data-testid="diagnostics-tab-treemap"]').trigger('click')
+    // Switch to Context Matrix (Treemap) tab while offline -> renders Core cached compaction categories & dropped badge cleanly
+    await wrapper.get('[data-testid="trajectory-tab-context"]').trigger('click')
+    expect(wrapper.find('[data-testid="treemap-cached-badge"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="treemap-dropped-badge"]').text()).toContain('1,850')
 
     // Offline HTML export works while disconnected
     const createUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:offline-report')
     const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-    await wrapper.get('[data-testid="diagnostics-export-html-btn"]').trigger('click')
+    await wrapper.get('[data-testid="workbench-export-btn"]').trigger('click')
 
     const exportedEvents = wrapper.emitted('export-report')
     expect(exportedEvents).toBeTruthy()
@@ -571,6 +579,7 @@ describe('P1 Component Upgrades & Zero-Blank-Screen Offline Fallback', () => {
     })
     createUrlSpy.mockRestore()
     revokeUrlSpy.mockRestore()
+    wrapper.unmount()
   })
 })
 

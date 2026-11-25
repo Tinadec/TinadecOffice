@@ -343,7 +343,7 @@ function kindLabel(kind: ContextSourceKind): string {
 
 <template>
   <section
-    class="overlap-card"
+    class="overlap-surface"
     :class="{ 'is-compact': compact, 'is-collapsed': collapsible && !expanded }"
     data-testid="context-overlap-panel"
   >
@@ -351,7 +351,7 @@ function kindLabel(kind: ContextSourceKind): string {
       <button
         v-if="collapsible"
         type="button"
-        class="overlap-toggle ui-pressable"
+        class="overlap-toggle"
         :aria-expanded="expanded"
         data-testid="context-overlap-toggle"
         @click="expanded = !expanded"
@@ -392,7 +392,7 @@ function kindLabel(kind: ContextSourceKind): string {
         <button
           v-if="expanded && !sources && autoLoadMode !== 'none'"
           type="button"
-          class="overlap-icon-btn ui-pressable"
+          class="overlap-icon-btn"
           :disabled="loading"
           :title="t('trajectoryEval.overlap.rescan')"
           data-testid="overlap-rescan-btn"
@@ -415,7 +415,7 @@ function kindLabel(kind: ContextSourceKind): string {
         <div class="overlap-toolbar-actions">
           <button
             type="button"
-            class="overlap-ghost-btn ui-pressable"
+            class="overlap-ghost-btn"
             data-testid="overlap-paste-toggle"
             @click="customInstructionsOpen = !customInstructionsOpen"
           >
@@ -425,7 +425,7 @@ function kindLabel(kind: ContextSourceKind): string {
           <button
             v-if="auditResult.pairs.length > 0"
             type="button"
-            class="overlap-ghost-btn ui-pressable"
+            class="overlap-ghost-btn"
             data-testid="overlap-diagnose-all-btn"
             @click="emit('diagnose-overlap', auditResult, auditResult.pairs[0])"
           >
@@ -507,14 +507,13 @@ function kindLabel(kind: ContextSourceKind): string {
 </template>
 
 <style scoped>
-.overlap-card {
+.overlap-surface {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-card, 10px);
-  background: var(--bg-secondary);
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
 
@@ -534,7 +533,8 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 0;
   background: transparent;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   text-align: left;
 }
@@ -543,7 +543,8 @@ function kindLabel(kind: ContextSourceKind): string {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
@@ -560,9 +561,9 @@ function kindLabel(kind: ContextSourceKind): string {
   gap: 4px;
   height: 21px;
   padding: 0 7px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 10.5px;
 }
@@ -574,8 +575,6 @@ function kindLabel(kind: ContextSourceKind): string {
 }
 
 .overlap-pill.is-stale {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
   border-style: dashed;
 }
 
@@ -586,7 +585,7 @@ function kindLabel(kind: ContextSourceKind): string {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border-muted);
-  border-radius: 6px;
+  border-radius: 5px;
   background: var(--bg-primary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -627,9 +626,9 @@ function kindLabel(kind: ContextSourceKind): string {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: var(--control-height-xs, 26px);
+  height: 25px;
   padding: 0 8px;
-  border-radius: var(--radius-control, 6px);
+  border-radius: 5px;
   border: 1px solid var(--border-muted);
   background: var(--bg-primary);
   color: var(--text-secondary);
@@ -638,7 +637,7 @@ function kindLabel(kind: ContextSourceKind): string {
 }
 
 .overlap-ghost-btn:hover {
-  border-color: var(--accent-primary);
+  border-color: var(--text-primary);
   color: var(--text-primary);
 }
 
@@ -650,44 +649,39 @@ function kindLabel(kind: ContextSourceKind): string {
 .overlap-textarea {
   width: 100%;
   padding: 8px;
-  border: 1px solid var(--border-input);
-  border-radius: 7px;
-  background: var(--bg-input);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 11px;
   resize: vertical;
 }
 
 .overlap-empty {
-  padding: 10px;
+  padding: 12px;
   text-align: center;
   color: var(--text-muted);
   font-size: 11.5px;
 }
 
 .overlap-clean {
-  padding: 9px 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 7px;
-  background: var(--bg-status-ok);
-  color: var(--text-primary);
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-muted);
+  color: var(--text-secondary);
   font-size: 11.5px;
 }
 
 .overlap-pairs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .overlap-pair {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-primary);
+  padding: 10px 0;
+  border-top: 1px solid var(--border-muted);
 }
 
 .overlap-pair__head {
@@ -712,7 +706,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 1px 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 10px;
 }
@@ -731,10 +725,6 @@ function kindLabel(kind: ContextSourceKind): string {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  background: var(--bg-secondary);
   font-size: 11px;
   color: var(--text-secondary);
   line-height: 1.45;
@@ -744,8 +734,8 @@ function kindLabel(kind: ContextSourceKind): string {
   flex-shrink: 0;
   padding: 0 5px;
   border-radius: 4px;
-  border: 1px solid var(--border-default);
-  background: var(--bg-primary);
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 10px;
   font-weight: 500;
@@ -779,7 +769,7 @@ function kindLabel(kind: ContextSourceKind): string {
 .overlap-range-pill {
   padding: 1px 6px;
   border-radius: 4px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-muted);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-weight: 500;
@@ -794,23 +784,18 @@ function kindLabel(kind: ContextSourceKind): string {
   line-height: 1.4;
 }
 
+.spinning {
+  animation: overlap-spin 0.9s linear infinite;
+}
+
+@keyframes overlap-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinning {
-    animation: none;
-  }
 }
 </style>

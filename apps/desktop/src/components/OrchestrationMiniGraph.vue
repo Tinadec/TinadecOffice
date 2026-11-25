@@ -851,9 +851,9 @@ export function layoutRuntimeTopology(
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare } from '@lucide/vue'
+import { Maximize2, MessageSquare } from '@lucide/vue'
 import { Handle, MarkerType, Position, VueFlow, useVueFlow, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { api, type ModelProviderInstanceDto } from '../api'
@@ -870,6 +870,7 @@ const props = withDefaults(
     toolExecutions?: ToolExecutionTimelineItemDto[]
     selectedNodeId?: string | null
     runId?: string | null
+    fillHeight?: boolean
   }>(),
   {
     nodes: undefined,
@@ -879,6 +880,7 @@ const props = withDefaults(
     toolExecutions: () => [],
     selectedNodeId: null,
     runId: null,
+    fillHeight: false,
   },
 )
 
@@ -898,6 +900,9 @@ function tr(key: string, fallback: string, params?: Record<string, unknown>): st
   return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
 }
 
+const containerRef = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
 const effectiveRunId = computed(() => props.runId ?? props.snapshot?.run?.id ?? props.topologyRun?.run_id ?? null)
 const steerTarget = ref<TeammateSteerTarget | null>(null)
 const steerOpen = ref(false)
@@ -909,12 +914,32 @@ const nameFor = agentDirectory
   : (slug: string | null | undefined, fallback?: string | null) => fallback ?? slug ?? ''
 
 const providerCatalog = shallowRef<ModelProviderInstanceDto[]>([])
+
+function safeFitView(duration = 0): void {
+  try {
+    void fitView({ padding: 0.16, maxZoom: 1.05, duration })
+  } catch {
+    // Safe in non-DOM / zero-viewport test environments
+  }
+}
+
 onMounted(() => {
   if (typeof api?.listModelProviders === 'function') {
     void api.listModelProviders().then((rows) => {
       if (Array.isArray(rows)) providerCatalog.value = rows
     }).catch(() => {})
   }
+  if (typeof ResizeObserver !== 'undefined' && containerRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      safeFitView(0)
+    })
+    resizeObserver.observe(containerRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 const providerById = computed(() => {
@@ -984,9 +1009,16 @@ const maxDepth = computed(() =>
 )
 
 const canvasHeightPx = computed(() => {
-  if (maxDepth.value === 0) return 136
-  if (maxDepth.value === 1) return 224
-  return 304
+  if (maxDepth.value === 0) return 180
+  if (maxDepth.value === 1) return 260
+  return 340
+})
+
+const containerStyle = computed(() => {
+  if (props.fillHeight) {
+    return { minHeight: `${canvasHeightPx.value}px` }
+  }
+  return { height: `${canvasHeightPx.value}px` }
 })
 
 const flowNodes = computed<Node[]>(() =>
@@ -1000,15 +1032,15 @@ const flowNodes = computed<Node[]>(() =>
 function edgeStrokeColor(status: RuntimeTopologyStatus): string {
   switch (status) {
     case 'running':
-      return 'var(--accent-primary, #58a6ff)'
+      return 'var(--obs-status-ok, var(--accent-success, #3fb950))'
     case 'awaiting_approval':
-      return 'var(--accent-warning, #d29922)'
+      return 'var(--obs-status-warn, var(--accent-warning, #d29922))'
     case 'completed':
-      return 'var(--accent-success, #3fb950)'
+      return 'var(--obs-connector, #64748b)'
     case 'failed':
-      return 'var(--accent-danger, #f85149)'
+      return 'var(--obs-status-danger, var(--accent-danger, #f85149))'
     default:
-      return 'var(--text-muted, #8b949e)'
+      return 'var(--border-default, #8b949e)'
   }
 }
 
@@ -1019,30 +1051,37 @@ const flowEdges = computed<Edge[]>(() =>
       !props.selectedNodeId
       || edge.target === props.selectedNodeId
       || edge.source === props.selectedNodeId
+    const edgeClass = edge.status === 'running'
+      ? 'mini-edge--running'
+      : edge.status === 'awaiting_approval'
+        ? 'mini-edge--waiting'
+        : ''
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
       animated: edge.animated,
+      class: edgeClass,
       label: edge.via === 'task_dispatch' ? t('orchestrationPanel.edgeDispatch') : '',
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color: stroke,
-        width: 14,
-        height: 14,
+        width: 13,
+        height: 13,
       },
       style: {
         stroke,
-        strokeWidth: edge.animated ? 2 : 1.5,
-        opacity: isFocusedLineage ? 1 : 0.35,
+        strokeWidth: edge.animated ? 1.85 : 1.35,
+        opacity: isFocusedLineage ? 1 : 0.32,
       },
       labelStyle: {
-        fontSize: '9px',
+        fontSize: '9.5px',
+        fontFamily: 'var(--font-mono)',
         fill: 'var(--text-muted)',
       },
       labelBgStyle: {
-        fill: 'var(--surface-section)',
-        fillOpacity: 0.85,
+        fill: 'var(--bg-primary)',
+        fillOpacity: 0.9,
       },
     }
   }),
@@ -1051,11 +1090,7 @@ const flowEdges = computed<Edge[]>(() =>
 watch(
   () => resolvedGraph.value.nodes.map((n) => `${n.id}:${n.depth}`).join('|'),
   () => {
-    try {
-      void fitView({ padding: 0.16, duration: 0 })
-    } catch {
-      // Safe in non-DOM / zero-viewport test environments
-    }
+    safeFitView(0)
   },
 )
 
@@ -1138,10 +1173,23 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 <template>
   <div
     v-if="resolvedGraph.nodes.length > 0"
+    ref="containerRef"
     class="orchestration-mini-graph"
-    :style="{ height: `${canvasHeightPx}px` }"
+    :class="{ 'is-fill': fillHeight }"
+    :style="containerStyle"
     data-testid="orchestration-mini-graph"
   >
+    <button
+      type="button"
+      class="mini-graph-fit-btn ui-pressable"
+      :title="tr('orchestrationPanel.fitView', 'Zoom to fit')"
+      :aria-label="tr('orchestrationPanel.fitView', 'Zoom to fit')"
+      data-testid="mini-graph-fit-btn"
+      @click="safeFitView(160)"
+    >
+      <Maximize2 :size="12" aria-hidden="true" />
+    </button>
+
     <VueFlow
       :id="flowId"
       :nodes="flowNodes"
@@ -1151,13 +1199,13 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
       :edges-updatable="false"
       :disable-keyboard-a11y="true"
       :zoom-on-double-click="false"
-      :min-zoom="0.45"
+      :min-zoom="0.4"
       :max-zoom="1.25"
       fit-view-on-init
-      :default-viewport="{ zoom: 0.88 }"
+      :default-viewport="{ zoom: 0.9 }"
       @node-click="onFlowNodeClick"
     >
-      <Background :gap="16" :size="1" />
+      <Background :gap="18" :size="1" />
       <template #node-default="nodeProps">
         <div
           class="mini-topo-node"
@@ -1259,11 +1307,43 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   position: relative;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--border-muted);
-  border-radius: 10px;
-  background: var(--surface-section);
+  border: 1px solid var(--obs-hairline, var(--border-muted));
+  border-radius: 8px;
+  background: var(--obs-surface, var(--bg-primary));
   overflow: hidden;
   transition: height 0.18s ease;
+  font-variant-numeric: tabular-nums;
+}
+
+.orchestration-mini-graph.is-fill {
+  flex: 1 1 auto;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.mini-graph-fit-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--obs-hairline, var(--border-muted));
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.mini-graph-fit-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  background: var(--bg-secondary);
 }
 
 .orchestration-mini-graph :deep(.vue-flow__node-default),
@@ -1281,6 +1361,26 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   font-size: inherit;
 }
 
+/* Subtle animated stroke-dasharray pulse on active running / waiting edges */
+.orchestration-mini-graph :deep(.vue-flow__edge.mini-edge--running .vue-flow__edge-path) {
+  stroke-dasharray: 6 5;
+  animation: mini-edge-dash-flow 0.85s linear infinite;
+}
+
+.orchestration-mini-graph :deep(.vue-flow__edge.mini-edge--waiting .vue-flow__edge-path) {
+  stroke-dasharray: 4 5;
+  animation: mini-edge-dash-flow 1.4s linear infinite;
+}
+
+@keyframes mini-edge-dash-flow {
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 .mini-topo-handle {
   opacity: 0;
   pointer-events: none;
@@ -1292,81 +1392,53 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   width: 208px;
   min-height: 64px;
   box-sizing: border-box;
-  padding: 9px 11px;
-  border-radius: 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-muted);
-  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(0, 0, 0, 0.12));
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-primary);
+  border: 1px solid var(--obs-hairline, var(--border-muted));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   text-align: left;
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
 }
 
 .mini-topo-node:hover {
-  border-color: var(--border-default, var(--accent-primary));
+  border-color: var(--border-default);
 }
 
 .mini-topo-node:focus-visible {
-  outline: 2px solid var(--accent-primary);
+  outline: 2px solid var(--border-input-focus);
   outline-offset: 2px;
 }
 
 .mini-topo-node--coordinator {
-  border-color: var(--border-default, var(--border-muted));
-  background: var(--surface-raised);
-}
-
-.mini-topo-node--coordinator .mini-topo-tier {
-  color: var(--text-primary);
-  border: 1px solid var(--border-default, var(--border-muted));
-  background: var(--surface-section);
-}
-
-.mini-topo-node--worker {
-  border-color: var(--border-muted);
-  background: var(--surface-raised);
-}
-
-.mini-topo-node--worker .mini-topo-tier {
-  color: var(--text-secondary);
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section);
-}
-
-.mini-topo-node--subagent {
-  border-color: var(--border-muted);
-  background: var(--surface-raised);
-}
-
-.mini-topo-node--subagent .mini-topo-tier {
-  color: var(--text-secondary);
-  border: 1px solid var(--border-muted);
-  background: var(--surface-section);
+  border-color: var(--border-default);
+  background: var(--bg-secondary);
 }
 
 .mini-topo-status--running {
-  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-muted));
+  border-color: color-mix(in srgb, var(--obs-status-ok, var(--accent-success)) 48%, var(--border-muted));
 }
 
 .mini-topo-status--awaiting_approval {
-  border-color: color-mix(in srgb, var(--accent-warning, #d29922) 65%, var(--border-muted));
+  border-color: color-mix(in srgb, var(--obs-status-warn, var(--accent-warning)) 55%, var(--border-muted));
 }
 
 .mini-topo-status--failed {
-  border-color: color-mix(in srgb, var(--accent-danger, #f85149) 65%, var(--border-muted));
+  border-color: color-mix(in srgb, var(--obs-status-danger, var(--accent-danger)) 55%, var(--border-muted));
 }
 
 .mini-topo-node.is-selected {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--text-primary);
 }
 
 .mini-topo-node.is-dimmed {
-  opacity: 0.54;
+  opacity: 0.48;
 }
 
 .mini-topo-node__top {
@@ -1385,29 +1457,29 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 }
 
 .mini-topo-dot.dot--running {
-  background: var(--accent-primary, #58a6ff);
+  background: var(--obs-status-ok, var(--accent-success));
   animation: mini-topo-pulse 1.5s ease-in-out infinite;
 }
 
 .mini-topo-dot.dot--awaiting_approval {
-  background: var(--accent-warning, #d29922);
-  animation: mini-topo-pulse 1.5s ease-in-out infinite;
+  background: var(--obs-status-warn, var(--accent-warning));
+  animation: mini-topo-pulse 1.6s ease-in-out infinite;
 }
 
 .mini-topo-dot.dot--completed {
-  background: var(--accent-success, #3fb950);
+  background: var(--obs-status-ok, var(--accent-success));
 }
 
 .mini-topo-dot.dot--failed {
-  background: var(--accent-danger, #f85149);
+  background: var(--obs-status-danger, var(--accent-danger));
 }
 
 .mini-topo-dot.dot--queued {
-  background: var(--text-muted, #8b949e);
+  background: var(--text-muted);
 }
 
 .mini-topo-dot.dot--paused {
-  background: var(--accent-warning);
+  background: var(--obs-status-warn, var(--accent-warning));
 }
 
 .mini-topo-steer-btn {
@@ -1417,30 +1489,24 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  border: 1px solid transparent;
-  border-radius: 5px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
 }
 
 .mini-topo-steer-btn:hover {
-  border-color: var(--border-default);
-  background: var(--bg-hover);
+  background: var(--bg-secondary);
   color: var(--text-primary);
-}
-
-.mini-topo-status-pill.pill--paused {
-  color: var(--accent-warning);
-  background: color-mix(in srgb, var(--accent-warning) 16%, transparent);
 }
 
 @keyframes mini-topo-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.45);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--obs-status-ok, var(--accent-success)) 42%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(88, 166, 255, 0);
+    box-shadow: 0 0 0 4px transparent;
   }
 }
 
@@ -1450,6 +1516,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.3;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1459,12 +1526,17 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 .mini-topo-tier {
   flex-shrink: 0;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.25;
-  padding: 1px 6px;
-  border-radius: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
   color: var(--text-secondary);
-  background: var(--surface-section);
+  background: var(--bg-secondary);
+}
+
+.mini-topo-node--coordinator .mini-topo-tier {
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary);
 }
 
 .mini-topo-node__meta {
@@ -1482,27 +1554,28 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--bg-tertiary, var(--surface-section));
+  background: var(--bg-secondary);
 }
 
 .mini-topo-status-pill.pill--running {
-  color: var(--accent-primary, #58a6ff);
-  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 15%, transparent);
+  color: var(--obs-status-ok, var(--accent-success));
+  background: var(--obs-status-ok-soft, color-mix(in srgb, var(--accent-success) 12%, transparent));
 }
 
-.mini-topo-status-pill.pill--awaiting_approval {
-  color: var(--accent-warning, #d29922);
-  background: color-mix(in srgb, var(--accent-warning, #d29922) 16%, transparent);
+.mini-topo-status-pill.pill--awaiting_approval,
+.mini-topo-status-pill.pill--paused {
+  color: var(--obs-status-warn, var(--accent-warning));
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 13%, transparent));
 }
 
 .mini-topo-status-pill.pill--completed {
-  color: var(--accent-success, #3fb950);
-  background: color-mix(in srgb, var(--accent-success, #3fb950) 15%, transparent);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
 }
 
 .mini-topo-status-pill.pill--failed {
-  color: var(--accent-danger, #f85149);
-  background: color-mix(in srgb, var(--accent-danger, #f85149) 15%, transparent);
+  color: var(--obs-status-danger, var(--accent-danger));
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 12%, transparent));
 }
 
 .mini-topo-engine-badge {
@@ -1510,30 +1583,17 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   align-items: center;
   flex-shrink: 0;
   max-width: 118px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--border-card, var(--border-muted));
-  background: var(--surface-section);
-  color: var(--text-secondary);
-  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   font-weight: 500;
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.mini-topo-engine-badge[data-engine-kind='acp'] {
-  border-color: color-mix(in srgb, var(--accent-primary, #58a6ff) 32%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-primary, #58a6ff) 10%, transparent);
-  color: var(--accent-primary, #58a6ff);
-}
-
-.mini-topo-engine-badge[data-engine-kind='cli'],
-.mini-topo-engine-badge[data-engine-kind='tui'] {
-  border-color: color-mix(in srgb, var(--accent-info, #4a9eff) 32%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-info, #4a9eff) 10%, transparent);
-  color: var(--accent-info, var(--text-primary));
 }
 
 .mini-topo-subtitle {
@@ -1546,5 +1606,14 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mini-topo-dot.dot--running,
+  .mini-topo-dot.dot--awaiting_approval,
+  .orchestration-mini-graph :deep(.vue-flow__edge.mini-edge--running .vue-flow__edge-path),
+  .orchestration-mini-graph :deep(.vue-flow__edge.mini-edge--waiting .vue-flow__edge-path) {
+    animation: none;
+  }
 }
 </style>

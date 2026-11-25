@@ -2,11 +2,11 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  ArrowUpRight,
   Brain,
   CheckCircle2,
   ChevronDown,
   FileCode2,
-  GitBranch,
   Layers3,
   Loader2,
   Search,
@@ -30,8 +30,23 @@ const emit = defineEmits<{
   'open-trajectory': [chapter: LiveDigestChapterDto]
 }>()
 
-const { t } = useI18n()
+const { t, te, locale } = useI18n()
 const expanded = ref(props.defaultExpanded)
+
+const isZh = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? String(t(key, params)) : String(t(key))
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
+
+const jumpTrajectoryLabel = computed(() =>
+  tr(
+    'liveDigest.actions.viewInTrajectory',
+    isZh.value ? '在轨迹中查看 ↗' : 'View in trajectory ↗',
+  ),
+)
 
 const phaseMeta = computed(() => {
   const phase = String(props.chapter.phase ?? '').toLowerCase()
@@ -89,141 +104,154 @@ function toggleExpanded(): void {
     :data-phase="chapter.phase"
     data-testid="live-digest-chapter"
   >
-    <button
-      type="button"
-      class="ld-chapter-head ui-pressable"
-      :aria-expanded="expanded"
-      data-testid="live-digest-chapter-toggle"
-      @click="toggleExpanded"
-    >
-      <span class="ld-chapter-index">{{ formattedIndex }}</span>
-      <span class="ld-phase-pill" :class="phaseMeta.cls">{{ phaseMeta.label }}</span>
-      <span class="ld-chapter-title" :title="chapter.title">{{ chapter.title }}</span>
-      <span class="ld-source-tag">{{ sourceLabel }}</span>
-      <ChevronDown
-        :size="14"
-        class="ld-chapter-chevron"
-        :class="{ 'is-open': expanded }"
-        aria-hidden="true"
-      />
-    </button>
-
-    <p v-if="chapter.narrative" class="ld-chapter-narrative">
-      {{ chapter.narrative }}
-    </p>
-
-    <div
-      v-if="chapter.touched_files.length > 0"
-      class="ld-file-chips"
-      data-testid="live-digest-chapter-files"
-    >
-      <span
-        v-for="file in chapter.touched_files"
-        :key="file.path"
-        class="ld-file-chip"
-        :title="file.path"
-      >
-        <FileCode2 :size="13" class="ld-file-chip-icon" aria-hidden="true" />
-        <span class="ld-file-chip-name">{{ shortFileName(file.path) }}</span>
-        <span v-if="file.added_lines > 0" class="ld-diff-add">+{{ file.added_lines }}</span>
-        <span v-if="file.removed_lines > 0" class="ld-diff-del">-{{ file.removed_lines }}</span>
-      </span>
+    <!-- 1.5px neutral vertical timeline spine + stage dot -->
+    <div class="ld-chapter-rail" aria-hidden="true">
+      <span class="ld-chapter-dot" :class="phaseMeta.cls" />
+      <span class="ld-chapter-spine" />
     </div>
 
-    <div
-      class="ui-collapse ld-chapter-collapse"
-      :class="{ 'is-open': expanded }"
-      :aria-hidden="!expanded"
-    >
-      <div class="ui-collapse-inner">
-        <div class="ld-evidence-body" data-testid="live-digest-chapter-evidence">
-          <div v-if="chapter.scout_note" class="ld-evidence-block" data-testid="live-digest-scout-note">
-            <div class="ld-evidence-label">
-              <Search :size="13" aria-hidden="true" />
-              <span>{{ t('liveDigest.chapter.scoutNote') }}</span>
-            </div>
-            <p class="ld-scout-text">{{ chapter.scout_note }}</p>
-          </div>
+    <div class="ld-chapter-main">
+      <!-- Top compact metadata + 1-click trajectory deep-link -->
+      <div class="ld-chapter-meta-row">
+        <span class="ld-chapter-index">#{{ formattedIndex }}</span>
+        <span class="ld-phase-pill" :class="phaseMeta.cls">{{ phaseMeta.label }}</span>
+        <span class="ld-source-tag">{{ sourceLabel }}</span>
+        <button
+          type="button"
+          class="ld-trajectory-link ui-pressable"
+          data-testid="live-digest-jump-trajectory"
+          @click="emit('open-trajectory', chapter)"
+        >
+          <span>{{ jumpTrajectoryLabel }}</span>
+        </button>
+      </div>
 
-          <div
-            v-if="chapter.raw_thought_excerpt"
-            class="ld-evidence-block"
-            data-testid="live-digest-raw-thought"
-          >
-            <div class="ld-evidence-label">
-              <Brain :size="13" aria-hidden="true" />
-              <span>{{ t('liveDigest.chapter.rawThought') }}</span>
-            </div>
-            <pre class="ld-thought-pre">{{ chapter.raw_thought_excerpt }}</pre>
-          </div>
+      <!-- Dedicated full-width chapter title button (never crushed by index/source badges) -->
+      <button
+        type="button"
+        class="ld-chapter-head ui-pressable"
+        :aria-expanded="expanded"
+        data-testid="live-digest-chapter-toggle"
+        @click="toggleExpanded"
+      >
+        <span class="ld-chapter-title" :title="chapter.title">{{ chapter.title }}</span>
+        <ChevronDown
+          :size="14"
+          class="ld-chapter-chevron"
+          :class="{ 'is-open': expanded }"
+          aria-hidden="true"
+        />
+      </button>
 
-          <div
-            v-if="chapter.tool_calls.length > 0"
-            class="ld-evidence-block"
-            data-testid="live-digest-tool-calls"
-          >
-            <div class="ld-evidence-label">
-              <Wrench :size="13" aria-hidden="true" />
-              <span>{{ t('liveDigest.chapter.toolEvidence', { count: chapter.tool_calls.length }) }}</span>
+      <p v-if="chapter.narrative" class="ld-chapter-narrative">
+        {{ chapter.narrative }}
+      </p>
+
+      <div
+        v-if="chapter.touched_files.length > 0"
+        class="ld-file-chips"
+        data-testid="live-digest-chapter-files"
+      >
+        <span
+          v-for="file in chapter.touched_files"
+          :key="file.path"
+          class="ld-file-chip"
+          :title="file.path"
+        >
+          <FileCode2 :size="12" class="ld-file-chip-icon" aria-hidden="true" />
+          <span class="ld-file-chip-name">{{ shortFileName(file.path) }}</span>
+          <span v-if="file.added_lines > 0" class="ld-diff-add">+{{ file.added_lines }}</span>
+          <span v-if="file.removed_lines > 0" class="ld-diff-del">-{{ file.removed_lines }}</span>
+        </span>
+      </div>
+
+      <div
+        class="ui-collapse ld-chapter-collapse"
+        :class="{ 'is-open': expanded }"
+        :aria-hidden="!expanded"
+      >
+        <div class="ui-collapse-inner">
+          <div class="ld-evidence-body" data-testid="live-digest-chapter-evidence">
+            <div v-if="chapter.scout_note" class="ld-evidence-block" data-testid="live-digest-scout-note">
+              <div class="ld-evidence-label">
+                <Search :size="12" aria-hidden="true" />
+                <span>{{ t('liveDigest.chapter.scoutNote') }}</span>
+              </div>
+              <p class="ld-scout-text">{{ chapter.scout_note }}</p>
             </div>
-            <ul class="ld-tool-list">
-              <li
-                v-for="call in chapter.tool_calls"
-                :key="call.tool_call_id"
-                class="ld-tool-row"
-                :data-tool-status="call.status"
+
+            <div
+              v-if="chapter.raw_thought_excerpt"
+              class="ld-evidence-block"
+              data-testid="live-digest-raw-thought"
+            >
+              <div class="ld-evidence-label">
+                <Brain :size="12" aria-hidden="true" />
+                <span>{{ t('liveDigest.chapter.rawThought') }}</span>
+              </div>
+              <pre class="ld-thought-pre">{{ chapter.raw_thought_excerpt }}</pre>
+            </div>
+
+            <div
+              v-if="chapter.tool_calls.length > 0"
+              class="ld-evidence-block"
+              data-testid="live-digest-tool-calls"
+            >
+              <div class="ld-evidence-label">
+                <Wrench :size="12" aria-hidden="true" />
+                <span>{{ t('liveDigest.chapter.toolEvidence', { count: chapter.tool_calls.length }) }}</span>
+              </div>
+              <ul class="ld-tool-list">
+                <li
+                  v-for="call in chapter.tool_calls"
+                  :key="call.tool_call_id"
+                  class="ld-tool-row"
+                  :data-tool-status="call.status"
+                >
+                  <Loader2
+                    v-if="call.status === 'running'"
+                    :size="12"
+                    class="ld-tool-icon is-running"
+                    aria-hidden="true"
+                  />
+                  <XCircle
+                    v-else-if="call.status === 'failed'"
+                    :size="12"
+                    class="ld-tool-icon is-failed"
+                    aria-hidden="true"
+                  />
+                  <CheckCircle2
+                    v-else
+                    :size="12"
+                    class="ld-tool-icon is-ok"
+                    aria-hidden="true"
+                  />
+                  <code class="ld-tool-name">{{ call.tool_name }}</code>
+                  <span class="ld-tool-summary" :title="call.compact_summary">{{ call.compact_summary }}</span>
+                </li>
+              </ul>
+            </div>
+
+            <p v-if="!hasEvidence" class="ld-evidence-empty">
+              {{ t('liveDigest.chapter.noEvidence') }}
+            </p>
+
+            <div class="ld-chapter-links">
+              <button
+                type="button"
+                class="ld-link-btn ui-pressable"
+                data-testid="live-digest-jump-orchestration"
+                @click="emit('open-orchestration', chapter)"
               >
-                <Loader2
-                  v-if="call.status === 'running'"
-                  :size="13"
-                  class="ld-tool-icon is-running"
-                  aria-hidden="true"
-                />
-                <XCircle
-                  v-else-if="call.status === 'failed'"
-                  :size="13"
-                  class="ld-tool-icon is-failed"
-                  aria-hidden="true"
-                />
-                <CheckCircle2
-                  v-else
-                  :size="13"
-                  class="ld-tool-icon is-ok"
-                  aria-hidden="true"
-                />
-                <code class="ld-tool-name">{{ call.tool_name }}</code>
-                <span class="ld-tool-summary" :title="call.compact_summary">{{ call.compact_summary }}</span>
-              </li>
-            </ul>
-          </div>
-
-          <p v-if="!hasEvidence" class="ld-evidence-empty">
-            {{ t('liveDigest.chapter.noEvidence') }}
-          </p>
-
-          <div class="ld-chapter-links">
-            <button
-              type="button"
-              class="ld-link-btn ui-pressable"
-              data-testid="live-digest-jump-orchestration"
-              @click="emit('open-orchestration', chapter)"
-            >
-              <Layers3 :size="13" aria-hidden="true" />
-              <span>{{ t('liveDigest.actions.openTimeline') }}</span>
-            </button>
-            <button
-              type="button"
-              class="ld-link-btn ui-pressable"
-              data-testid="live-digest-jump-trajectory"
-              @click="emit('open-trajectory', chapter)"
-            >
-              <GitBranch :size="13" aria-hidden="true" />
-              <span>{{ t('liveDigest.actions.openTrajectory') }}</span>
-            </button>
-            <span v-if="chapter.source === 'l1_narrator'" class="ld-ai-hint">
-              <Sparkles :size="12" aria-hidden="true" />
-              <span>{{ t('liveDigest.source.narratedBadge') }}</span>
-            </span>
+                <Layers3 :size="12" aria-hidden="true" />
+                <span>{{ t('liveDigest.actions.openTimeline') }}</span>
+                <ArrowUpRight :size="11" aria-hidden="true" />
+              </button>
+              <span v-if="chapter.source === 'l1_narrator'" class="ld-ai-hint">
+                <Sparkles :size="11" aria-hidden="true" />
+                <span>{{ t('liveDigest.source.narratedBadge') }}</span>
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -233,42 +261,75 @@ function toggleExpanded(): void {
 
 <style scoped>
 .ld-chapter {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 10px;
+  min-width: 0;
+}
+
+.ld-chapter-rail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 11px;
-  border-radius: var(--radius-card, 10px);
-  border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
-  transition:
-    border-color var(--duration-tap, 120ms) var(--ease-snappy, ease),
-    background-color var(--duration-tap, 120ms) var(--ease-snappy, ease);
+  align-items: center;
+  padding-top: 5px;
 }
 
-.ld-chapter:hover {
-  border-color: var(--border-default);
+.ld-chapter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-secondary);
+  flex-shrink: 0;
 }
 
-.ld-chapter.is-expanded {
-  background: var(--bg-tertiary);
-  border-color: var(--border-default);
+.ld-chapter-dot.phase-verification {
+  background: var(--obs-status-warn, var(--accent-warning));
 }
 
-.ld-chapter.is-compact {
-  padding: 8px 9px;
+.ld-chapter-dot.phase-conclusion {
+  background: var(--obs-status-ok, var(--accent-success));
 }
 
-.ld-chapter-head {
+.ld-chapter-spine {
+  width: 1.5px;
+  flex: 1 1 auto;
+  min-height: 14px;
+  margin-top: 5px;
+  background: var(--obs-hairline, var(--border-muted));
+}
+
+.ld-chapter:last-child .ld-chapter-spine {
+  background: linear-gradient(
+    to bottom,
+    var(--obs-hairline, var(--border-muted)) 0%,
+    transparent 100%
+  );
+}
+
+.ld-chapter-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
+}
+
+.ld-chapter:last-child .ld-chapter-main {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.ld-chapter.is-compact .ld-chapter-main {
+  padding-bottom: 10px;
+  gap: 4px;
+}
+
+.ld-chapter-meta-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
+  flex-wrap: wrap;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -285,52 +346,87 @@ function toggleExpanded(): void {
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: 4px;
+  font-size: 10.5px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
   flex-shrink: 0;
-  background: var(--bg-status-neutral);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
 }
 
-.ld-phase-pill.phase-hypothesis {
-  background: var(--bg-status-info-soft, var(--bg-status-info));
-  color: var(--text-primary);
-}
-
 .ld-phase-pill.phase-verification {
-  background: var(--bg-status-warn);
-  color: var(--accent-warning);
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 13%, transparent));
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-phase-pill.phase-conclusion {
-  background: var(--bg-status-ok);
-  color: var(--accent-success);
-}
-
-.ld-chapter-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--obs-status-ok-soft, color-mix(in srgb, var(--accent-success) 12%, transparent));
+  color: var(--obs-status-ok, var(--accent-success));
 }
 
 .ld-source-tag {
   font-size: 10.5px;
   font-family: var(--font-mono);
   color: var(--text-muted);
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--bg-primary);
   flex-shrink: 0;
 }
 
+.ld-trajectory-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+.ld-trajectory-link:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.ld-chapter-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.ld-chapter-head:hover .ld-chapter-title {
+  color: var(--text-primary);
+}
+
+.ld-chapter-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
 .ld-chapter-chevron {
+  margin-top: 2px;
   color: var(--text-muted);
   flex-shrink: 0;
   transition: transform var(--duration-pop, 180ms) var(--ease-spring-soft, ease);
@@ -354,6 +450,7 @@ function toggleExpanded(): void {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  padding-top: 2px;
 }
 
 .ld-file-chip {
@@ -361,12 +458,12 @@ function toggleExpanded(): void {
   align-items: center;
   gap: 4px;
   max-width: 100%;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
   font-size: 11px;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .ld-file-chip-icon {
@@ -379,21 +476,21 @@ function toggleExpanded(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 180px;
+  max-width: 190px;
 }
 
 .ld-diff-add {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  color: var(--accent-success);
+  color: var(--obs-status-ok, var(--accent-success));
 }
 
 .ld-diff-del {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  color: var(--accent-danger);
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-evidence-body {
@@ -401,8 +498,8 @@ function toggleExpanded(): void {
   flex-direction: column;
   gap: 8px;
   padding-top: 8px;
-  margin-top: 2px;
-  border-top: 1px solid var(--border-muted);
+  margin-top: 4px;
+  border-top: 1px solid var(--obs-hairline, var(--border-muted));
 }
 
 .ld-evidence-block {
@@ -422,9 +519,9 @@ function toggleExpanded(): void {
 
 .ld-scout-text {
   margin: 0;
-  padding: 7px 9px;
-  border-radius: 7px;
-  background: var(--bg-primary);
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.5;
@@ -432,9 +529,9 @@ function toggleExpanded(): void {
 
 .ld-thought-pre {
   margin: 0;
-  padding: 7px 9px;
-  border-radius: 7px;
-  background: var(--bg-primary);
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -451,16 +548,14 @@ function toggleExpanded(): void {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .ld-tool-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 7px;
-  border-radius: 6px;
-  background: var(--bg-primary);
+  padding: 3px 0;
   font-size: 11.5px;
   min-width: 0;
 }
@@ -470,15 +565,15 @@ function toggleExpanded(): void {
 }
 
 .ld-tool-icon.is-ok {
-  color: var(--accent-success);
+  color: var(--obs-status-ok, var(--accent-success));
 }
 
 .ld-tool-icon.is-failed {
-  color: var(--accent-danger);
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-tool-icon.is-running {
-  color: var(--accent-primary);
+  color: var(--obs-status-ok, var(--accent-success));
   animation: ld-spin 1.1s linear infinite;
 }
 
@@ -509,28 +604,29 @@ function toggleExpanded(): void {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding-top: 2px;
 }
 
 .ld-link-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border-radius: var(--radius-control, 6px);
-  border: 1px solid var(--border-muted);
-  background: var(--bg-button);
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 0;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.2;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.25;
   cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
 .ld-link-btn:hover {
-  background: var(--bg-button-hover);
+  background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--border-default);
 }
 
 .ld-ai-hint {

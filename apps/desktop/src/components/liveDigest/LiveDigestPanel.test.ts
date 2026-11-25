@@ -1,15 +1,20 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref } from 'vue'
 import zhCN from '@/locales/zh-CN'
+import { api, type OrchestrationSnapshotDto, type TopologyRunDto } from '@/api'
 import {
   applyLiveDigestDelta,
   openLiveDigestStream,
   type LiveDigestSnapshotDto,
 } from '@/lib/liveDigestApi'
+import { activeDockFocus, resetDockSyncForTests } from '@/lib/homeDockSync'
 import { resetLiveDigestHubForTests, useLiveDigest } from '@/composables/useLiveDigest'
+import { __resetObservabilityRunSelectionForTests } from '@/composables/useObservabilityRunSelection'
+import OrchestrationTab from '../OrchestrationTab.vue'
+import AgentActivityPanel from '../AgentActivityPanel.vue'
 import LiveDigestPanel from './LiveDigestPanel.vue'
 import LiveDigestHeartbeatStrip from './LiveDigestHeartbeatStrip.vue'
 
@@ -181,6 +186,8 @@ function makeSseResponse(chunks: string[]): Response {
 
 afterEach(() => {
   resetLiveDigestHubForTests()
+  resetDockSyncForTests()
+  __resetObservabilityRunSelectionForTests()
   vi.restoreAllMocks()
 })
 
@@ -194,14 +201,24 @@ describe('LiveDigestPanel & LiveDigestHeartbeatStrip', () => {
       global: { plugins: [makeI18n()] },
     })
 
+    expect(wrapper.find('[data-testid="observability-turn-bar"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="live-digest-headline"]').text()).toContain('正在重构实时概要面板')
     expect(wrapper.get('[data-testid="live-digest-mode-badge"]').text()).toContain('gemini-2.5-flash')
     expect(wrapper.get('[data-testid="live-digest-compaction-count"]').text()).toContain('1')
 
-    // Click compaction marker reveals before -> after summary
+    // Click compaction marker reveals before -> after summary without triggering trajectory navigation
     await wrapper.get('[data-testid="live-digest-compaction-marker"]').trigger('click')
     expect(wrapper.get('[data-testid="live-digest-compaction-detail"]').text()).toContain('96.0k → 24.0k')
     expect(wrapper.get('[data-testid="live-digest-compaction-detail"]').text()).toContain('已折叠早期文件探索输出')
+    expect(activeDockFocus.value).toBeNull()
+
+    // Clicking waterline bar deep-links directly to trajectory context matrix
+    await wrapper.get('[data-testid="live-digest-waterline"]').trigger('click')
+    expect(activeDockFocus.value).toMatchObject({
+      card: 'trajectory',
+      trajectoryTab: 'context',
+      runId: 'run-digest-1',
+    })
 
     // Governance signal badges render and expand details on click
     const signalBadges = wrapper.findAll('[data-testid="live-digest-signal-badge"]')
@@ -250,7 +267,27 @@ describe('LiveDigestPanel & LiveDigestHeartbeatStrip', () => {
     expect(popover.attributes('data-handle')).toBe('backend-api')
   })
 
-  it('expands chapter evidence (<thought>, scout note, tool calls) and emits orchestration/trajectory jumps', async () => {
+  it('renders 1.5px chapter spine, expands evidence, and deep-links chapters to trajectory path tab', async () => {
+    const dockWrapper = mount(LiveDigestPanel, {
+      props: {
+        sessionId: 'session-1',
+        runId: 'run-digest-1',
+        runs: [{ id: 'run-digest-1', status: 'running', created_at: '2026-11-23T02:18:00Z' }],
+        snapshotOverride: makeSnapshot(),
+      },
+      global: { plugins: [makeI18n()] },
+    })
+
+    expect(dockWrapper.findAll('.ld-chapter-spine')).toHaveLength(2)
+    await dockWrapper.findAll('[data-testid="live-digest-jump-trajectory"]')[0]!.trigger('click')
+    expect(activeDockFocus.value).toMatchObject({
+      card: 'trajectory',
+      trajectoryTab: 'path',
+      runId: 'run-digest-1',
+      trajectoryTurnNo: 1,
+    })
+    dockWrapper.unmount()
+
     const wrapper = mount(LiveDigestPanel, {
       props: {
         runId: 'run-digest-1',
@@ -259,6 +296,8 @@ describe('LiveDigestPanel & LiveDigestHeartbeatStrip', () => {
       },
       global: { plugins: [makeI18n()] },
     })
+
+    expect(wrapper.find('[data-testid="observability-turn-bar"]').exists()).toBe(false)
 
     const toggles = wrapper.findAll('[data-testid="live-digest-chapter-toggle"]')
     expect(toggles).toHaveLength(2)
@@ -274,6 +313,191 @@ describe('LiveDigestPanel & LiveDigestHeartbeatStrip', () => {
     await wrapper.get('[data-testid="live-digest-jump-trajectory"]').trigger('click')
     expect(wrapper.emitted('open-orchestration')?.length).toBe(1)
     expect(wrapper.emitted('open-trajectory')?.length).toBe(1)
+  })
+
+  it('synchronizes historical turn selection across LiveDigestPanel and OrchestrationTab and slim-downs OrchestrationTab', async () => {
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    vi.spyOn(api, 'listModelProviders').mockResolvedValue([])
+    vi.spyOn(api, 'listModelInvocations').mockResolvedValue({ items: [], next_cursor: null })
+    vi.spyOn(api, 'listToolExecutions').mockResolvedValue([])
+
+    const topoByRun: Record<string, TopologyRunDto> = {
+      'run-1': {
+        run_id: 'run-1',
+        status: 'completed',
+        started_at: '2026-11-23T02:00:00Z',
+        completed_at: '2026-11-23T02:00:05Z',
+        tasks_truncated: false,
+        instances_truncated: false,
+        instances: [{ instance_id: 'i-1', agent_slug: 'planner', layer: 'operation', role: 'coordinator', status: 'completed', depth: 0 }],
+        tasks: [{ task_id: 't-hist', task_key: 'hist', title: 'Historical Task', status: 'completed', handle: 'worker-hist', dependencies: [], write_scope: ['src/hist.ts'] }],
+      },
+      'run-2': {
+        run_id: 'run-2',
+        status: 'running',
+        started_at: '2026-11-23T02:10:00Z',
+        tasks_truncated: false,
+        instances_truncated: false,
+        instances: [{ instance_id: 'i-2', agent_slug: 'planner', layer: 'operation', role: 'coordinator', status: 'running', depth: 0 }],
+        tasks: [{ task_id: 't-live', task_key: 'live', title: 'Live Task', status: 'running', handle: 'worker-live', dependencies: [], write_scope: ['src/live.ts'] }],
+      },
+    }
+
+    vi.spyOn(api, 'getSessionTopology').mockImplementation(async (_sessId, params) => ({
+      session_id: 'session-sync',
+      runs: params?.run_id && topoByRun[params.run_id] ? [topoByRun[params.run_id]!] : [topoByRun['run-2']!],
+      leases: [],
+      members: [],
+      runs_truncated: false,
+      leases_truncated: false,
+      members_truncated: false,
+      generated_at: '2026-11-23T02:10:05Z',
+    }))
+
+    const runs = [
+      { id: 'run-1', status: 'completed', created_at: '2026-11-23T02:00:00Z', updated_at: '2026-11-23T02:00:05Z' },
+      { id: 'run-2', status: 'running', created_at: '2026-11-23T02:10:00Z' },
+    ]
+    const activeSnapshot: OrchestrationSnapshotDto = {
+      run: {
+        id: 'run-2',
+        session_id: 'session-sync',
+        status: 'running',
+        summary: 'Running turn 2',
+        created_at: '2026-11-23T02:10:00Z',
+        updated_at: '2026-11-23T02:10:05Z',
+      },
+      nodes: [],
+      lanes: [],
+      assignments: [],
+      step_results: [],
+      context_packs: [],
+      supervision_findings: [],
+    }
+
+    const digestWrapper = mount(LiveDigestPanel, {
+      props: {
+        sessionId: 'session-sync',
+        runs,
+        activeRunId: 'run-2',
+        runId: 'run-2',
+        snapshotOverride: makeSnapshot({ run_id: 'run-2', session_id: 'session-sync' }),
+      },
+      global: { plugins: [makeI18n()] },
+    })
+
+    const orchWrapper = mount(OrchestrationTab, {
+      props: {
+        sessionId: 'session-sync',
+        runs,
+        activeRunId: 'run-2',
+        snapshot: activeSnapshot,
+        toolExecutions: [],
+        focusedTarget: { handle: 'worker-live', nonce: 1 },
+      },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { SessionPlanPanel: true, DeclaredGraphCanvas: true },
+      },
+    })
+    await flushPromises()
+
+    // OrchestrationTab clutter blocks are completely removed
+    expect(orchWrapper.find('[data-testid="trajectory-diagnostics-block"]').exists()).toBe(false)
+    expect(orchWrapper.find('[data-testid="context-packs-block"]').exists()).toBe(false)
+    expect(orchWrapper.find('[data-testid="tool-executions-block"]').exists()).toBe(false)
+    expect(orchWrapper.find('[data-testid="orchestration-topology-toggle"]').exists()).toBe(true)
+
+    // Focused node jump button deep-links to trajectory with nodeId
+    const jumpNodeBtn = orchWrapper.get('[data-testid="orchestration-jump-trajectory"]')
+    await jumpNodeBtn.trigger('click')
+    expect(activeDockFocus.value).toMatchObject({
+      card: 'trajectory',
+      trajectoryTab: 'path',
+      trajectoryNodeId: 'task:t-live',
+      runId: 'run-2',
+    })
+
+    // Selecting turn #1 in LiveDigestPanel syncs OrchestrationTab to turn #1 immediately
+    const digestTurnPills = digestWrapper.findAll('[data-testid="observability-turn-pill"]')
+    expect(digestTurnPills).toHaveLength(2)
+    await digestTurnPills[0]!.trigger('click')
+    await flushPromises()
+
+    const orchTurnPills = orchWrapper.findAll('[data-testid="observability-turn-pill"]')
+    expect(orchTurnPills[0]!.attributes('aria-pressed')).toBe('true')
+    expect(orchWrapper.find('[data-testid="observability-follow-latest"]').exists()).toBe(true)
+
+    digestWrapper.unmount()
+    orchWrapper.unmount()
+  })
+
+  it('renders clean AgentActivityPanel duty roster without duplicate task graph or raw event wall', async () => {
+    const rosterWrapper = mount(AgentActivityPanel, {
+      props: {
+        activity: {
+          status: 'working',
+          runId: 'run-roster-1',
+          runStartedAt: '2026-11-23T02:00:00Z',
+          runSummary: 'Coordinating observability refactor',
+          activeAgentName: 'Coordinator',
+          activeAgentRole: '治理层',
+          completedNodes: 1,
+          totalNodes: 2,
+          lastUpdated: '2026-11-23T02:00:14Z',
+        },
+        agentStates: {
+          'agent-gov': {
+            agentId: 'agent-gov',
+            agentName: 'Coordinator',
+            agentLayer: 'planning',
+            agentType: 'meeting',
+            status: 'active',
+            lastActiveAt: '2026-11-23T02:00:14Z',
+            currentTask: 'Dispatching Wave 1 workers',
+          },
+          'agent-exec': {
+            agentId: 'agent-exec',
+            agentName: 'frontend-worker',
+            agentLayer: 'execution',
+            agentType: 'coder',
+            status: 'active',
+            lastActiveAt: '2026-11-23T02:00:12Z',
+            currentTask: 'Slimming OrchestrationTab',
+          },
+        },
+        thinkingSteps: [
+          {
+            id: 'step-1',
+            type: 'agent_assignment',
+            title: 'Assigned frontend-worker',
+            description: 'Removing 8-screen clutter from OrchestrationTab',
+            timestamp: '2026-11-23T02:00:05Z',
+            durationMs: 1200,
+            details: { agentId: 'agent-exec' },
+          },
+        ],
+        progressEvents: [
+          { id: 'ev-1', seq: 1, type: 'tool.execution.completed', icon: 'check', message: 'raw event noise', timestamp: '2026-11-23T02:00:06Z' },
+        ],
+        orchestration: null,
+      },
+      global: { plugins: [makeI18n()] },
+    })
+
+    expect(rosterWrapper.find('[data-testid="agent-roster-governance"]').exists()).toBe(true)
+    expect(rosterWrapper.find('[data-testid="agent-roster-execution"]').exists()).toBe(true)
+    expect(rosterWrapper.text()).toContain('Slimming OrchestrationTab')
+    expect(rosterWrapper.text()).toContain('Removing 8-screen clutter from OrchestrationTab')
+    expect(rosterWrapper.text()).not.toContain('raw event noise')
+
+    await rosterWrapper.findAll('[data-testid="agent-roster-jump-trajectory"]')[1]!.trigger('click')
+    expect(activeDockFocus.value).toMatchObject({
+      card: 'trajectory',
+      trajectoryTab: 'path',
+      runId: 'run-roster-1',
+    })
+    rosterWrapper.unmount()
   })
 
   it('disengages Live Streaming Tail when user scrolls up and restores on clicking Back-to-Live pill', async () => {

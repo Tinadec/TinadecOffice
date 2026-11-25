@@ -3,8 +3,9 @@ import { useUie, type UieStore } from '@tinadec/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import { selectSubAgent } from '@/lib/conversation/selection'
 
-export type HomeDockCardId = 'live-digest' | 'agent' | 'git' | 'orchestration' | 'approval' | 'workspace'
-export type DockSyncReason = 'digest' | 'dispatch' | 'worktree' | 'approval' | 'worker' | 'code'
+export type HomeDockCardId = 'live-digest' | 'trajectory' | 'agent' | 'git' | 'orchestration' | 'approval' | 'workspace'
+export type DockSyncReason = 'digest' | 'trajectory' | 'dispatch' | 'worktree' | 'approval' | 'worker' | 'code'
+export type TrajectoryDockTab = 'path' | 'context' | 'eval' | 'code'
 export type GitDockTab = 'changes' | 'history' | 'branches' | 'stash'
 export type GitDockSubView = 'diff' | 'file_history' | 'blame'
 export type ApprovalDockTab = 'pending' | 'rules' | 'history' | 'approvals'
@@ -26,6 +27,10 @@ export interface DockFocusTarget {
   approvalId?: string | null
   approvalTab?: ApprovalDockTab | null
   requestCleanupPath?: string | null
+  trajectoryTab?: TrajectoryDockTab | null
+  trajectoryTurnNo?: number | null
+  trajectoryNodeId?: string | null
+  trajectoryCategory?: string | null
   nonce: number
   requestedAt: number
 }
@@ -174,6 +179,24 @@ export function focusDockCard(
         },
       }))
     }
+    if (
+      target.card === 'trajectory' ||
+      target.trajectoryTab ||
+      target.trajectoryTurnNo != null ||
+      target.trajectoryNodeId ||
+      target.trajectoryCategory
+    ) {
+      window.dispatchEvent(new CustomEvent('tinadec:focus-trajectory', {
+        detail: {
+          runId: target.runId ?? null,
+          trajectoryTab: target.trajectoryTab ?? null,
+          trajectoryTurnNo: target.trajectoryTurnNo ?? null,
+          trajectoryNodeId: target.trajectoryNodeId ?? null,
+          trajectoryCategory: target.trajectoryCategory ?? null,
+          nonce: target.nonce,
+        },
+      }))
+    }
   }
 
   ensureHomeDockCardOpen(target.card, options)
@@ -195,6 +218,7 @@ export function clearDockWorkerFilter(): void {
     filePath: null,
     approvalId: null,
     requestCleanupPath: null,
+    trajectoryNodeId: null,
     nonce: ++focusNonce,
   }
 }

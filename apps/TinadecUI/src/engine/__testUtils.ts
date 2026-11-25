@@ -42,6 +42,7 @@ export function makeRegistry(): CardRegistry {
   reg.register(makeCard('chat', { singleton: true, closable: false }))
   reg.register(makeCard('homePicker', { singleton: true }))
   reg.register(makeCard('live-digest', { singleton: true }))
+  reg.register(makeCard('trajectory', { singleton: true }))
   reg.register(makeCard('git'))
   reg.register(makeCard('approval'))
   reg.register(makeCard('orchestration'))

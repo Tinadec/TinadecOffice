@@ -1,0 +1,196 @@
+/* ==========================================================================
+ * Observability Geist Design System (`observability-geist.css`)
+ *
+ * Borderless Vercel Geist visual language calibrated for TinadecOffice
+ * monochrome Light & Dark themes:
+ * - Pure open canvas (`--bg-primary`) + `1px solid var(--border-muted)` hairlines
+ * - Zero 3-layer card border nesting
+ * - Strict monochrome chrome (`--text-on-primary`), 3 semantic status colors,
+ *   and 7 canonical context category colors
+ * - Forced `tabular-nums` + `var(--font-mono)` for numeric precision
+ * - `@container` dual-state responsiveness (`360px` narrow dock vs `>540px` wide)
+ * ========================================================================== */
+
+:root {
+  /* Borderless Geist surfaces & monochrome shell */
+  --obs-surface: var(--bg-primary);
+  --obs-surface-subtle: var(--bg-secondary);
+  --obs-surface-hover: var(--bg-hover);
+  --obs-hairline: var(--border-muted);
+  --obs-border-strong: var(--border-default);
+  --obs-ink: var(--text-primary);
+  --obs-ink-secondary: var(--text-secondary);
+  --obs-ink-muted: var(--text-muted);
+  --obs-shell-bg: var(--bg-primary-button);
+  --obs-shell-fg: var(--text-on-primary);
+
+  /* Strict 3-color status semantics (overridden per light/dark below) */
+  --obs-status-ok: var(--accent-success, #1a7f37);
+  --obs-status-warn: var(--accent-warning, #9a6700);
+  --obs-status-danger: var(--accent-danger, #cf222e);
+  --obs-status-ok-soft: color-mix(in srgb, var(--obs-status-ok) 12%, transparent);
+  --obs-status-warn-soft: color-mix(in srgb, var(--obs-status-warn) 13%, transparent);
+  --obs-status-danger-soft: color-mix(in srgb, var(--obs-status-danger) 12%, transparent);
+
+  /* 7 Canonical Context Composition Categories (Frozen Contract) */
+  --obs-ctx-system: #8053e3;
+  --obs-ctx-tools: #d49b00;
+  --obs-ctx-user: #44a56b;
+  --obs-ctx-inject: #c442a7;
+  --obs-ctx-skill: #e66d26;
+  --obs-ctx-assistant: #5b9fe8;
+  --obs-ctx-tool-output: #3ab4a4;
+
+  /* Soft surface tints for Treemap & subtle badges */
+  --obs-ctx-system-soft: color-mix(in srgb, var(--obs-ctx-system) 14%, var(--bg-primary));
+  --obs-ctx-tools-soft: color-mix(in srgb, var(--obs-ctx-tools) 14%, var(--bg-primary));
+  --obs-ctx-user-soft: color-mix(in srgb, var(--obs-ctx-user) 14%, var(--bg-primary));
+  --obs-ctx-inject-soft: color-mix(in srgb, var(--obs-ctx-inject) 14%, var(--bg-primary));
+  --obs-ctx-skill-soft: color-mix(in srgb, var(--obs-ctx-skill) 14%, var(--bg-primary));
+  --obs-ctx-assistant-soft: color-mix(in srgb, var(--obs-ctx-assistant) 14%, var(--bg-primary));
+  --obs-ctx-tool-output-soft: color-mix(in srgb, var(--obs-ctx-tool-output) 14%, var(--bg-primary));
+
+  /* Trajectory trunk, timing bars & file lane tokens (adapted from trajectory-tree/geist.css) */
+  --obs-trunk: #204965;
+  --obs-connector: #64748b;
+  --obs-model-time: #2684ff;
+  --obs-tool-time: #c38a30;
+  --obs-file-read: #0069c2;
+  --obs-file-read-soft: color-mix(in srgb, #0069c2 10%, var(--bg-primary));
+  --obs-file-change: #ae5a09;
+  --obs-file-change-soft: color-mix(in srgb, #ae5a09 11%, var(--bg-primary));
+}
+
+:root[data-theme="dark"],
+.dark {
+  --obs-status-ok: #3fb950;
+  --obs-status-warn: #d29922;
+  --obs-status-danger: #f85149;
+
+  --obs-trunk: #92b9da;
+  --obs-connector: #9aa8b7;
+  --obs-model-time: #60a5fa;
+  --obs-tool-time: #eab308;
+  --obs-file-read: #6bb8ff;
+  --obs-file-read-soft: color-mix(in srgb, #6bb8ff 14%, var(--bg-primary));
+  --obs-file-change: #f5ad66;
+  --obs-file-change-soft: color-mix(in srgb, #f5ad66 15%, var(--bg-primary));
+}
+
+/* Numeric & typographic discipline */
+.obs-tabular,
+[data-obs-numeric] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.obs-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Open borderless Geist surface & hairline dividers */
+.obs-geist-surface {
+  background: var(--obs-surface);
+  color: var(--obs-ink);
+  container-type: inline-size;
+  container-name: obs-panel;
+}
+
+.obs-hairline-b {
+  border-bottom: 1px solid var(--obs-hairline);
+}
+
+.obs-hairline-t {
+  border-top: 1px solid var(--obs-hairline);
+}
+
+/* Geist flat underline sub-navigation */
+.obs-subnav {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--obs-hairline);
+  background: var(--obs-surface);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.obs-subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.obs-subnav-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 2px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--obs-ink-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.obs-subnav-tab:hover {
+  color: var(--obs-ink);
+}
+
+.obs-subnav-tab.is-active,
+.obs-subnav-tab[aria-selected="true"] {
+  color: var(--obs-ink);
+  font-weight: 600;
+  border-bottom-color: var(--obs-ink);
+}
+
+/* Container-query responsive layouts: 360px narrow dock vs >540px wide panel */
+.obs-split-responsive {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.obs-split-responsive > .obs-split-detail {
+  border-top: 1px solid var(--obs-hairline);
+}
+
+.obs-ctx-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+@container (min-width: 420px) {
+  .obs-ctx-legend-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 541px) {
+  .obs-split-responsive {
+    grid-template-columns: minmax(0, 1.45fr) minmax(240px, 1fr);
+  }
+
+  .obs-split-responsive > .obs-split-detail {
+    border-top: none;
+    border-left: 1px solid var(--obs-hairline);
+  }
+
+  .obs-ctx-legend-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 780px) {
+  .obs-ctx-legend-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+}

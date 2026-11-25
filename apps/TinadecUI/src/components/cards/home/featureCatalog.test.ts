@@ -28,12 +28,25 @@ describe('FEATURE_CATALOG', () => {
     expect(FEATURE_CATALOG.filter((f) => f.titleKey === entry!.titleKey)).toHaveLength(1)
   })
 
+  it('registers trajectory right after live-digest as a first-class governance feature entry', () => {
+    expect(FEATURE_CATALOG[1]?.descriptorId).toBe('trajectory')
+    const entry = FEATURE_CATALOG[1]
+    expect(entry).toBeTruthy()
+    expect(entry!.titleKey).toBe('context.homeTrajectory')
+    expect(entry!.descKey).toBe('context.homeTrajectoryDesc')
+    expect(entry!.group).toBe('gov')
+    expect(entry!.color).toBe('#5b9fe8')
+    expect(FEATURE_CATALOG.filter((f) => f.titleKey === entry!.titleKey)).toHaveLength(1)
+    expect(featureIconFor('trajectory', Globe)).not.toBe(Globe)
+  })
+
   it('keeps home workspace tiles scoped to the home page', () => {
     for (const entry of FEATURE_CATALOG) {
       expect(entry.pages ?? ['home']).toContain('home')
     }
     const homeIds = catalogEntriesForPage('home').map((entry) => entry.descriptorId)
     expect(homeIds[0]).toBe('live-digest')
+    expect(homeIds[1]).toBe('trajectory')
     expect(homeIds).toContain('workspace')
     expect(catalogEntriesForPage('companionCenter')).toEqual([])
     expect(catalogEntriesForPage('settings')).toEqual([])

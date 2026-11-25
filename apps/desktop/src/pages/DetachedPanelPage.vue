@@ -3,10 +3,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api as baseApi, type ApprovalDto, type ApprovalRememberRuleInput, type ApprovalRuleDto, type BatchApprovalDecisionInput, type CreateApprovalRuleInput, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api as baseApi, type ApprovalDto, type ApprovalRememberRuleInput, type ApprovalRuleDto, type BatchApprovalDecisionInput, type CreateApprovalRuleInput, type EventEnvelope, type OrchestrationRunDto, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { setSelectedStorage, registerSessionStorage, scopedApi } from '@/lib/storageScope'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
+import { selectPrimaryRunId } from '@/composables/useLiveDigest'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useHostAccess } from '@/lib/hostAccess'
 import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
@@ -16,6 +17,8 @@ import ApprovalTab from '@/components/ApprovalTab.vue'
 import EventsTab from '@/components/EventsTab.vue'
 import DoctorTab from '@/components/DoctorTab.vue'
 import OrchestrationTab from '@/components/OrchestrationTab.vue'
+import LiveDigestPanel from '@/components/liveDigest/LiveDigestPanel.vue'
+import TrajectoryWorkbenchPanel from '@/components/trajectory/TrajectoryWorkbenchPanel.vue'
 import OrganizationPanel from '@/components/organization/OrganizationPanel.vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
@@ -60,8 +63,14 @@ const approvalRules = ref<ApprovalRuleDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
+const runs = ref<OrchestrationRunDto[]>([])
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const busy = ref(false)
+
+const activeRunId = computed<string | null>(
+  () => runs.value.find((r) => !['completed', 'failed', 'cancelled'].includes(r.status))?.id ?? null,
+)
+const primaryRunId = computed<string | null>(() => activeRunId.value ?? selectPrimaryRunId(runs.value))
 
 const sessionIdRef = computed(() => sessionId.value)
 const {
@@ -86,17 +95,19 @@ async function loadData() {
   }
 
   try {
-    const [approvalList, ruleList, orchestrationSnapshot, toolTimeline] = await Promise.all([
+    const [approvalList, ruleList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
       api.listApprovals(sessionId.value),
       api.listApprovalRules(sessionId.value).catch(() => [] as ApprovalRuleDto[]),
       api.getOrchestrationSnapshot(sessionId.value).catch(() => null),
       api.listToolExecutions(sessionId.value).catch(() => []),
+      api.listRuns(sessionId.value).catch(() => [] as OrchestrationRunDto[]),
     ])
 
     approvals.value = approvalList
     approvalRules.value = ruleList
     orchestration.value = orchestrationSnapshot
     toolExecutions.value = toolTimeline
+    runs.value = Array.isArray(runList) ? runList : []
     dismissByKey('detached-panel')
   } catch (err) {
     notify.error({
@@ -317,10 +328,32 @@ watch(sessionId, () => {
           @create-approval-rule="createApprovalRule"
         />
 
+        <LiveDigestPanel
+          v-else-if="tabType === 'live-digest'"
+          :run-id="primaryRunId"
+          :session-id="sessionId"
+          :runs="runs"
+          :active-run-id="activeRunId"
+          :storage-id="storageId"
+        />
+
+        <TrajectoryWorkbenchPanel
+          v-else-if="tabType === 'trajectory'"
+          :session-id="sessionId"
+          :runs="runs"
+          :active-run-id="activeRunId"
+          :orchestration="orchestration"
+          :tool-executions="toolExecutions"
+          :storage-id="storageId"
+        />
+
         <OrchestrationTab
           v-else-if="tabType === 'orchestration'"
           :snapshot="orchestration"
           :tool-executions="toolExecutions"
+          :session-id="sessionId"
+          :runs="runs"
+          :active-run-id="activeRunId"
         />
 
         <!-- Loads and polls its own data; the window only hands it the session. -->

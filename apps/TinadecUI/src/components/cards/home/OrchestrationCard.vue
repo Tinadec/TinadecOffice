@@ -91,6 +91,8 @@ onBeforeUnmount(() => {
       :snapshot="c.orchestration.value"
       :tool-executions="c.toolExecutions.value"
       :session-id="c.selectedSessionId.value"
+      :runs="c.runs.value"
+      :active-run-id="c.stoppableRunId?.value ?? null"
       :focused-target="focusedTarget"
       @execute-tool="c.executeCatalogTool($event)"
     />

@@ -1,46 +1,35 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  Loader2,
-  Brain,
   Activity,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
+  ArrowUpRight,
   ChevronDown,
   ChevronRight,
-  ShieldAlert,
-  Circle,
-  CircleCheck,
-  CircleDot,
-  CircleX,
-  GitBranch,
-  ListTodo,
-  Play,
-  Network,
-  UserCheck,
-  ShieldCheck,
-  Package,
+  Clock,
+  GitCommitHorizontal,
+  Loader2,
   MessageSquare,
-  Terminal,
-  Send,
-  Hourglass,
-  ListChecks,
-  AlertTriangle,
+  Network,
   Users,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { useStatusLabels } from '@/lib/statusLabels'
 import { formatDuration as formatElapsed } from '@/lib/conversation/format'
-import type { AgentActivity, AgentState, ThinkingStep, ProgressEvent } from '@/composables/useAgentActivity'
-import type { AgentAssignmentDto, OrchestrationSnapshotDto, TaskNodeDto } from '../api'
-import AgentStatusIndicator from './chat/AgentStatusIndicator.vue'
+import type { AgentActivity, AgentState, ProgressEvent, ThinkingStep } from '@/composables/useAgentActivity'
+import type { OrchestrationSnapshotDto } from '../api'
+import { focusDockCard } from '@/lib/homeDockSync'
+import TeammateSteerPopover, { type TeammateSteerTarget } from './teammate/TeammateSteerPopover.vue'
 import SubAgentsPanel from './conversation/SubAgentsPanel.vue'
 import type { ConversationFeed } from '@/composables/useConversationFeed'
 import type { TurnRunInput } from '@/lib/conversation/turns'
 
-const { t, locale } = useI18n()
-const { severityLabel } = useStatusLabels()
+const { t, te, locale } = useI18n()
+const isZh = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
+
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? String(t(key, params)) : String(t(key))
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
 
 const props = defineProps<{
   activity: AgentActivity
@@ -48,1066 +37,936 @@ const props = defineProps<{
   thinkingSteps: ThinkingStep[]
   progressEvents: ProgressEvent[]
   orchestration: OrchestrationSnapshotDto | null
-  /**
-   * The flat feed, for the session's sub-agents. They used to have a card of their own
-   * beside this one, listing the same agents a second time; now they are a section here.
-   */
   feed?: ConversationFeed
   runs?: readonly TurnRunInput[]
   workspaceRoot?: string | null
 }>()
 
-// ---- Section collapse state ----
-const statusExpanded = ref(true)
-const taskGraphCollapsed = ref(false)
-const thinkingExpanded = ref(false)
+const governanceCollapsed = ref(false)
+const executionCollapsed = ref(false)
 const subAgentsCollapsed = ref(false)
 const subAgentCount = ref(0)
 
-// ---- Status config ----
+const steerTarget = ref<TeammateSteerTarget | null>(null)
+const steerOpen = ref(false)
+const pausedOverrides = ref<Record<string, boolean>>({})
+
+const effectiveRunId = computed<string | null>(
+  () => props.activity.runId ?? props.orchestration?.run?.id ?? null,
+)
+
 const statusConfig = computed(() => {
   switch (props.activity.status) {
     case 'thinking':
-      return { icon: Brain, label: t('agent.thinking'), color: 'status-thinking', spin: true, pulse: false }
+      return { label: t('agent.thinking'), tone: 'running' as const }
     case 'working':
-      return { icon: Activity, label: t('agent.working'), color: 'status-working', spin: false, pulse: true }
+      return { label: t('agent.working'), tone: 'running' as const }
     case 'waiting_approval':
-      return { icon: ShieldAlert, label: t('agent.waitingApproval'), color: 'status-waiting', spin: false, pulse: false }
+      return { label: t('agent.waitingApproval'), tone: 'waiting' as const }
     case 'completed':
-      return { icon: CheckCircle2, label: t('agent.completed'), color: 'status-completed', spin: false, pulse: false }
+      return { label: t('agent.completed'), tone: 'completed' as const }
     case 'error':
-      return { icon: AlertCircle, label: t('agent.error'), color: 'status-error', spin: false, pulse: false }
+      return { label: t('agent.error'), tone: 'error' as const }
     default:
-      return { icon: Activity, label: t('agent.idle'), color: 'status-idle', spin: false, pulse: false }
+      return { label: t('agent.idle'), tone: 'idle' as const }
   }
 })
 
 const elapsedMs = computed(() => {
-  if (!props.activity.runStartedAt) return null
-  const start = new Date(props.activity.runStartedAt).getTime()
-  const end = props.activity.lastUpdated ? new Date(props.activity.lastUpdated).getTime() : Date.now()
+  const startRaw = props.activity.runStartedAt ?? props.orchestration?.run?.created_at ?? null
+  if (!startRaw) return null
+  const start = Date.parse(startRaw)
+  if (!Number.isFinite(start)) return null
+  const endRaw = props.activity.lastUpdated ?? props.orchestration?.run?.updated_at ?? null
+  const end = endRaw && Number.isFinite(Date.parse(endRaw)) ? Date.parse(endRaw) : Date.now()
   return Math.max(0, end - start)
 })
 
-const elapsedLabel = computed(() => (elapsedMs.value == null ? null : formatElapsed(elapsedMs.value, t)))
-
-const progressPercent = computed(() => {
-  if (props.activity.totalNodes === 0) return 0
-  return Math.min(100, (props.activity.completedNodes / props.activity.totalNodes) * 100)
-})
-
-// ---- Agent list ----
-const agentList = computed(() => Object.values(props.agentStates))
-function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
-  const v = String(layer ?? '').trim().toLowerCase();
-  if (v === 'planning') return 'operation';
-  return v === 'execution' ? 'execution' : (v as 'operation' | 'execution');
-}
-const planningAgents = computed(() => agentList.value.filter((a) => normalizeAgentLayer((a as unknown as {agentLayer: unknown}).agentLayer) === 'operation'))
-const executionAgents = computed(() => agentList.value.filter((a) => normalizeAgentLayer((a as unknown as {agentLayer: unknown}).agentLayer) === 'execution'))
-
-const hasActivity = computed(
-  () =>
-    props.activity.status !== 'idle' ||
-    props.activity.runId !== null ||
-    props.activity.activeAgentName !== null ||
-    agentList.value.length > 0,
-)
-
-// ---- Task graph ----
-const assignmentsByNode = computed(() => {
-  const map = new Map<string, AgentAssignmentDto[]>()
-  for (const assignment of props.orchestration?.assignments ?? []) {
-    const list = map.get(assignment.task_node_id) ?? []
-    list.push(assignment)
-    map.set(assignment.task_node_id, list)
-  }
-  return map
-})
-
-const sortedNodes = computed(() =>
-  [...(props.orchestration?.nodes ?? [])].sort((a, b) => a.priority - b.priority),
-)
-
-const taskProgress = computed(() => {
-  const nodes = props.orchestration?.nodes ?? []
-  if (nodes.length === 0) return { done: 0, total: 0, percent: 0 }
-  const done = nodes.filter((n) => n.status === 'done' || n.status === 'completed').length
-  return { done, total: nodes.length, percent: Math.round((done / nodes.length) * 100) }
-})
-
-function nodeAssignments(node: TaskNodeDto) {
-  return assignmentsByNode.value.get(node.id) ?? []
-}
-
-function statusIcon(status: string) {
-  const s = status.toLowerCase()
-  if (s === 'done' || s === 'completed') return CircleCheck
-  if (s === 'running' || s === 'in_progress' || s === 'in-progress') return CircleDot
-  if (s === 'failed' || s === 'error' || s === 'cancelled') return CircleX
-  return Circle
-}
-
-function statusClass(status: string): string {
-  const s = status.toLowerCase()
-  if (s === 'done' || s === 'completed') return 'done'
-  if (s === 'running' || s === 'in_progress' || s === 'in-progress') return 'running'
-  if (s === 'failed' || s === 'error' || s === 'cancelled') return 'failed'
-  return 'pending'
-}
-
-// ---- Thinking steps ----
-const stepConfig = (type: ThinkingStep['type']) => {
-  switch (type) {
-    case 'run_started':
-      return { icon: Brain, color: 'step-run', label: t('agent.stepRunStarted') }
-    case 'task_graph':
-      return { icon: Network, color: 'step-graph', label: t('agent.stepTaskGraph') }
-    case 'agent_assignment':
-      return { icon: UserCheck, color: 'step-assign', label: t('agent.stepAssignment') }
-    case 'supervision':
-      return { icon: ShieldCheck, color: 'step-supervision', label: t('agent.stepSupervision') }
-    case 'context_pack':
-      return { icon: Package, color: 'step-context', label: t('agent.stepContext') }
-    case 'step_result':
-      return { icon: CheckCircle2, color: 'step-result', label: t('agent.stepResult') }
-    case 'dispatch':
-      return { icon: Send, color: 'step-assign', label: t('agent.stepDispatch') }
-    case 'wait':
-      return { icon: Hourglass, color: 'step-graph', label: t('agent.stepWait') }
-    case 'plan':
-      return { icon: ListChecks, color: 'step-graph', label: t('agent.stepPlan') }
-    default:
-      return { icon: Brain, color: 'step-default', label: t('agent.stepThinking') }
-  }
-}
-
-function formatTime(ts: string): string {
-  try {
-    return new Date(ts).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  } catch {
-    return ''
-  }
-}
-
-function formatDuration(ms: number | null): string | null {
-  if (ms == null) return null
-  if (ms < 1000) return `${ms}ms`
-  const seconds = ms / 1000
-  if (seconds < 60) return `${seconds.toFixed(1)}s`
+function formatTabularDuration(ms: number | null): string | null {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return null
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const sec = ms / 1000
+  if (sec < 60) return `${sec.toFixed(1)}s`
   return formatElapsed(ms, t)
 }
 
-// ---- Progress events ----
-const progressIconMap: Record<string, unknown> = {
-  play: Play,
-  network: Network,
-  'user-check': UserCheck,
-  shield: ShieldCheck,
-  package: Package,
-  'check-circle': CheckCircle2,
-  'alert-circle': AlertCircle,
-  'message-square': MessageSquare,
-  terminal: Terminal,
-  check: CheckCircle2,
-  x: AlertCircle,
-  'alert-triangle': AlertTriangle,
-  hourglass: Hourglass,
-  send: Send,
-  'list-checks': ListChecks,
+const elapsedLabel = computed(() => formatTabularDuration(elapsedMs.value))
+
+interface DutyRosterMember {
+  id: string
+  name: string
+  layer: 'operation' | 'execution'
+  roleLabel: string
+  handle: string | null
+  agentSlug: string | null
+  taskId: string | null
+  nodeId: string | null
+  tone: 'running' | 'waiting' | 'completed' | 'error' | 'idle'
+  statusLabel: string
+  duty: string | null
+  latestThought: string | null
+  elapsedText: string | null
+  canSteer: boolean
 }
 
-function getProgressIcon(iconKey: string) {
-  return progressIconMap[iconKey] ?? Activity
+function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
+  const v = String(layer ?? '').trim().toLowerCase()
+  if (v === 'operation' || v === 'planning' || v === 'meeting' || v === 'governance') {
+    return 'operation'
+  }
+  return 'execution'
 }
 
-const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15).reverse())
+function mapMemberTone(
+  rawStatus: string,
+  paused: boolean,
+): 'running' | 'waiting' | 'completed' | 'error' | 'idle' {
+  if (paused) return 'waiting'
+  const s = rawStatus.toLowerCase()
+  if (s === 'active' || s === 'running' || s === 'working' || s === 'in_progress') return 'running'
+  if (s === 'waiting' || s === 'waiting_approval' || s === 'awaiting_approval' || s === 'paused') return 'waiting'
+  if (s === 'completed' || s === 'done' || s === 'succeeded') return 'completed'
+  if (s === 'error' || s === 'failed' || s === 'blocked') return 'error'
+  return 'idle'
+}
+
+function memberStatusText(rawStatus: string, paused: boolean): string {
+  if (paused) return tr('teammateControl.status.paused', isZh.value ? '已暂停' : 'Paused')
+  const tone = mapMemberTone(rawStatus, false)
+  switch (tone) {
+    case 'running':
+      return t('activity.agent.active')
+    case 'waiting':
+      return t('activity.agent.waiting')
+    case 'completed':
+      return t('activity.agent.completed')
+    case 'error':
+      return t('activity.agent.error')
+    default:
+      return t('activity.agent.idle')
+  }
+}
+
+const latestGeneralThought = computed<string | null>(() => {
+  for (let i = props.thinkingSteps.length - 1; i >= 0; i -= 1) {
+    const step = props.thinkingSteps[i]!
+    const text = (step.description || step.title || '').trim()
+    if (text) return text
+  }
+  return null
+})
+
+function findMemberThought(agentId: string, name: string, handle: string | null): string | null {
+  const needles = [agentId, name, handle]
+    .filter((v): v is string => Boolean(v && v.trim()))
+    .map((v) => v.toLowerCase())
+
+  for (let i = props.thinkingSteps.length - 1; i >= 0; i -= 1) {
+    const step = props.thinkingSteps[i]!
+    const detailAgentId = typeof step.details?.agentId === 'string' ? step.details.agentId.toLowerCase() : ''
+    const detailSlug = typeof step.details?.slug === 'string' ? step.details.slug.toLowerCase() : ''
+    const combinedTitle = `${step.title} ${step.description}`.toLowerCase()
+    if (
+      (detailAgentId && needles.includes(detailAgentId))
+      || (detailSlug && needles.includes(detailSlug))
+      || needles.some((needle) => needle.length >= 2 && combinedTitle.includes(needle))
+    ) {
+      const clean = (step.description || step.title || '').trim()
+      if (clean) return clean
+    }
+  }
+
+  for (let i = (props.orchestration?.step_results.length ?? 0) - 1; i >= 0; i -= 1) {
+    const res = props.orchestration!.step_results[i]!
+    if (res.agent_id && needles.includes(res.agent_id.toLowerCase()) && res.summary?.trim()) {
+      return res.summary.trim()
+    }
+  }
+
+  return null
+}
+
+function computeMemberElapsed(lastActiveAt: string | null): string | null {
+  const startRaw = props.activity.runStartedAt ?? props.orchestration?.run?.created_at ?? null
+  if (!startRaw) return null
+  const start = Date.parse(startRaw)
+  if (!Number.isFinite(start)) return null
+  const endCandidate = lastActiveAt && Number.isFinite(Date.parse(lastActiveAt))
+    ? Date.parse(lastActiveAt)
+    : (props.activity.lastUpdated && Number.isFinite(Date.parse(props.activity.lastUpdated))
+      ? Date.parse(props.activity.lastUpdated)
+      : Date.now())
+  return formatTabularDuration(Math.max(0, endCandidate - start))
+}
+
+const rosterMembers = computed<DutyRosterMember[]>(() => {
+  const out: DutyRosterMember[] = []
+  const seenIds = new Set<string>()
+  const nodesById = new Map((props.orchestration?.nodes ?? []).map((n) => [n.id, n]))
+  const assignments = props.orchestration?.assignments ?? []
+
+  for (const state of Object.values(props.agentStates)) {
+    seenIds.add(state.agentId)
+    const layer = normalizeAgentLayer(state.agentLayer)
+    const matchedAssign = assignments.find(
+      (a) => a.agent_id === state.agentId || a.agent_name === state.agentName,
+    )
+    const taskNode = matchedAssign ? nodesById.get(matchedAssign.task_node_id) : undefined
+    const handle = layer === 'execution' ? (state.agentName || state.agentId) : null
+    const paused = Boolean(handle && pausedOverrides.value[handle])
+    const duty = state.currentTask || taskNode?.title || null
+    const thought = findMemberThought(state.agentId, state.agentName, handle)
+      ?? (layer === 'operation' ? latestGeneralThought.value : null)
+
+    out.push({
+      id: state.agentId,
+      name: state.agentName || t('agent.agent'),
+      layer,
+      roleLabel:
+        layer === 'operation'
+          ? t('orchestrationPanel.layer.operation')
+          : t('orchestrationPanel.layer.execution'),
+      handle,
+      agentSlug: state.agentType || state.agentId,
+      taskId: taskNode?.id ?? matchedAssign?.task_node_id ?? null,
+      nodeId: layer === 'operation' ? 'coordinator' : (taskNode ? `task:${taskNode.id}` : null),
+      tone: mapMemberTone(state.status, paused),
+      statusLabel: memberStatusText(state.status, paused),
+      duty,
+      latestThought: thought,
+      elapsedText: computeMemberElapsed(state.lastActiveAt),
+      canSteer: Boolean(effectiveRunId.value && layer === 'execution' && handle),
+    })
+  }
+
+  // Synthesize execution assignments from orchestration snapshot when not yet in agentStates
+  for (const assign of assignments) {
+    if (seenIds.has(assign.agent_id)) continue
+    seenIds.add(assign.agent_id)
+    const taskNode = nodesById.get(assign.task_node_id)
+    const handle = assign.agent_name || assign.agent_id
+    const paused = Boolean(handle && pausedOverrides.value[handle])
+    const rawStatus = taskNode?.status ?? assign.status ?? 'idle'
+    out.push({
+      id: assign.agent_id || assign.id,
+      name: assign.agent_name || assign.agent_id || t('agent.agent'),
+      layer: 'execution',
+      roleLabel: t('orchestrationPanel.layer.execution'),
+      handle,
+      agentSlug: assign.agent_id,
+      taskId: taskNode?.id ?? assign.task_node_id ?? null,
+      nodeId: taskNode ? `task:${taskNode.id}` : null,
+      tone: mapMemberTone(rawStatus, paused),
+      statusLabel: memberStatusText(rawStatus, paused),
+      duty: taskNode?.title ?? null,
+      latestThought: findMemberThought(assign.agent_id, assign.agent_name, handle),
+      elapsedText: elapsedLabel.value,
+      canSteer: Boolean(effectiveRunId.value && handle),
+    })
+  }
+
+  // Ensure governance lead appears when a run is active even before explicit planning agentStates arrive
+  const hasGovernance = out.some((m) => m.layer === 'operation')
+  if (!hasGovernance && (props.activity.status !== 'idle' || props.activity.activeAgentName || props.orchestration?.run)) {
+    const leadName = props.activity.activeAgentName ?? t('orchestrationPanel.roleCoordinator')
+    out.unshift({
+      id: 'governance-lead',
+      name: leadName,
+      layer: 'operation',
+      roleLabel: props.activity.activeAgentRole || t('orchestrationPanel.layer.operation'),
+      handle: null,
+      agentSlug: null,
+      taskId: null,
+      nodeId: 'coordinator',
+      tone: statusConfig.value.tone,
+      statusLabel: statusConfig.value.label,
+      duty: props.activity.runSummary ?? props.orchestration?.run?.summary ?? null,
+      latestThought: latestGeneralThought.value,
+      elapsedText: elapsedLabel.value,
+      canSteer: false,
+    })
+  }
+
+  return out
+})
+
+const governanceMembers = computed(() => rosterMembers.value.filter((m) => m.layer === 'operation'))
+const executionMembers = computed(() => rosterMembers.value.filter((m) => m.layer === 'execution'))
+
+const hasActivity = computed(
+  () =>
+    props.activity.status !== 'idle'
+    || props.activity.runId !== null
+    || props.activity.activeAgentName !== null
+    || rosterMembers.value.length > 0
+    || subAgentCount.value > 0,
+)
+
+function openMemberSteer(member: DutyRosterMember, event?: Event): void {
+  if (!member.canSteer || !effectiveRunId.value || !member.handle) return
+  const el = (event?.currentTarget as HTMLElement | null) ?? null
+  const rect = el?.getBoundingClientRect?.()
+  const paused = Boolean(pausedOverrides.value[member.handle])
+  steerTarget.value = {
+    runId: effectiveRunId.value,
+    handle: member.handle,
+    displayName: member.name,
+    status: paused ? 'paused' : member.tone,
+    paused,
+    taskSummary: member.duty,
+    thought: member.latestThought,
+    anchorRect: rect && (rect.width > 0 || rect.height > 0)
+      ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom }
+      : null,
+  }
+  steerOpen.value = true
+}
+
+function onSteerStatusChange(payload: { handle: string; status: string; paused: boolean }): void {
+  pausedOverrides.value = {
+    ...pausedOverrides.value,
+    [payload.handle]: payload.paused,
+  }
+}
+
+function jumpToOrchestration(member?: DutyRosterMember | null): void {
+  focusDockCard(
+    {
+      card: 'orchestration',
+      reason: 'worker',
+      runId: effectiveRunId.value,
+      taskId: member?.taskId ?? null,
+      workerHandle: member?.handle ?? null,
+      agentSlug: member?.agentSlug ?? null,
+      workerLabel: member?.name ?? null,
+    },
+    { title: t('uie.cardTitle.orchestration') },
+  )
+}
+
+function jumpToTrajectory(member?: DutyRosterMember | null): void {
+  focusDockCard(
+    {
+      card: 'trajectory',
+      reason: 'worker',
+      trajectoryTab: 'path',
+      trajectoryNodeId: member?.nodeId ?? null,
+      runId: effectiveRunId.value,
+    },
+    { title: tr('uie.cardTitle.trajectory', isZh.value ? '轨迹' : 'Trajectory') },
+  )
+}
+
+const trajectoryShortLabel = computed(() =>
+  tr('uie.cardTitle.trajectory', isZh.value ? '轨迹' : 'Trajectory'),
+)
+const locateOrchestrationTitle = computed(() =>
+  tr('agent.locateInOrchestration', isZh.value ? '在编排图中定位' : 'Locate in orchestration'),
+)
+const viewMemberTrajectoryTitle = computed(() =>
+  tr('agent.viewMemberTrajectory', isZh.value ? '查看该成员轨迹' : 'View member trajectory'),
+)
 </script>
 
 <template>
-  <section class="agent-activity-panel">
+  <section class="agent-roster-panel obs-geist-surface" data-testid="agent-activity-panel">
     <!-- Empty state -->
-    <div v-if="!hasActivity && !orchestration" class="agent-panel-empty">
-      <Activity :size="28" />
+    <div v-if="!hasActivity && !orchestration" class="roster-empty" data-testid="agent-roster-empty">
+      <Activity :size="22" aria-hidden="true" />
       <span>{{ t('agent.noActivity') }}</span>
     </div>
 
     <template v-else>
-      <!-- ===== Status section ===== -->
-      <article class="agent-panel-section" :class="statusConfig.color">
-        <button class="agent-panel-section-head" @click="statusExpanded = !statusExpanded">
-          <div class="agent-panel-status-left">
-            <div class="agent-panel-status-icon">
-              <component
-                :is="statusConfig.icon"
-                :size="16"
-                :class="{ 'agent-icon-spin': statusConfig.spin, 'agent-icon-pulse': statusConfig.pulse }"
-              />
-            </div>
-            <div class="agent-panel-status-info">
-              <div class="agent-panel-status-title-row">
-                <strong>{{ activity.activeAgentName ?? t('agent.agent') }}</strong>
-                <!-- Core's run summary is its English narration of the last transition: diagnostic, so a tooltip. -->
-                <span class="agent-panel-status-tag" :title="activity.runSummary ?? undefined">{{ statusConfig.label }}</span>
-              </div>
-              <div class="agent-panel-status-meta">
-                <span v-if="elapsedLabel" class="agent-panel-elapsed">
-                  <Clock :size="10" />
-                  {{ elapsedLabel }}
-                </span>
-              </div>
-            </div>
-          </div>
-          <div class="agent-panel-status-right">
-            <div v-if="activity.totalNodes > 0" class="agent-panel-progress">
-              <div class="agent-panel-progress-bar">
-                <div class="agent-panel-progress-fill" :style="{ width: `${progressPercent}%` }" />
-              </div>
-              <span class="agent-panel-progress-text">{{ activity.completedNodes }}/{{ activity.totalNodes }}</span>
-            </div>
-            <component :is="statusExpanded ? ChevronDown : ChevronRight" :size="14" class="agent-panel-chevron" />
-          </div>
-        </button>
-
-        <Transition name="agent-section-expand">
-          <div v-if="statusExpanded" class="agent-panel-section-body">
-            <!-- Planning agents -->
-            <div v-if="planningAgents.length > 0" class="agent-panel-agent-group">
-              <span class="agent-panel-group-title">{{ t('agent.planningLayer') }}</span>
-              <div class="agent-panel-agent-grid">
-                <AgentStatusIndicator
-                  v-for="agent in planningAgents"
-                  :key="agent.agentId"
-                  :agent="agent"
-                />
-              </div>
-            </div>
-
-            <!-- Execution agents -->
-            <div v-if="executionAgents.length > 0" class="agent-panel-agent-group">
-              <span class="agent-panel-group-title">{{ t('agent.executionLayer') }}</span>
-              <div class="agent-panel-agent-grid">
-                <AgentStatusIndicator
-                  v-for="agent in executionAgents"
-                  :key="agent.agentId"
-                  :agent="agent"
-                />
-              </div>
-            </div>
-
-            <!-- Waiting for assignment -->
-            <div v-if="planningAgents.length === 0 && executionAgents.length === 0" class="agent-panel-waiting">
-              <Loader2 :size="12" class="agent-icon-spin" />
-              <span>{{ t('agent.waitingAssignment') }}</span>
-            </div>
-          </div>
-        </Transition>
-      </article>
-
-      <!-- ===== Task graph section ===== -->
-      <article v-if="orchestration?.graph" class="agent-panel-section">
-        <button class="agent-panel-section-head" @click="taskGraphCollapsed = !taskGraphCollapsed">
-          <div class="agent-panel-section-title">
-            <component :is="taskGraphCollapsed ? ChevronRight : ChevronDown" :size="12" />
-            <ListTodo :size="12" />
-            <span>{{ t('agent.taskPlan') }}</span>
-            <span v-if="taskProgress.total > 0" class="agent-panel-count-badge">
-              {{ taskProgress.done }}/{{ taskProgress.total }}
-            </span>
-          </div>
-          <div v-if="taskProgress.total > 0" class="agent-panel-mini-bar">
-            <div class="agent-panel-mini-bar-fill" :style="{ width: `${taskProgress.percent}%` }" />
-          </div>
-        </button>
-
-        <Transition name="agent-section-expand">
-          <div v-if="!taskGraphCollapsed" class="agent-panel-section-body">
-            <ol class="agent-panel-task-list">
-              <li
-                v-for="node in sortedNodes"
-                :key="node.id"
-                class="agent-panel-task-step"
-                :class="statusClass(node.status)"
-              >
-                <span class="agent-panel-task-index">{{ node.priority }}</span>
-                <component :is="statusIcon(node.status)" :size="11" class="agent-panel-task-status-icon" />
-                <div class="agent-panel-task-main">
-                  <span class="agent-panel-task-title">{{ node.title }}</span>
-                  <span v-if="nodeAssignments(node).length > 0" class="agent-panel-task-agent">
-                    {{ nodeAssignments(node)[0].agent_name }}
-                  </span>
-                </div>
-              </li>
-            </ol>
-          </div>
-        </Transition>
-      </article>
-
-      <!-- ===== Sub-agents section (the roster and the selected one's work) ===== -->
-      <!-- v-show, not v-if: the panel stays mounted to report how many sub-agents there are. -->
-      <article v-if="feed && runs" v-show="subAgentCount > 0" class="agent-panel-section" data-testid="agent-panel-sub-agents">
-        <button class="agent-panel-section-head" @click="subAgentsCollapsed = !subAgentsCollapsed">
-          <div class="agent-panel-section-title">
-            <component :is="subAgentsCollapsed ? ChevronRight : ChevronDown" :size="12" />
-            <Users :size="12" />
-            <span>{{ t('conversation.agents.panelTitle') }}</span>
-            <span class="agent-panel-count-badge">{{ subAgentCount }}</span>
-          </div>
-        </button>
-        <div v-show="!subAgentsCollapsed" class="agent-panel-section-body">
-          <SubAgentsPanel :feed="feed" :runs="runs" :workspace-root="workspaceRoot" @roster-size="subAgentCount = $event" />
+      <!-- Top Run Duty Summary Strip -->
+      <header class="roster-header">
+        <div class="roster-header__left">
+          <span class="roster-lamp" :class="`is-${statusConfig.tone}`" aria-hidden="true" />
+          <strong class="roster-header__lead">
+            {{ activity.activeAgentName ?? t('agent.agent') }}
+          </strong>
+          <span class="roster-status-pill" :class="`is-${statusConfig.tone}`">
+            {{ statusConfig.label }}
+          </span>
+          <span v-if="elapsedLabel" class="roster-elapsed" data-testid="agent-roster-elapsed">
+            <Clock :size="11" aria-hidden="true" />
+            <span>{{ elapsedLabel }}</span>
+          </span>
         </div>
-      </article>
 
-      <!-- ===== Thinking steps section ===== -->
-      <article v-if="thinkingSteps.length > 0" class="agent-panel-section">
-        <button class="agent-panel-section-head" @click="thinkingExpanded = !thinkingExpanded">
-          <div class="agent-panel-section-title">
-            <component :is="thinkingExpanded ? ChevronDown : ChevronRight" :size="12" />
-            <Brain :size="12" />
-            <span>{{ t('agent.thinkingProcess') }}</span>
-            <span class="agent-panel-count-badge">{{ thinkingSteps.length }}</span>
-          </div>
-        </button>
-
-        <Transition name="agent-section-expand">
-          <div v-if="thinkingExpanded" class="agent-panel-section-body">
-            <div class="agent-panel-thinking-list">
-              <div
-                v-for="(step, idx) in thinkingSteps"
-                :key="step.id"
-                class="agent-panel-thinking-step"
-                :class="stepConfig(step.type).color"
-              >
-                <div v-if="idx < thinkingSteps.length - 1" class="agent-panel-thinking-line" />
-                <div class="agent-panel-thinking-icon-wrap">
-                  <component :is="stepConfig(step.type).icon" :size="11" />
-                </div>
-                <div class="agent-panel-thinking-body">
-                  <div class="agent-panel-thinking-head">
-                    <strong>{{ step.title }}</strong>
-                    <span class="agent-panel-thinking-tag">{{ stepConfig(step.type).label }}</span>
-                  </div>
-                  <p v-if="step.description" class="agent-panel-thinking-desc" :class="{ 'is-plan': step.type === 'plan' }">{{ step.description }}</p>
-                  <div class="agent-panel-thinking-meta">
-                    <span class="agent-panel-thinking-time">
-                      <Clock :size="9" />
-                      {{ formatTime(step.timestamp) }}
-                    </span>
-                    <span v-if="formatDuration(step.durationMs)" class="agent-panel-thinking-duration">
-                      {{ formatDuration(step.durationMs) }}
-                    </span>
-                    <span
-                      v-if="step.severity"
-                      class="agent-panel-thinking-severity"
-                      :class="`severity-${step.severity}`"
-                    >
-                      {{ severityLabel(step.severity) }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Transition>
-      </article>
-
-      <!-- ===== Progress stream section ===== -->
-      <article v-if="visibleProgressEvents.length > 0" class="agent-panel-section">
-        <div class="agent-panel-section-head agent-panel-progress-head">
-          <div class="agent-panel-section-title">
-            <Activity :size="12" />
-            <span>{{ t('agent.liveActivity') }}</span>
-          </div>
+        <div class="roster-header__right">
+          <span v-if="activity.totalNodes > 0" class="roster-node-counter">
+            {{ activity.completedNodes }}/{{ activity.totalNodes }}
+          </span>
+          <button
+            v-if="effectiveRunId"
+            type="button"
+            class="roster-header-link ui-pressable"
+            :title="t('uie.cardTitle.orchestration')"
+            data-testid="agent-header-jump-orchestration"
+            @click="jumpToOrchestration(null)"
+          >
+            <Network :size="12" aria-hidden="true" />
+            <span>{{ t('uie.cardTitle.orchestration') }}</span>
+          </button>
+          <button
+            v-if="effectiveRunId"
+            type="button"
+            class="roster-header-link ui-pressable"
+            :title="trajectoryShortLabel"
+            data-testid="agent-header-jump-trajectory"
+            @click="jumpToTrajectory(null)"
+          >
+            <GitCommitHorizontal :size="12" aria-hidden="true" />
+            <span>{{ trajectoryShortLabel }}</span>
+          </button>
         </div>
-        <div class="agent-panel-progress-list">
-          <TransitionGroup name="agent-progress-slide">
-            <div
-              v-for="event in visibleProgressEvents"
-              :key="event.id"
-              class="agent-panel-progress-item"
+      </header>
+
+      <div class="roster-scroll">
+        <!-- 1. Governance / Operation Layer -->
+        <section
+          v-if="governanceMembers.length > 0"
+          class="roster-section"
+          data-testid="agent-roster-governance"
+        >
+          <button
+            type="button"
+            class="roster-section__head"
+            :aria-expanded="!governanceCollapsed"
+            @click="governanceCollapsed = !governanceCollapsed"
+          >
+            <ChevronRight v-if="governanceCollapsed" :size="12" aria-hidden="true" />
+            <ChevronDown v-else :size="12" aria-hidden="true" />
+            <span class="roster-section__title">{{ t('orchestrationPanel.layer.operation') }}</span>
+            <span class="roster-section__count">{{ governanceMembers.length }}</span>
+          </button>
+
+          <div v-show="!governanceCollapsed" class="roster-list">
+            <article
+              v-for="member in governanceMembers"
+              :key="member.id"
+              class="roster-member"
+              data-testid="agent-roster-member"
+              :data-member-layer="member.layer"
             >
-              <div class="agent-panel-progress-item-icon">
-                <component :is="getProgressIcon(event.icon)" :size="10" />
+              <div class="roster-member__top">
+                <span class="roster-lamp" :class="`is-${member.tone}`" aria-hidden="true" />
+                <strong class="roster-member__name">{{ member.name }}</strong>
+                <span class="roster-member__status" :class="`is-${member.tone}`">{{ member.statusLabel }}</span>
+                <span v-if="member.elapsedText" class="roster-member__elapsed">{{ member.elapsedText }}</span>
+
+                <div class="roster-member__actions">
+                  <button
+                    v-if="effectiveRunId"
+                    type="button"
+                    class="roster-icon-action ui-pressable"
+                    :title="locateOrchestrationTitle"
+                    :aria-label="locateOrchestrationTitle"
+                    data-testid="agent-roster-jump-orchestration"
+                    @click="jumpToOrchestration(member)"
+                  >
+                    <Network :size="12" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-if="effectiveRunId"
+                    type="button"
+                    class="roster-icon-action ui-pressable"
+                    :title="viewMemberTrajectoryTitle"
+                    :aria-label="viewMemberTrajectoryTitle"
+                    data-testid="agent-roster-jump-trajectory"
+                    @click="jumpToTrajectory(member)"
+                  >
+                    <ArrowUpRight :size="12" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              <div class="agent-panel-progress-item-body">
-                <span class="agent-panel-progress-item-text">{{ event.message }}</span>
-                <span class="agent-panel-progress-item-time">{{ formatTime(event.timestamp) }}</span>
-              </div>
+
+              <p v-if="member.duty" class="roster-member__duty">{{ member.duty }}</p>
+              <p v-if="member.latestThought && member.latestThought !== member.duty" class="roster-member__thought">
+                {{ member.latestThought }}
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <!-- 2. Execution Layer -->
+        <section class="roster-section" data-testid="agent-roster-execution">
+          <button
+            type="button"
+            class="roster-section__head"
+            :aria-expanded="!executionCollapsed"
+            @click="executionCollapsed = !executionCollapsed"
+          >
+            <ChevronRight v-if="executionCollapsed" :size="12" aria-hidden="true" />
+            <ChevronDown v-else :size="12" aria-hidden="true" />
+            <span class="roster-section__title">{{ t('orchestrationPanel.layer.execution') }}</span>
+            <span class="roster-section__count">{{ executionMembers.length }}</span>
+          </button>
+
+          <div v-show="!executionCollapsed" class="roster-list">
+            <div v-if="executionMembers.length === 0" class="roster-waiting">
+              <Loader2 v-if="statusConfig.tone === 'running'" :size="12" class="roster-spin" aria-hidden="true" />
+              <span>{{ statusConfig.tone === 'running' ? t('agent.waitingAssignment') : t('agent.noActivity') }}</span>
             </div>
-          </TransitionGroup>
-        </div>
-      </article>
+
+            <article
+              v-for="member in executionMembers"
+              :key="member.id"
+              class="roster-member"
+              data-testid="agent-roster-member"
+              :data-member-layer="member.layer"
+            >
+              <div class="roster-member__top">
+                <span class="roster-lamp" :class="`is-${member.tone}`" aria-hidden="true" />
+                <strong class="roster-member__name">{{ member.name }}</strong>
+                <span class="roster-member__status" :class="`is-${member.tone}`">{{ member.statusLabel }}</span>
+                <span v-if="member.elapsedText" class="roster-member__elapsed">{{ member.elapsedText }}</span>
+
+                <div class="roster-member__actions">
+                  <button
+                    v-if="member.canSteer"
+                    type="button"
+                    class="roster-steer-btn ui-pressable"
+                    :title="tr('teammateControl.triggerTooltip', 'Steer or pause {name}', { name: member.name })"
+                    data-testid="agent-roster-steer-btn"
+                    @click="openMemberSteer(member, $event)"
+                  >
+                    <MessageSquare :size="11" aria-hidden="true" />
+                    <span>{{ tr('teammateControl.steerAction', 'Direct control') }}</span>
+                  </button>
+                  <button
+                    v-if="effectiveRunId"
+                    type="button"
+                    class="roster-icon-action ui-pressable"
+                    :title="locateOrchestrationTitle"
+                    :aria-label="locateOrchestrationTitle"
+                    data-testid="agent-roster-jump-orchestration"
+                    @click="jumpToOrchestration(member)"
+                  >
+                    <Network :size="12" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-if="effectiveRunId"
+                    type="button"
+                    class="roster-icon-action ui-pressable"
+                    :title="viewMemberTrajectoryTitle"
+                    :aria-label="viewMemberTrajectoryTitle"
+                    data-testid="agent-roster-jump-trajectory"
+                    @click="jumpToTrajectory(member)"
+                  >
+                    <ArrowUpRight :size="12" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="member.duty" class="roster-member__duty">{{ member.duty }}</p>
+              <p v-if="member.latestThought && member.latestThought !== member.duty" class="roster-member__thought">
+                {{ member.latestThought }}
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <!-- 3. Sub-agents Section (v-show preserved so SubAgentsPanel emits roster-size) -->
+        <section
+          v-if="feed && runs"
+          v-show="subAgentCount > 0"
+          class="roster-section"
+          data-testid="agent-panel-sub-agents"
+        >
+          <button
+            type="button"
+            class="roster-section__head"
+            :aria-expanded="!subAgentsCollapsed"
+            @click="subAgentsCollapsed = !subAgentsCollapsed"
+          >
+            <ChevronRight v-if="subAgentsCollapsed" :size="12" aria-hidden="true" />
+            <ChevronDown v-else :size="12" aria-hidden="true" />
+            <Users :size="12" aria-hidden="true" />
+            <span class="roster-section__title">{{ t('conversation.agents.panelTitle') }}</span>
+            <span class="roster-section__count">{{ subAgentCount }}</span>
+          </button>
+
+          <div v-show="!subAgentsCollapsed" class="roster-subagents-body">
+            <SubAgentsPanel
+              :feed="feed"
+              :runs="runs"
+              :workspace-root="workspaceRoot"
+              @roster-size="subAgentCount = $event"
+            />
+          </div>
+        </section>
+      </div>
     </template>
+
+    <TeammateSteerPopover
+      v-if="steerTarget"
+      v-model:open="steerOpen"
+      :run-id="steerTarget.runId"
+      :handle="steerTarget.handle"
+      :display-name="steerTarget.displayName"
+      :status="steerTarget.status"
+      :paused="steerTarget.paused"
+      :task-summary="steerTarget.taskSummary"
+      :thought="steerTarget.thought"
+      :anchor-rect="steerTarget.anchorRect"
+      @status-change="onSteerStatusChange"
+    />
   </section>
 </template>
 
 <style scoped>
-.agent-activity-panel {
+.agent-roster-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
   height: 100%;
-  overflow-y: auto;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
 }
 
-.agent-panel-empty {
+.roster-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   height: 100%;
   color: var(--text-muted);
-}
-
-.agent-panel-empty span {
   font-size: 12px;
 }
 
-/* ===== Section card ===== */
-.agent-panel-section {
-  flex-shrink: 0;
-  border: 1px solid var(--border-muted);
-  border-radius: 10px;
-  background: var(--surface-section);
-  overflow: hidden;
-}
-
-.agent-panel-section.status-thinking {
-  border-color: var(--border-default, var(--border-muted));
-  background: var(--surface-section);
-}
-
-.agent-panel-section.status-working {
-  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-primary) 4%, var(--surface-section));
-}
-
-.agent-panel-section.status-waiting {
-  border-color: color-mix(in srgb, var(--accent-warning) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-warning) 5%, var(--surface-section));
-}
-
-.agent-panel-section.status-completed {
-  border-color: color-mix(in srgb, var(--accent-success) 34%, var(--border-muted));
-}
-
-.agent-panel-section.status-error {
-  border-color: color-mix(in srgb, var(--accent-danger) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--accent-danger) 5%, var(--surface-section));
-}
-
-/* ===== Section header ===== */
-.agent-panel-section-head {
+/* ── Top Run Summary Strip ─────────────────────────────────────── */
+.roster-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  padding: 9px 11px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.15s;
-}
-
-.agent-panel-section-head:hover {
-  background: var(--surface-hover);
-}
-
-.agent-panel-status-left {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-panel-status-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 7px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-raised);
-  color: var(--text-primary);
-}
-
-.status-thinking .agent-panel-status-icon {
-  color: var(--text-primary);
-}
-
-.status-working .agent-panel-status-icon {
-  color: var(--accent-primary);
-}
-
-.status-waiting .agent-panel-status-icon {
-  color: var(--accent-warning);
-}
-
-.status-completed .agent-panel-status-icon {
-  color: var(--accent-success);
-}
-
-.status-error .agent-panel-status-icon {
-  color: var(--accent-danger);
-}
-
-.agent-icon-spin {
-  animation: agent-spin 1.2s linear infinite;
-}
-
-.agent-icon-pulse {
-  animation: agent-pulse-icon 1.6s ease-in-out infinite;
-}
-
-@keyframes agent-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes agent-pulse-icon {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.agent-panel-status-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-panel-status-title-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
   flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
+  flex-shrink: 0;
 }
 
-.agent-panel-status-title-row strong {
+.roster-header__left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.roster-header__lead {
   font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-panel-status-tag {
+.roster-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.roster-lamp.is-running {
+  background: var(--obs-status-ok, var(--accent-success));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--obs-status-ok, var(--accent-success)) 20%, transparent);
+}
+
+.roster-lamp.is-waiting {
+  background: var(--obs-status-warn, var(--accent-warning));
+}
+
+.roster-lamp.is-completed {
+  background: var(--obs-status-ok, var(--accent-success));
+}
+
+.roster-lamp.is-error {
+  background: var(--obs-status-danger, var(--accent-danger));
+}
+
+.roster-status-pill {
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  background: var(--surface-raised);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
 }
 
-.status-thinking .agent-panel-status-tag {
-  border: 1px solid var(--border-default, var(--border-muted));
-  background: var(--surface-raised);
-  color: var(--text-primary);
+.roster-status-pill.is-running {
+  background: var(--obs-status-ok-soft, color-mix(in srgb, var(--accent-success) 12%, transparent));
+  color: var(--obs-status-ok, var(--accent-success));
 }
 
-.status-working .agent-panel-status-tag {
-  background: rgba(88, 166, 255, 0.14);
-  color: var(--accent-primary);
+.roster-status-pill.is-waiting {
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 13%, transparent));
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
-.status-waiting .agent-panel-status-tag {
-  background: rgba(210, 153, 34, 0.14);
-  color: var(--accent-warning);
+.roster-status-pill.is-error {
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 12%, transparent));
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
-.status-completed .agent-panel-status-tag {
-  background: rgba(63, 185, 80, 0.14);
-  color: var(--accent-success);
-}
-
-.status-error .agent-panel-status-tag {
-  background: rgba(248, 81, 73, 0.14);
-  color: var(--accent-danger);
-}
-
-.agent-panel-status-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.agent-panel-elapsed {
+.roster-elapsed,
+.roster-node-counter {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--text-muted);
 }
 
-.agent-panel-status-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.agent-panel-progress {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.agent-panel-progress-bar {
-  width: 48px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-raised);
-  overflow: hidden;
-}
-
-.agent-panel-progress-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-primary);
-  transition: width 0.3s ease;
-}
-
-.status-completed .agent-panel-progress-fill {
-  background: var(--accent-success);
-}
-
-.status-error .agent-panel-progress-fill {
-  background: var(--accent-danger);
-}
-
-.agent-panel-progress-text {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.agent-panel-chevron {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-/* ===== Section title (for task graph, thinking, etc.) ===== */
-.agent-panel-section-title {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-panel-section-title span {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-panel-count-badge {
+.roster-header__right {
   display: inline-flex;
   align-items: center;
-  padding: 1px 5px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--surface-raised);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.agent-panel-mini-bar {
-  width: 40px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--surface-raised);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.agent-panel-mini-bar-fill {
-  height: 100%;
-  background: var(--accent-primary);
-  transition: width 0.3s ease;
-}
-
-/* ===== Section body ===== */
-.agent-panel-section-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 10px 10px;
-  border-top: 1px solid var(--border-muted);
-  padding-top: 8px;
-}
-
-/* ===== Agent groups ===== */
-.agent-panel-agent-group {
-  display: flex;
-  flex-direction: column;
   gap: 5px;
+  margin-left: auto;
 }
 
-.agent-panel-group-title {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-muted);
+.roster-header-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 23px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.roster-header-link:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Borderless Geist Sections ─────────────────────────────────── */
+.roster-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.roster-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
+}
+
+.roster-section__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.roster-section__head:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.roster-section__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
 
-.agent-panel-agent-grid {
+.roster-section__count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.roster-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.roster-waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.roster-member {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--obs-hairline, var(--border-muted)) 55%, transparent);
+  transition: background-color 0.12s ease;
 }
 
-.agent-panel-waiting {
+.roster-member:first-child {
+  border-top: 0;
+}
+
+.roster-member:hover {
+  background: var(--bg-secondary);
+}
+
+.roster-member__top {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-/* ===== Task list ===== */
-.agent-panel-task-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.agent-panel-task-step {
-  display: flex;
-  align-items: flex-start;
   gap: 6px;
-  padding: 4px 6px;
-  border-radius: 5px;
-  background: var(--surface-raised);
-}
-
-.agent-panel-task-index {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-muted);
-  background: var(--surface-section);
-  border-radius: 4px;
-}
-
-.agent-panel-task-status-icon {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.agent-panel-task-step.pending .agent-panel-task-status-icon {
-  color: var(--text-muted);
-}
-
-.agent-panel-task-step.running .agent-panel-task-status-icon {
-  color: var(--accent-primary);
-}
-
-.agent-panel-task-step.done .agent-panel-task-status-icon {
-  color: var(--accent-success);
-}
-
-.agent-panel-task-step.failed .agent-panel-task-status-icon {
-  color: var(--accent-danger);
-}
-
-.agent-panel-task-main {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-panel-task-title {
-  font-size: 11.5px;
-  color: var(--text-primary);
-  line-height: 1.3;
-}
-
-.agent-panel-task-step.pending .agent-panel-task-title {
-  color: var(--text-secondary);
-}
-
-.agent-panel-task-step.done .agent-panel-task-title {
-  color: var(--text-secondary);
-  text-decoration: line-through;
-  text-decoration-color: var(--text-muted);
-  text-decoration-thickness: 1px;
-}
-
-.agent-panel-task-agent {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* ===== Thinking steps ===== */
-.agent-panel-thinking-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.agent-panel-thinking-step {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 6px;
-  padding: 5px 0;
-  position: relative;
-}
-
-.agent-panel-thinking-line {
-  position: absolute;
-  left: 8px;
-  top: 22px;
-  bottom: -5px;
-  width: 1px;
-  background: var(--border-muted);
-}
-
-.agent-panel-thinking-step:last-child .agent-panel-thinking-line {
-  display: none;
-}
-
-.agent-panel-thinking-icon-wrap {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  z-index: 1;
-}
-
-.step-run .agent-panel-thinking-icon-wrap {
-  background: rgba(188, 140, 255, 0.12);
-  color: #bc8cff;
-}
-
-.step-graph .agent-panel-thinking-icon-wrap {
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-primary);
-}
-
-.step-assign .agent-panel-thinking-icon-wrap {
-  background: rgba(63, 185, 80, 0.12);
-  color: var(--accent-success);
-}
-
-.step-supervision .agent-panel-thinking-icon-wrap {
-  background: rgba(210, 153, 34, 0.12);
-  color: var(--accent-warning);
-}
-
-.step-context .agent-panel-thinking-icon-wrap {
-  background: rgba(86, 212, 221, 0.12);
-  color: #56d4dd;
-}
-
-.step-result .agent-panel-thinking-icon-wrap {
-  background: rgba(63, 185, 80, 0.12);
-  color: var(--accent-success);
-}
-
-.agent-panel-thinking-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
 
-.agent-panel-thinking-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.agent-panel-thinking-head strong {
-  font-size: 11.5px;
-  color: var(--text-primary);
-}
-
-.agent-panel-thinking-tag {
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 9px;
+.roster-member__name {
+  font-size: 12.5px;
   font-weight: 600;
-  background: var(--surface-raised);
-  color: var(--text-muted);
-}
-
-.agent-panel-thinking-desc {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--text-secondary);
-  word-break: break-word;
-}
-
-.agent-panel-thinking-desc.is-plan {
-  white-space: pre-line;
-}
-
-.agent-panel-thinking-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.agent-panel-thinking-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 9px;
-  color: var(--text-muted);
-}
-
-.agent-panel-thinking-duration {
-  font-size: 9px;
-  color: var(--text-muted);
-}
-
-.agent-panel-thinking-severity {
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.severity-info {
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-primary);
-}
-
-.severity-warning {
-  background: rgba(210, 153, 34, 0.14);
-  color: var(--accent-warning);
-}
-
-.severity-critical,
-.severity-error {
-  background: rgba(248, 81, 73, 0.14);
-  color: var(--accent-danger);
-}
-
-/* ===== Progress stream ===== */
-.agent-panel-progress-head {
-  cursor: default;
-}
-
-.agent-panel-progress-head:hover {
-  background: transparent;
-}
-
-.agent-panel-progress-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 10px 8px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.agent-panel-progress-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  padding: 2px 0;
-}
-
-.agent-panel-progress-item-icon {
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  border-radius: 3px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  margin-top: 1px;
-}
-
-.agent-panel-progress-item-body {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-panel-progress-item-text {
+  color: var(--text-primary);
   overflow: hidden;
-  font-size: 10.5px;
-  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
   min-width: 0;
 }
 
-.agent-panel-progress-item-time {
-  flex-shrink: 0;
-  font-size: 9px;
+.roster-member__status {
+  font-size: 10.5px;
+  font-weight: 500;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
-/* ===== Transitions ===== */
-.agent-section-expand-enter-active,
-.agent-section-expand-leave-active {
-  transition: opacity 0.2s ease, max-height 0.25s ease;
+.roster-member__status.is-running {
+  color: var(--obs-status-ok, var(--accent-success));
+}
+
+.roster-member__status.is-waiting {
+  color: var(--obs-status-warn, var(--accent-warning));
+}
+
+.roster-member__status.is-error {
+  color: var(--obs-status-danger, var(--accent-danger));
+}
+
+.roster-member__elapsed {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.roster-member__actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.roster-steer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.roster-steer-btn:hover {
+  background: var(--bg-primary-button-hover);
+}
+
+.roster-icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.roster-icon-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.roster-member__duty {
+  margin: 0;
+  padding-left: 13px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.roster-member__thought {
+  margin: 0;
+  padding-left: 13px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  max-height: 500px;
 }
 
-.agent-section-expand-enter-from,
-.agent-section-expand-leave-to {
-  opacity: 0;
-  max-height: 0;
+.roster-subagents-body :deep(.conversation-sub-agents) {
+  padding: 4px 12px 10px;
 }
 
-.agent-progress-slide-enter-active {
-  transition: all 0.3s ease;
+.roster-spin {
+  animation: roster-spin 1.1s linear infinite;
 }
 
-.agent-progress-slide-leave-active {
-  transition: all 0.2s ease;
-  position: absolute;
+@keyframes roster-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.agent-progress-slide-enter-from {
-  opacity: 0;
-  transform: translateX(-8px);
-}
-
-.agent-progress-slide-leave-to {
-  opacity: 0;
-  transform: translateX(8px);
+@media (prefers-reduced-motion: reduce) {
+  .roster-spin {
+    animation: none;
+  }
 }
 </style>

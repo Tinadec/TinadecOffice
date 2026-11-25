@@ -108,6 +108,21 @@ const visibleRows = computed<VisibleRow[]>(() => {
   return rows
 })
 
+const maxDurationMs = computed<number>(() => {
+  let max = 0
+  for (const row of visibleRows.value) {
+    if (row.node.kind !== 'run' && (row.node.durationMs ?? 0) > max) {
+      max = row.node.durationMs ?? 0
+    }
+  }
+  return Math.max(100, max)
+})
+
+function durationBarPct(node: TrajectoryNode): number {
+  if (node.kind === 'run' || !node.durationMs || node.durationMs <= 0) return 0
+  return Math.min(100, Math.max(6, Math.round((node.durationMs / maxDurationMs.value) * 100)))
+}
+
 function toggleExpand(nodeId: string): void {
   const next = new Set(expandedIds.value)
   if (next.has(nodeId)) next.delete(nodeId)
@@ -147,15 +162,15 @@ function kindIcon(kind: TrajectoryNode['kind']) {
         <strong>{{ t('trajectoryEval.tree.title') }}</strong>
       </div>
       <div class="traj-kpis">
-        <span class="traj-kpi-pill" data-testid="traj-kpi-calls">
+        <span class="traj-kpi-pill mono" data-testid="traj-kpi-calls">
           {{ t('trajectoryEval.tree.toolCallsCount', { count: trajectory.totalToolCalls }) }}
         </span>
-        <span v-if="trajectory.totalModelCalls > 0" class="traj-kpi-pill">
+        <span v-if="trajectory.totalModelCalls > 0" class="traj-kpi-pill mono">
           {{ t('trajectoryEval.tree.modelCallsCount', { count: trajectory.totalModelCalls }) }}
         </span>
         <span
           v-if="trajectory.totalAddedLines > 0 || trajectory.totalRemovedLines > 0"
-          class="traj-kpi-pill is-mono"
+          class="traj-kpi-pill mono"
           data-testid="traj-kpi-edits"
         >
           <span class="edit-add">+{{ trajectory.totalAddedLines }}</span>
@@ -164,7 +179,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
         </span>
         <button
           type="button"
-          class="traj-filter-btn"
+          class="traj-filter-btn mono"
           :class="{ active: errorsOnly, 'is-danger': trajectory.errorCount > 0 }"
           :aria-pressed="errorsOnly"
           data-testid="traj-errors-filter"
@@ -216,7 +231,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
           'is-error': row.node.isError,
           [`kind-${row.node.kind}`]: true,
         }"
-        :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+        :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
         :data-testid="`traj-row-${row.node.id}`"
         @click="selectRow(row.node)"
       >
@@ -240,12 +255,6 @@ function kindIcon(kind: TrajectoryNode['kind']) {
             <span class="traj-status-pill" :class="{ 'is-error': row.node.isError }">
               {{ row.node.status }}
             </span>
-            <span v-if="row.node.durationMs !== null" class="traj-meta mono">
-              {{ formatDuration(row.node.durationMs) }}
-            </span>
-            <span v-if="row.node.tokensUsed" class="traj-meta mono">
-              {{ t('trajectoryEval.tree.tokensShort', { tokens: row.node.tokensUsed.toLocaleString() }) }}
-            </span>
             <span
               v-if="row.node.editStats"
               class="traj-edit-pill mono"
@@ -253,6 +262,26 @@ function kindIcon(kind: TrajectoryNode['kind']) {
             >
               <span class="edit-add">+{{ row.node.editStats.added }}</span>/<span class="edit-del">-{{ row.node.editStats.removed }}</span>
             </span>
+
+            <div class="traj-row-right mono">
+              <span v-if="row.node.tokensUsed" class="traj-meta">
+                {{ t('trajectoryEval.tree.tokensShort', { tokens: row.node.tokensUsed.toLocaleString() }) }}
+              </span>
+              <span v-if="row.node.durationMs !== null" class="traj-meta">
+                {{ formatDuration(row.node.durationMs) }}
+              </span>
+              <span
+                v-if="durationBarPct(row.node) > 0"
+                class="traj-waterfall"
+                aria-hidden="true"
+              >
+                <i
+                  class="traj-waterfall__fill"
+                  :class="{ 'is-model': row.node.kind === 'model_call', 'is-error': row.node.isError }"
+                  :style="{ width: `${durationBarPct(row.node)}%` }"
+                />
+              </span>
+            </div>
           </div>
 
           <div v-if="row.node.subtitle" class="traj-row-sub mono" :title="row.node.subtitle">
@@ -331,10 +360,9 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-card, 10px);
-  background: var(--bg-secondary);
+  padding: 10px 14px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
 
@@ -350,14 +378,14 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-primary);
 }
 
 .traj-kpis {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
 }
 
@@ -366,19 +394,18 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
+  height: 21px;
+  padding: 0 7px;
+  border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 10.5px;
   white-space: nowrap;
 }
 
 .traj-filter-btn {
   cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .traj-filter-btn.is-danger {
@@ -388,7 +415,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-filter-btn.active {
-  border-color: var(--accent-primary);
+  border-color: var(--text-primary);
   background: var(--bg-selected);
   color: var(--text-primary);
 }
@@ -398,10 +425,9 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
-  padding: 6px 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-primary);
+  padding: 5px 0;
+  border-top: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
 }
 
 .traj-signal-icon {
@@ -413,8 +439,8 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: 1px 6px;
+  border-radius: 4px;
   border: 1px solid var(--border-muted);
   background: var(--bg-status-warn);
   color: var(--text-primary);
@@ -424,7 +450,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-signal-chip.active {
-  border-color: var(--accent-primary);
+  border-color: var(--text-primary);
   background: var(--bg-selected);
 }
 
@@ -433,7 +459,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-empty {
-  padding: 12px;
+  padding: 14px;
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
@@ -445,8 +471,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-height: 300px;
+  max-height: 340px;
   overflow-y: auto;
 }
 
@@ -455,26 +480,26 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   align-items: flex-start;
   gap: 6px;
   padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  border-bottom: 1px solid var(--border-muted);
   background: transparent;
   cursor: pointer;
-  transition: background-color 110ms ease, border-color 110ms ease;
+  transition: background-color 100ms ease;
+}
+
+.traj-row:last-child {
+  border-bottom: 0;
 }
 
 .traj-row:hover {
   background: var(--bg-hover);
-  border-color: var(--border-muted);
 }
 
 .traj-row.is-selected {
   background: var(--bg-selected);
-  border-color: var(--border-default);
 }
 
 .traj-row.is-error:not(.is-selected) {
-  background: color-mix(in srgb, var(--bg-status-danger) 55%, transparent);
-  border-color: color-mix(in srgb, var(--accent-danger) 28%, var(--border-muted));
+  background: color-mix(in srgb, var(--bg-status-danger) 45%, transparent);
 }
 
 .traj-chevron {
@@ -491,10 +516,6 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 0;
   margin-top: 1px;
   flex-shrink: 0;
-}
-
-.traj-chevron:hover {
-  background: var(--bg-tertiary);
 }
 
 .traj-chevron-spacer {
@@ -530,14 +551,14 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 220px;
 }
 
 .traj-status-pill {
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: 0 5px;
+  border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 10px;
 }
@@ -548,16 +569,43 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   border-color: color-mix(in srgb, var(--accent-danger) 35%, var(--border-muted));
 }
 
+.traj-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .traj-meta {
   font-size: 10.5px;
   color: var(--text-muted);
 }
 
+.traj-waterfall {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  display: inline-flex;
+}
+
+.traj-waterfall__fill {
+  display: block;
+  height: 100%;
+  background: #d49b00;
+  border-radius: 2px;
+}
+
+.traj-waterfall__fill.is-model {
+  background: var(--obs-ctx-assistant, #5b9fe8);
+}
+
+.traj-waterfall__fill.is-error {
+  background: var(--accent-danger, #c72b31);
+}
+
 .traj-edit-pill {
-  padding: 0 5px;
-  border-radius: 4px;
-  border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
   font-size: 10.5px;
 }
 
@@ -591,28 +639,25 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 .traj-gov-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
   font-family: var(--font-mono);
   font-size: 10px;
-  line-height: 1.4;
 }
 
 .traj-gov-badge.sev-danger {
   background: var(--bg-status-danger);
   color: var(--text-error);
-  border-color: color-mix(in srgb, var(--accent-danger) 36%, var(--border-muted));
 }
 
 .traj-gov-badge.sev-warn {
   background: var(--bg-status-warn);
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
 }
 
 .traj-gov-badge.sev-neutral {
-  background: var(--bg-status-neutral);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
 }
 
@@ -620,10 +665,8 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-primary);
+  padding-top: 10px;
+  border-top: 1px solid var(--border-muted);
 }
 
 .traj-detail-head {
@@ -646,7 +689,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 1px 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 10px;
   text-transform: uppercase;
@@ -656,11 +699,11 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: var(--control-height-xs, 26px);
+  height: 25px;
   padding: 0 9px;
-  border-radius: var(--radius-control, 6px);
+  border-radius: 6px;
   border: 1px solid var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
@@ -668,8 +711,8 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-diagnose-btn:hover {
-  border-color: var(--accent-primary);
-  background: var(--bg-selected);
+  border-color: var(--text-primary);
+  background: var(--bg-secondary);
 }
 
 .traj-detail-meta {
@@ -690,7 +733,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 
 .traj-code-frame {
   border: 1px solid var(--border-muted);
-  border-radius: 7px;
+  border-radius: 6px;
   overflow: hidden;
   background: var(--bg-secondary);
 }
@@ -702,7 +745,6 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   gap: 8px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-tertiary);
   font-size: 10.5px;
   color: var(--text-secondary);
 }
@@ -713,7 +755,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 
 .traj-code-frame__body {
   margin: 0;
-  padding: 6px 0;
+  padding: 5px 0;
   font-size: 11px;
   overflow-x: auto;
 }

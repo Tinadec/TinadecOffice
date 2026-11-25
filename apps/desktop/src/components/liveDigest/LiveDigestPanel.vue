@@ -4,11 +4,10 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowUpRight,
   Check,
   CornerDownLeft,
   FileDiff,
-  GitBranch,
-  Layers3,
   Minimize2,
   Radio,
   RefreshCw,
@@ -23,6 +22,8 @@ import {
   type LiveDigestSnapshotDto,
   type LiveDigestTeammateThoughtDto,
 } from '@/composables/useLiveDigest'
+import { useObservabilityRunSelection } from '@/composables/useObservabilityRunSelection'
+import ObservabilityTurnBar from '@/components/observability/ObservabilityTurnBar.vue'
 import { focusDockCard } from '@/lib/homeDockSync'
 import { UiTransition } from '@/components/ui/ui-transition'
 import type { TeammateSteerAnchorRect } from '@/components/teammate/TeammateSteerPopover.vue'
@@ -30,7 +31,10 @@ import LiveDigestChapterItem from './LiveDigestChapterItem.vue'
 import LiveDigestTeammatesStrip from './LiveDigestTeammatesStrip.vue'
 
 const props = withDefaults(defineProps<{
-  runId: string | null | undefined
+  runId?: string | null
+  sessionId?: string | null
+  runs?: readonly unknown[] | null
+  activeRunId?: string | null
   /** Optional pre-hydrated snapshot override (useful for unit tests or replay previews). */
   snapshotOverride?: LiveDigestSnapshotDto | null
   /** Compact density for embedded spatial inspector tabs. */
@@ -42,6 +46,10 @@ const props = withDefaults(defineProps<{
   /** Optional storage scope id for multi-storage runs. */
   storageId?: string
 }>(), {
+  runId: null,
+  sessionId: null,
+  runs: null,
+  activeRunId: null,
   snapshotOverride: null,
   compact: false,
   embedded: false,
@@ -56,9 +64,33 @@ const emit = defineEmits<{
   'open-trajectory': [payload: { runId: string | null; chapter?: LiveDigestChapterDto | null }]
 }>()
 
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
+const isZh = computed(() => String(locale.value || '').toLowerCase().startsWith('zh'))
 
-const live = useLiveDigest(() => (props.snapshotOverride ? null : props.runId), {
+function tr(key: string, fallback: string, params?: Record<string, unknown>): string {
+  if (te(key)) return params ? String(t(key, params)) : String(t(key))
+  if (!params) return fallback
+  return fallback.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''))
+}
+
+const {
+  turns: observabilityTurns,
+  isFollowingLatest,
+  effectiveRunId: selectionEffectiveRunId,
+  selectedTurn,
+  selectRun,
+  followLatest,
+} = useObservabilityRunSelection({
+  sessionId: () => props.sessionId ?? props.snapshotOverride?.session_id ?? null,
+  runs: () => props.runs,
+  activeRunId: () => props.activeRunId ?? props.runId ?? null,
+})
+
+const targetDigestRunId = computed<string | null>(
+  () => selectionEffectiveRunId.value ?? props.runId ?? props.activeRunId ?? null,
+)
+
+const live = useLiveDigest(() => (props.snapshotOverride ? null : targetDigestRunId.value), {
   autoStream: () => !props.snapshotOverride,
   storageId: () => props.storageId,
 })
@@ -66,7 +98,14 @@ const live = useLiveDigest(() => (props.snapshotOverride ? null : props.runId), 
 const snapshot = computed<LiveDigestSnapshotDto | null>(
   () => props.snapshotOverride ?? live.snapshot.value,
 )
-const effectiveRunId = computed<string | null>(() => snapshot.value?.run_id ?? props.runId ?? null)
+
+const effectiveRunId = computed<string | null>(() => {
+  if (props.snapshotOverride && (!props.runs || props.runs.length === 0)) {
+    return props.snapshotOverride.run_id || selectionEffectiveRunId.value || props.runId || null
+  }
+  return selectionEffectiveRunId.value ?? snapshot.value?.run_id ?? props.runId ?? null
+})
+
 const isLoading = computed<boolean>(() => !props.snapshotOverride && live.loading.value)
 const errorMessage = computed<string | null>(() => (props.snapshotOverride ? null : live.error.value))
 const isTerminal = computed<boolean>(() => {
@@ -81,6 +120,13 @@ const governanceSignals = computed<LiveDigestGovernanceSignalDto[]>(() => snapsh
 const sentinelAlerts = computed<LiveDigestSentinelAlertDto[]>(() => snapshot.value?.sentinel_alerts ?? [])
 const touchedFiles = computed(() => snapshot.value?.touched_files ?? [])
 const waterline = computed(() => snapshot.value?.context_waterline ?? null)
+
+const waterlineJumpTitle = computed(() =>
+  tr(
+    'liveDigest.waterline.openContextTitle',
+    isZh.value ? '点击打开轨迹 · 上下文矩阵' : 'Open Trajectory · Context Matrix',
+  ),
+)
 
 const totalDiffStats = computed(() => {
   let added = 0
@@ -287,7 +333,7 @@ watch(
 )
 
 // ---------------------------------------------------------------------------
-// Sentinel Steer One-Click Fill + Composer Focus & Cross-Panel Navigation
+// Sentinel Steer One-Click Fill + Cross-Panel Deep Links
 // ---------------------------------------------------------------------------
 
 const recentlyFilledAlertId = ref<string | null>(null)
@@ -324,39 +370,36 @@ function handleOpenOrchestration(chapter?: LiveDigestChapterDto | null): void {
     { card: 'orchestration', reason: 'digest', runId: effectiveRunId.value },
     { title: t('uie.cardTitle.orchestration') },
   )
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('tinadec:focus-home-dock', {
-        detail: {
-          card: 'orchestration',
-          runId: effectiveRunId.value,
-          subView: 'timeline',
-          chapterId: chapter?.id ?? null,
-        },
-      }),
-    )
-  }
 }
 
 function handleOpenTrajectory(chapter?: LiveDigestChapterDto | null): void {
   emit('open-trajectory', { runId: effectiveRunId.value, chapter: chapter ?? null })
   if (props.embedded) return
   focusDockCard(
-    { card: 'orchestration', reason: 'digest', runId: effectiveRunId.value },
-    { title: t('uie.cardTitle.orchestration') },
+    {
+      card: 'trajectory',
+      reason: 'digest',
+      trajectoryTab: 'path',
+      trajectoryTurnNo: selectedTurn.value?.turnNo ?? undefined,
+      runId: effectiveRunId.value,
+    },
+    { title: tr('uie.cardTitle.trajectory', isZh.value ? '轨迹' : 'Trajectory') },
   )
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('tinadec:focus-home-dock', {
-        detail: {
-          card: 'orchestration',
-          runId: effectiveRunId.value,
-          subView: 'trajectory',
-          chapterId: chapter?.id ?? null,
-        },
-      }),
-    )
-  }
+}
+
+function handleOpenContextWaterline(): void {
+  emit('open-trajectory', { runId: effectiveRunId.value, chapter: null })
+  if (props.embedded) return
+  focusDockCard(
+    {
+      card: 'trajectory',
+      reason: 'digest',
+      trajectoryTab: 'context',
+      trajectoryTurnNo: selectedTurn.value?.turnNo ?? undefined,
+      runId: effectiveRunId.value,
+    },
+    { title: tr('uie.cardTitle.trajectory', isZh.value ? '轨迹' : 'Trajectory') },
+  )
 }
 
 onBeforeUnmount(() => {
@@ -373,21 +416,62 @@ defineExpose({
 
 <template>
   <section
-    class="ld-panel"
+    class="ld-panel obs-geist-surface"
     :class="{ 'is-compact': compact, 'is-embedded': embedded }"
     data-dock-card="live-digest"
     data-testid="live-digest-panel"
   >
-    <!-- Top Live Status Header & Context Waterline -->
+    <!-- Shared Turn Bar (synced across live-digest, trajectory, orchestration) -->
+    <ObservabilityTurnBar
+      v-if="!embedded"
+      :turns="observabilityTurns"
+      :effective-run-id="effectiveRunId"
+      :is-following-latest="isFollowingLatest"
+      :compact="compact"
+      @select-run="selectRun"
+      @follow-latest="followLatest"
+    >
+      <template v-if="effectiveRunId && !snapshotOverride" #actions>
+        <button
+          type="button"
+          class="ld-icon-btn ui-pressable"
+          :disabled="isLoading"
+          :title="t('liveDigest.actions.refresh')"
+          :aria-label="t('liveDigest.actions.refresh')"
+          data-testid="live-digest-refresh-btn"
+          @click="live.refresh()"
+        >
+          <RefreshCw :size="13" :class="{ 'is-spinning': isLoading }" aria-hidden="true" />
+        </button>
+      </template>
+    </ObservabilityTurnBar>
+
+    <!-- Crisp Top Status, Headline & Clickable Context Waterline -->
     <header class="ld-header">
       <div class="ld-header-top">
         <div class="ld-title-group">
           <span class="ld-status-dot" :class="statusMeta.cls" aria-hidden="true" />
-          <Radio :size="14" class="ld-title-icon" aria-hidden="true" />
-          <h2 class="ld-title">{{ t('liveDigest.title') }}</h2>
           <span class="ld-status-pill" :class="statusMeta.cls" data-testid="live-digest-status-pill">
             {{ statusMeta.label }}
           </span>
+          <div
+            v-if="snapshot"
+            class="ld-phase-stepper"
+            role="status"
+            :aria-label="t('liveDigest.phase.progressLabel')"
+          >
+            <span
+              v-for="(step, idx) in PHASE_STEPS"
+              :key="step"
+              class="ld-phase-step"
+              :class="{
+                'is-active': idx === activePhaseIndex,
+                'is-done': idx < activePhaseIndex,
+              }"
+            >
+              {{ t(`liveDigest.phase.${step}`) }}
+            </span>
+          </div>
         </div>
 
         <div class="ld-header-actions">
@@ -398,34 +482,12 @@ defineExpose({
             :title="t('liveDigest.modeBadge.tooltip')"
             data-testid="live-digest-mode-badge"
           >
-            <Sparkles v-if="snapshot?.explainer_active" :size="12" aria-hidden="true" />
+            <Sparkles v-if="snapshot?.explainer_active" :size="11" aria-hidden="true" />
             <span>{{ modeBadgeText }}</span>
           </span>
 
           <button
-            v-if="!embedded && effectiveRunId"
-            type="button"
-            class="ld-icon-btn ui-pressable"
-            :title="t('liveDigest.actions.openTimeline')"
-            :aria-label="t('liveDigest.actions.openTimeline')"
-            @click="handleOpenOrchestration(null)"
-          >
-            <Layers3 :size="14" aria-hidden="true" />
-          </button>
-
-          <button
-            v-if="!embedded && effectiveRunId"
-            type="button"
-            class="ld-icon-btn ui-pressable"
-            :title="t('liveDigest.actions.openTrajectory')"
-            :aria-label="t('liveDigest.actions.openTrajectory')"
-            @click="handleOpenTrajectory(null)"
-          >
-            <GitBranch :size="14" aria-hidden="true" />
-          </button>
-
-          <button
-            v-if="effectiveRunId && !snapshotOverride"
+            v-if="embedded && effectiveRunId && !snapshotOverride"
             type="button"
             class="ld-icon-btn ui-pressable"
             :disabled="isLoading"
@@ -439,43 +501,39 @@ defineExpose({
         </div>
       </div>
 
-      <!-- One-line headline & Phase progression -->
-      <div v-if="snapshot" class="ld-headline-row">
-        <p class="ld-headline" data-testid="live-digest-headline">
-          {{ snapshot.headline || t('liveDigest.headlineFallback') }}
-        </p>
+      <!-- Crisp one-line / multi-line headline -->
+      <p v-if="snapshot" class="ld-headline" data-testid="live-digest-headline">
+        {{ snapshot.headline || t('liveDigest.headlineFallback') }}
+      </p>
 
-        <div class="ld-phase-stepper" role="status" :aria-label="t('liveDigest.phase.progressLabel')">
-          <span
-            v-for="(step, idx) in PHASE_STEPS"
-            :key="step"
-            class="ld-phase-step"
-            :class="{
-              'is-active': idx === activePhaseIndex,
-              'is-done': idx < activePhaseIndex,
-            }"
-          >
-            {{ t(`liveDigest.phase.${step}`) }}
-          </span>
-        </div>
-      </div>
-
-      <!-- Context Waterline Progress Bar + Compaction Markers -->
-      <div v-if="snapshot && waterline" class="ld-waterline" data-testid="live-digest-waterline">
+      <!-- Clickable Mini Context Waterline Bar -> opens 'trajectory' (context tab) -->
+      <div
+        v-if="snapshot && waterline"
+        class="ld-waterline"
+        :class="{ 'is-interactive': !embedded }"
+        :role="!embedded ? 'button' : undefined"
+        :tabindex="!embedded ? 0 : undefined"
+        :title="!embedded ? waterlineJumpTitle : undefined"
+        data-testid="live-digest-waterline"
+        @click="handleOpenContextWaterline"
+        @keydown.enter.prevent="handleOpenContextWaterline"
+        @keydown.space.prevent="handleOpenContextWaterline"
+      >
         <div class="ld-waterline-head">
           <span class="ld-waterline-label">{{ t('liveDigest.waterline.label') }}</span>
           <span class="ld-waterline-tokens">
             {{ formatTokens(waterline.used_tokens) }} / {{ formatTokens(waterline.max_tokens) }}
           </span>
-          <span class="ld-waterline-pct" :class="waterlineTone">{{ usagePercent }}%</span>
           <span
             v-if="waterline.compaction_count > 0"
             class="ld-compaction-count"
             data-testid="live-digest-compaction-count"
           >
-            <Minimize2 :size="11" aria-hidden="true" />
+            <Minimize2 :size="10" aria-hidden="true" />
             <span>{{ t('liveDigest.waterline.compacted', { count: waterline.compaction_count }) }}</span>
           </span>
+          <span class="ld-waterline-pct" :class="waterlineTone">{{ usagePercent }}%</span>
+          <ArrowUpRight v-if="!embedded" :size="11" class="ld-waterline-jump-icon" aria-hidden="true" />
         </div>
 
         <div
@@ -499,7 +557,9 @@ defineExpose({
               after: formatTokens(marker.after_tokens),
             })"
             data-testid="live-digest-compaction-marker"
-            @click="toggleCompactionMarker(marker.key)"
+            @click.stop="toggleCompactionMarker(marker.key)"
+            @keydown.enter.stop.prevent="toggleCompactionMarker(marker.key)"
+            @keydown.space.stop.prevent="toggleCompactionMarker(marker.key)"
           />
         </div>
 
@@ -507,6 +567,7 @@ defineExpose({
           v-if="selectedCompaction"
           class="ld-compaction-detail"
           data-testid="live-digest-compaction-detail"
+          @click.stop
         >
           <span class="ld-compaction-range">
             {{ formatTokens(selectedCompaction.before_tokens) }} → {{ formatTokens(selectedCompaction.after_tokens) }}
@@ -537,7 +598,7 @@ defineExpose({
             data-testid="live-digest-signal-badge"
             @click="toggleSignalCode(group.code)"
           >
-            <ShieldAlert :size="12" aria-hidden="true" />
+            <ShieldAlert :size="11" aria-hidden="true" />
             <span>{{ signalLabel(group.code) }}</span>
             <span v-if="group.items.length > 1" class="ld-signal-count">×{{ group.items.length }}</span>
           </button>
@@ -615,7 +676,7 @@ defineExpose({
               data-testid="live-digest-sentinel-alert"
             >
               <div class="ld-sentinel-head">
-                <AlertTriangle :size="14" class="ld-sentinel-icon" aria-hidden="true" />
+                <AlertTriangle :size="13" class="ld-sentinel-icon" aria-hidden="true" />
                 <strong class="ld-sentinel-title">{{ alert.title }}</strong>
                 <span v-if="alert.teammate_handle" class="ld-sentinel-target">
                   @{{ alert.teammate_handle }}
@@ -646,7 +707,7 @@ defineExpose({
             </div>
           </section>
 
-          <!-- Chapters Timeline -->
+          <!-- Chapters Timeline (1.5px spine) -->
           <section
             class="ld-chapters"
             :aria-label="t('liveDigest.chapter.timelineLabel')"
@@ -738,25 +799,26 @@ defineExpose({
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
+  font-variant-numeric: tabular-nums;
 }
 
 .ld-panel.is-embedded {
   background: transparent;
 }
 
-/* ── Top Status & Waterline Header ─────────────────────────────── */
+/* ── Top Status, Headline & Waterline Header (Geist Open Surface) ── */
 .ld-header {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 13px 10px;
-  border-bottom: 1px solid var(--border-muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
   flex-shrink: 0;
 }
 
 .ld-panel.is-compact .ld-header {
-  padding: 9px 10px 8px;
-  gap: 7px;
+  padding: 8px 10px;
+  gap: 6px;
 }
 
 .ld-header-top {
@@ -768,8 +830,9 @@ defineExpose({
 }
 
 .ld-title-group {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
@@ -783,29 +846,16 @@ defineExpose({
 }
 
 .ld-status-dot.is-live {
-  background: var(--accent-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-success) 22%, transparent);
+  background: var(--obs-status-ok, var(--accent-success));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--obs-status-ok, var(--accent-success)) 20%, transparent);
 }
 
 .ld-status-dot.is-approval {
-  background: var(--accent-warning);
+  background: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-status-dot.is-failed {
-  background: var(--accent-danger);
-}
-
-.ld-title-icon {
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.ld-title {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  white-space: nowrap;
+  background: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-status-pill {
@@ -815,24 +865,52 @@ defineExpose({
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: var(--bg-status-neutral);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 .ld-status-pill.is-live {
-  background: var(--bg-status-ok);
-  color: var(--accent-success);
+  background: var(--obs-status-ok-soft, color-mix(in srgb, var(--accent-success) 12%, transparent));
+  color: var(--obs-status-ok, var(--accent-success));
 }
 
 .ld-status-pill.is-approval {
-  background: var(--bg-status-warn);
-  color: var(--accent-warning);
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 13%, transparent));
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-status-pill.is-failed {
-  background: var(--bg-status-danger);
-  color: var(--accent-danger);
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 12%, transparent));
+  color: var(--obs-status-danger, var(--accent-danger));
+}
+
+.ld-phase-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.ld-phase-step {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: transparent;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.ld-phase-step.is-done {
+  color: var(--text-secondary);
+}
+
+.ld-phase-step.is-active {
+  background: var(--bg-primary-button);
+  color: var(--text-on-primary);
+  font-weight: 600;
 }
 
 .ld-header-actions {
@@ -846,10 +924,9 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 136px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border-muted);
+  max-width: 140px;
+  padding: 1px 6px;
+  border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-muted);
   font-size: 10.5px;
@@ -861,27 +938,25 @@ defineExpose({
 
 .ld-mode-pill.is-explainer {
   color: var(--text-secondary);
-  border-color: var(--border-default);
 }
 
 .ld-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border-radius: var(--radius-control, 6px);
-  border: 1px solid transparent;
+  border-radius: 5px;
+  border: 0;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
 }
 
 .ld-icon-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--bg-secondary);
   color: var(--text-primary);
-  border-color: var(--border-muted);
 }
 
 .ld-icon-btn:disabled {
@@ -889,56 +964,38 @@ defineExpose({
   cursor: not-allowed;
 }
 
-.ld-headline-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .ld-headline {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.45;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
   word-break: break-word;
 }
 
-.ld-phase-stepper {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.ld-phase-step {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  transition:
-    background-color var(--duration-tap, 120ms) var(--ease-snappy, ease),
-    color var(--duration-tap, 120ms) var(--ease-snappy, ease);
-}
-
-.ld-phase-step.is-done {
-  color: var(--text-secondary);
-}
-
-.ld-phase-step.is-active {
-  background: var(--bg-primary-button);
-  color: var(--text-on-primary);
-  font-weight: 600;
-}
-
-/* ── Context Waterline ─────────────────────────────────────────── */
+/* ── Clickable Mini Context Waterline ──────────────────────────── */
 .ld-waterline {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  padding: 5px 7px;
+  margin: 0 -7px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease;
+}
+
+.ld-waterline.is-interactive {
+  cursor: pointer;
+}
+
+.ld-waterline.is-interactive:hover {
+  background: var(--bg-secondary);
+}
+
+.ld-waterline.is-interactive:focus-visible {
+  outline: 2px solid var(--border-input-focus);
+  outline-offset: 1px;
 }
 
 .ld-waterline-head {
@@ -950,11 +1007,24 @@ defineExpose({
 }
 
 .ld-waterline-label {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
 .ld-waterline-tokens {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ld-compaction-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 10.5px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -968,45 +1038,44 @@ defineExpose({
 }
 
 .ld-waterline-pct.is-warn {
-  color: var(--accent-warning);
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-waterline-pct.is-critical {
-  color: var(--accent-danger);
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
-.ld-compaction-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--bg-status-recovery, var(--bg-tertiary));
-  color: var(--text-secondary);
-  font-size: 10.5px;
-  font-weight: 600;
+.ld-waterline-jump-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.12s ease, color 0.12s ease;
+}
+
+.ld-waterline.is-interactive:hover .ld-waterline-jump-icon {
+  color: var(--text-primary);
+  transform: translate(1px, -1px);
 }
 
 .ld-waterline-track {
   position: relative;
   height: 5px;
   border-radius: 999px;
-  background: var(--bg-tertiary);
+  background: var(--bg-tertiary, var(--bg-secondary));
 }
 
 .ld-waterline-fill {
   height: 100%;
   border-radius: 999px;
-  background: var(--accent-primary);
+  background: var(--text-primary);
   transition: width var(--duration-panel, 240ms) var(--ease-snappy, ease);
 }
 
 .ld-waterline-fill.is-warn {
-  background: var(--accent-warning);
+  background: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-waterline-fill.is-critical {
-  background: var(--accent-danger);
+  background: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-compaction-marker {
@@ -1017,7 +1086,7 @@ defineExpose({
   padding: 0;
   border-radius: 999px;
   border: 1.5px solid var(--bg-primary);
-  background: var(--accent-warning);
+  background: var(--obs-status-warn, var(--accent-warning));
   transform: translate(-50%, -50%);
   cursor: pointer;
   transition: transform var(--duration-tap, 120ms) var(--ease-spring-soft, ease);
@@ -1032,11 +1101,12 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
   background: var(--bg-secondary);
   font-size: 11px;
   color: var(--text-secondary);
+  cursor: default;
 }
 
 .ld-compaction-range {
@@ -1072,8 +1142,8 @@ defineExpose({
   gap: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: var(--bg-status-neutral);
+  border: 0;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
@@ -1081,19 +1151,17 @@ defineExpose({
 }
 
 .ld-signal-badge.is-warning {
-  background: var(--bg-status-warn);
-  color: var(--accent-warning);
-  border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 13%, transparent));
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-signal-badge.is-critical {
-  background: var(--bg-status-danger);
-  color: var(--accent-danger);
-  border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 12%, transparent));
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-signal-badge.is-active {
-  border-color: var(--border-input-focus);
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 .ld-signal-count {
@@ -1106,8 +1174,8 @@ defineExpose({
 .ld-signal-detail-list {
   list-style: none;
   margin: 0;
-  padding: 6px 8px;
-  border-radius: 7px;
+  padding: 5px 8px;
+  border-radius: 5px;
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
@@ -1133,10 +1201,10 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 13px 28px;
+  padding: 12px 12px 28px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .ld-panel.is-compact .ld-scroll-body {
@@ -1148,22 +1216,22 @@ defineExpose({
 .ld-sentinels {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
 }
 
 .ld-sentinel-item {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 9px 11px;
-  border-radius: var(--radius-card, 10px);
-  border: 1px solid color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
-  background: var(--bg-status-warn);
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 11%, var(--bg-secondary)));
 }
 
 .ld-sentinel-item.is-critical {
-  border-color: color-mix(in srgb, var(--accent-danger) 42%, var(--border-muted));
-  background: var(--bg-status-danger);
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 11%, var(--bg-secondary)));
 }
 
 .ld-sentinel-head {
@@ -1174,17 +1242,17 @@ defineExpose({
 }
 
 .ld-sentinel-icon {
-  color: var(--accent-warning);
+  color: var(--obs-status-warn, var(--accent-warning));
   flex-shrink: 0;
 }
 
 .ld-sentinel-item.is-critical .ld-sentinel-icon {
-  color: var(--accent-danger);
+  color: var(--obs-status-danger, var(--accent-danger));
 }
 
 .ld-sentinel-title {
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
@@ -1192,10 +1260,10 @@ defineExpose({
 
 .ld-sentinel-target {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-secondary);
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: 1px 5px;
+  border-radius: 4px;
   background: var(--bg-primary);
   flex-shrink: 0;
 }
@@ -1220,11 +1288,11 @@ defineExpose({
   align-items: center;
   gap: 5px;
   padding: 5px 10px;
-  border-radius: var(--radius-control, 6px);
+  border-radius: 6px;
   border: 0;
   background: var(--bg-primary-button);
   color: var(--text-on-primary);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
@@ -1251,12 +1319,12 @@ defineExpose({
 .ld-chapters {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .ld-chapters-waiting {
   padding: 16px 12px;
-  border-radius: var(--radius-card, 10px);
+  border-radius: 6px;
   background: var(--bg-secondary);
   text-align: center;
   font-size: 12px;
@@ -1268,7 +1336,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--obs-hairline, var(--border-muted));
 }
 
 .ld-files-summary-head {
@@ -1293,7 +1362,7 @@ defineExpose({
 .ld-files-grid {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .ld-files-item {
@@ -1301,11 +1370,14 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--bg-secondary);
+  padding: 3px 6px;
+  border-radius: 4px;
   font-size: 11.5px;
   min-width: 0;
+}
+
+.ld-files-item:hover {
+  background: var(--bg-secondary);
 }
 
 .ld-files-path {
@@ -1328,12 +1400,12 @@ defineExpose({
 }
 
 .ld-diff-add {
-  color: var(--accent-success);
+  color: var(--obs-status-ok, var(--accent-success));
   font-weight: 600;
 }
 
 .ld-diff-del {
-  color: var(--accent-danger);
+  color: var(--obs-status-danger, var(--accent-danger));
   font-weight: 600;
 }
 
@@ -1353,7 +1425,7 @@ defineExpose({
 }
 
 .ld-empty-icon.is-warn {
-  color: var(--accent-warning);
+  color: var(--obs-status-warn, var(--accent-warning));
 }
 
 .ld-empty-icon.is-pulse {
@@ -1409,7 +1481,7 @@ defineExpose({
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--accent-success);
+  background: var(--obs-status-ok, var(--accent-success));
 }
 
 .is-spinning {
