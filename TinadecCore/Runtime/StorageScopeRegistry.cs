@@ -456,6 +456,8 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
         // Agent packs are installed once in the user scope. Project runtimes keep
         // project sessions/runs but resolve pack modes from this host-owned source.
         services.Replace(ServiceDescriptor.Singleton(_host.GetRequiredService<GlobalAgentConfiguration>()));
+        if (_host.GetService<IUiPreferencesService>() is { } uiPreferences)
+            services.Replace(ServiceDescriptor.Singleton(uiPreferences));
         var policy = new HostProjectWritePolicy(registration.AllowStorageWrite);
         services.Replace(ServiceDescriptor.Singleton<IProjectStorageWritePolicy>(policy));
         services.Replace(ServiceDescriptor.Singleton<ISecretStore>(_host.GetRequiredService<ISecretStore>()));

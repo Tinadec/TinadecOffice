@@ -39,6 +39,7 @@ public static class TinadecMcpServerEndpoints
         new("tinadec://recent-failures", "Recent Server Failures", "Recent sanitized 5xx/exception failures from ServerFailureJournal.", "application/json"),
         new("tinadec://system-health", "System Health", "Readiness checks, model cooling breaker states, and MCP live status.", "application/json"),
         new("tinadec://context-memory", "Context & Memory Policy", "Effective [context]/[memory] runtime.toml policy, hot Markdown budgets, and 3-tier strategy presets.", "application/json"),
+        new("tinadec://ui-preferences", "UI Preferences", "Effective [appearance] and [interaction] user preferences from preferences.toml.", "application/json"),
     ];
 
     public static IEndpointRouteBuilder MapTinadecMcpServerEndpoints(this IEndpointRouteBuilder app)
@@ -514,6 +515,7 @@ public static class TinadecMcpServerEndpoints
         "tinadec://recent-failures" => JsonSerializer.SerializeToElement(new { target = "recent_failures", limit = 50 }),
         "tinadec://system-health" => JsonSerializer.SerializeToElement(new { target = "system_health", limit = 50 }),
         "tinadec://context-memory" => JsonSerializer.SerializeToElement(new { target = "context_memory", limit = 50 }),
+        "tinadec://ui-preferences" => JsonSerializer.SerializeToElement(new { target = "ui_preferences" }),
         _ when uri.StartsWith("tinadec://runs/", StringComparison.OrdinalIgnoreCase) && uri.EndsWith("/replay", StringComparison.OrdinalIgnoreCase) =>
             uri["tinadec://runs/".Length..^"/replay".Length] is { Length: > 0 } runId
                 ? JsonSerializer.SerializeToElement(new { target = "run_replay", run_id = Uri.UnescapeDataString(runId) })

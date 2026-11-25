@@ -137,15 +137,20 @@ public static class CoreVirtualToolPolicy
     public const string TinadecPromptApplyToolId = "tinadec_prompt_apply";
     public const string TinadecModelProfileApplyToolId = "tinadec_model_profile_apply";
     public const string TinadecContextMemoryApplyToolId = "tinadec_context_memory_apply";
+    public const string TinadecUpdateUiPreferencesToolId = "tinadec_update_ui_preferences";
 
     public static bool IsTinadecContextMemoryApply(string? toolId) =>
         string.Equals(toolId, TinadecContextMemoryApplyToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTinadecUpdateUiPreferences(string? toolId) =>
+        string.Equals(toolId, TinadecUpdateUiPreferencesToolId, StringComparison.OrdinalIgnoreCase);
 
     public static readonly IReadOnlyList<string> TinadecConfigToolIds =
     [
         TinadecInspectToolId, TinadecAgentApplyToolId, TinadecModeApplyToolId,
         TinadecModePublishToolId, TinadecSkillApplyToolId, TinadecMcpApplyToolId,
         TinadecPromptApplyToolId, TinadecModelProfileApplyToolId, TinadecContextMemoryApplyToolId,
+        TinadecUpdateUiPreferencesToolId,
     ];
 
     public static bool IsTinadecConfig(string? toolId) =>

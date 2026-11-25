@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -71,6 +72,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
     private readonly IServerFailureReader? _failureReader;
     private readonly IContextMemoryService? _contextMemory;
     private readonly IToolExecutionCoordinator? _toolExecutions;
+    private readonly IUiPreferencesService? _uiPreferences;
 
     public TinadecConfigToolGateway(
         IAgentTopologyService topology,
@@ -94,7 +96,8 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
         ReadinessService? readiness = null,
         IServerFailureReader? failureReader = null,
         IContextMemoryService? contextMemory = null,
-        IToolExecutionCoordinator? toolExecutions = null)
+        IToolExecutionCoordinator? toolExecutions = null,
+        IUiPreferencesService? uiPreferences = null)
     {
         _topology = topology;
         _packs = packs;
@@ -118,6 +121,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
         _failureReader = failureReader;
         _contextMemory = contextMemory;
         _toolExecutions = toolExecutions;
+        _uiPreferences = uiPreferences;
     }
 
     public async Task<ToolWireResponseDto> ExecuteAsync(
@@ -137,6 +141,7 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
             if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecPromptApplyToolId, StringComparison.OrdinalIgnoreCase)) return await PromptApplyAsync(scope, wire, ct).ConfigureAwait(false);
             if (string.Equals(toolId, CoreVirtualToolPolicy.TinadecModelProfileApplyToolId, StringComparison.OrdinalIgnoreCase)) return await ModelProfileApplyAsync(scope, wire, ct).ConfigureAwait(false);
             if (CoreVirtualToolPolicy.IsTinadecContextMemoryApply(toolId)) return await ContextMemoryApplyAsync(scope, wire, ct).ConfigureAwait(false);
+            if (CoreVirtualToolPolicy.IsTinadecUpdateUiPreferences(toolId)) return await UpdateUiPreferencesAsync(wire, ct).ConfigureAwait(false);
             return Fail(wire, "unknown_tool", $"No workbench configuration tool named '{toolId}'.");
         }
         catch (ToolSettingsException exception)
@@ -222,8 +227,10 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
                 return await InspectContextAuditAsync(scope, wire, parameters, limit, ct).ConfigureAwait(false);
             case "run_diagnostics":
                 return await InspectRunDiagnosticsAsync(scope, wire, parameters, limit, ct).ConfigureAwait(false);
+            case "ui_preferences":
+                return await InspectUiPreferencesAsync(wire, ct).ConfigureAwait(false);
             default:
-                return Fail(wire, "invalid_request", "target must be one of agents, agent, modes, mode, catalog, models, prompts, prompt_pipeline, tools, skills, mcp, external_cli, run_replay, recent_failures, system_health, context_memory, context_audit, run_diagnostics.");
+                return Fail(wire, "invalid_request", "target must be one of agents, agent, modes, mode, catalog, models, prompts, prompt_pipeline, tools, skills, mcp, external_cli, run_replay, recent_failures, system_health, context_memory, context_audit, run_diagnostics, ui_preferences.");
         }
     }
 
@@ -3218,6 +3225,169 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
         catch (InvalidOperationException ex)
         {
             return Fail(wire, "conflict", ex.Message);
+        }
+    }
+
+    // ── tinadec_update_ui_preferences & inspect ui_preferences ──
+
+    private static readonly HashSet<string> AllowedUiPreferencesToolRootKeys = new(StringComparer.Ordinal)
+    {
+        "appearance", "interaction", "reset_defaults", "expected_content_hash", "project_id",
+    };
+
+    private static readonly JsonSerializerOptions StrictUiPreferencesJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    };
+
+    private async Task<ToolWireResponseDto> InspectUiPreferencesAsync(ToolWireRequestDto wire, CancellationToken ct)
+    {
+        if (_uiPreferences is null)
+            return Fail(wire, "service_unavailable", "UI preferences service is not available in this host.");
+
+        var doc = await _uiPreferences.GetAsync(ct).ConfigureAwait(false);
+        return Ok(wire, doc);
+    }
+
+    private async Task<ToolWireResponseDto> UpdateUiPreferencesAsync(ToolWireRequestDto wire, CancellationToken ct)
+    {
+        if (_uiPreferences is null)
+            return Fail(wire, "service_unavailable", "UI preferences service is not available in this host.");
+
+        var parameters = wire.Params ?? default;
+        if (parameters.ValueKind != JsonValueKind.Object)
+            return Fail(wire, "invalid_request", "tinadec_update_ui_preferences requires a JSON object.");
+
+        foreach (var prop in parameters.EnumerateObject())
+        {
+            if (!AllowedUiPreferencesToolRootKeys.Contains(prop.Name))
+                return Fail(wire, "invalid_request", $"Unknown property '{prop.Name}' in tinadec_update_ui_preferences.");
+        }
+
+        if (parameters.TryGetProperty("project_id", out var projectEl) && projectEl.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+            return Fail(wire, "invalid_request", "'project_id' must be a string when provided.");
+
+        string? expectedHash = null;
+        if (parameters.TryGetProperty("expected_content_hash", out var hashEl))
+        {
+            if (hashEl.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                return Fail(wire, "invalid_request", "'expected_content_hash' must be a string when provided.");
+            expectedHash = hashEl.ValueKind == JsonValueKind.String ? hashEl.GetString() : null;
+        }
+
+        var resetDefaults = false;
+        if (parameters.TryGetProperty("reset_defaults", out var resetEl))
+        {
+            if (resetEl.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+                return Fail(wire, "invalid_request", "'reset_defaults' must be a boolean when provided.");
+            resetDefaults = resetEl.ValueKind == JsonValueKind.True;
+        }
+
+        UiPreferencesAppearancePatchDto? appearancePatch = null;
+        if (parameters.TryGetProperty("appearance", out var appEl) && appEl.ValueKind != JsonValueKind.Null)
+        {
+            if (appEl.ValueKind != JsonValueKind.Object)
+                return Fail(wire, "invalid_request", "'appearance' must be a JSON object.");
+
+            foreach (var prop in appEl.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.String)
+                    return Fail(wire, "invalid_request", $"appearance.{prop.Name} must be a non-null string.");
+            }
+
+            try
+            {
+                appearancePatch = appEl.Deserialize<UiPreferencesAppearancePatchDto>(StrictUiPreferencesJson);
+            }
+            catch (JsonException ex)
+            {
+                return Fail(wire, "invalid_request", ex.Message);
+            }
+        }
+
+        UiPreferencesInteractionPatchDto? interactionPatch = null;
+        if (parameters.TryGetProperty("interaction", out var intEl) && intEl.ValueKind != JsonValueKind.Null)
+        {
+            if (intEl.ValueKind != JsonValueKind.Object)
+                return Fail(wire, "invalid_request", "'interaction' must be a JSON object.");
+
+            foreach (var prop in intEl.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.String)
+                    return Fail(wire, "invalid_request", $"interaction.{prop.Name} must be a non-null string.");
+            }
+
+            try
+            {
+                interactionPatch = intEl.Deserialize<UiPreferencesInteractionPatchDto>(StrictUiPreferencesJson);
+            }
+            catch (JsonException ex)
+            {
+                return Fail(wire, "invalid_request", ex.Message);
+            }
+        }
+
+        var hasAppearanceField = appearancePatch is not null && (
+            appearancePatch.Theme is not null
+            || appearancePatch.Accent is not null
+            || appearancePatch.CustomAccentHex is not null
+            || appearancePatch.PanelEffect is not null
+            || appearancePatch.WorkspaceView is not null
+            || appearancePatch.WorkspaceFolderTone is not null);
+
+        var hasInteractionField = interactionPatch is not null && (
+            interactionPatch.WorkspaceDropAction is not null
+            || interactionPatch.SpatialPromoteMode is not null
+            || interactionPatch.ReducedMotion is not null);
+
+        if (!resetDefaults && !hasAppearanceField && !hasInteractionField)
+            return Fail(wire, "invalid_request", "tinadec_update_ui_preferences requires reset_defaults=true or at least one appearance/interaction field.");
+
+        try
+        {
+            UiPreferencesDocumentDto updated;
+            if (resetDefaults)
+            {
+                var baseApp = UiPreferencesAppearanceDto.CreateDefaults();
+                var baseInt = UiPreferencesInteractionDto.CreateDefaults();
+                updated = await _uiPreferences.PutAsync(new UiPreferencesPutRequestDto
+                {
+                    ExpectedContentHash = expectedHash,
+                    ResetDefaults = true,
+                    Appearance = new UiPreferencesAppearanceDto
+                    {
+                        Theme = appearancePatch?.Theme ?? baseApp.Theme,
+                        Accent = appearancePatch?.Accent ?? baseApp.Accent,
+                        CustomAccentHex = appearancePatch?.CustomAccentHex ?? baseApp.CustomAccentHex,
+                        PanelEffect = appearancePatch?.PanelEffect ?? baseApp.PanelEffect,
+                        WorkspaceView = appearancePatch?.WorkspaceView ?? baseApp.WorkspaceView,
+                        WorkspaceFolderTone = appearancePatch?.WorkspaceFolderTone ?? baseApp.WorkspaceFolderTone,
+                    },
+                    Interaction = new UiPreferencesInteractionDto
+                    {
+                        WorkspaceDropAction = interactionPatch?.WorkspaceDropAction ?? baseInt.WorkspaceDropAction,
+                        SpatialPromoteMode = interactionPatch?.SpatialPromoteMode ?? baseInt.SpatialPromoteMode,
+                        ReducedMotion = interactionPatch?.ReducedMotion ?? baseInt.ReducedMotion,
+                    },
+                }, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                updated = await _uiPreferences.PatchAsync(new UiPreferencesPatchRequestDto
+                {
+                    ExpectedContentHash = expectedHash,
+                    Appearance = appearancePatch,
+                    Interaction = interactionPatch,
+                }, ct).ConfigureAwait(false);
+            }
+
+            return Ok(wire, updated);
+        }
+        catch (ConfigurationDocumentException ex)
+        {
+            return Fail(wire, ex.Code, ex.Message, ex.Diagnostics);
         }
     }
 

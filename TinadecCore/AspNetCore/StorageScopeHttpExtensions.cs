@@ -61,7 +61,9 @@ public static class StorageScopeHttpExtensions
         var path = context.Request.Path.Value ?? string.Empty;
         var companionPath = path.StartsWith("/api/v1/companions", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/companion-", StringComparison.OrdinalIgnoreCase);
-        var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs") || companionPath
+        var id = context.Request.Path.StartsWithSegments("/api/v1/agent-packs")
+            || context.Request.Path.StartsWithSegments("/api/v1/preferences")
+            || companionPath
             ? "user"
             : ids.Count == 0 ? "user" : ids.ToString();
         try

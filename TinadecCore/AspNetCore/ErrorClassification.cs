@@ -73,9 +73,10 @@ public static class ErrorClassification
             "configuration_invalid" or "configuration_missing" or "configuration_link_rejected"
                 or "configuration_scope_mismatch" or "configuration_projection_invalid"
                 or "configuration_source_reference" or "configuration_unique_filter_unsupported"
+                or "preferences_invalid"
                 => new(UserActionRequired, false, [ActionKind.OpenSettings, ActionKind.Reload]),
             // A concurrent editor won the write; re-reading and re-applying is the fix.
-            "configuration_conflict" or "configuration_changed_during_admission"
+            "configuration_conflict" or "configuration_changed_during_admission" or "preferences_conflict"
                 => new(Retryable, true, [ActionKind.Reload]),
             "configuration_restart_required" => new(UserActionRequired, false, [ActionKind.OpenSettings]),
 

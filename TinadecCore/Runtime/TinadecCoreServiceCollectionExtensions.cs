@@ -89,6 +89,8 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ISessionTopology, SessionTopologyService>();
         services.AddTinadecSpatialBoard();
         services.AddTinadecProjectBoard();
+        services.AddSingleton<UiPreferencesService>();
+        services.AddSingleton<IUiPreferencesService>(sp => sp.GetRequiredService<UiPreferencesService>());
         // The tinadec_* workbench tools: Tools only knows the port, Runtime owns the
         // implementation because configuration, skills, MCP and market all meet here.
         services.AddSingleton<TinadecConfigToolGateway>();

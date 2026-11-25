@@ -30,6 +30,7 @@ public static class CoreTinadecConfigTools
             + "context_memory ([context]/[memory] runtime.toml policy, hot Markdown budgets & presets), "
             + "context_audit (64-char Winnowing cross-source overlap audit with 1-based line ranges & remediation_code), "
             + "run_diagnostics (5% occupancy rot detector, compaction reconciliation & unified governance signals), "
+            + "ui_preferences ([appearance] & [interaction] preferences.toml), "
             + "run_replay, recent_failures, or system_health. Results are sanitized (no secrets).",
             InspectSchema, requiresApproval: false, risk: "low", retrySafety: "safe", confirmation: []),
         CoreVirtualToolPolicy.TinadecAgentApplyToolId => Entry(
@@ -78,6 +79,12 @@ public static class CoreTinadecConfigTools
             + "recall_fidelity, evolution_mode, core_markdown_max_tokens, companion_can_write_project_memory) or "
             + "add, supersede, revoke, or 1-click revert structured durable memory items.",
             ContextMemoryApplySchema, requiresApproval: false, risk: "high", retrySafety: "unsafe", confirmation: []),
+        CoreVirtualToolPolicy.TinadecUpdateUiPreferencesToolId => Entry(
+            CoreVirtualToolPolicy.TinadecUpdateUiPreferencesToolId,
+            "Update user-level [appearance] and [interaction] UI preferences in preferences.toml "
+            + "(theme, accent, custom_accent_hex, panel_effect, workspace_view, workspace_folder_tone, "
+            + "workspace_drop_action, spatial_promote_mode, reduced_motion, or reset_defaults) and hot-broadcast to connected Desktop clients.",
+            UpdateUiPreferencesSchema, requiresApproval: false, risk: "medium", retrySafety: "safe", confirmation: []),
         _ => throw new InvalidOperationException($"No tinadec configuration tool named '{toolId}'."),
     };
 
@@ -102,7 +109,7 @@ public static class CoreTinadecConfigTools
 
     private const string InspectSchema =
         "{\"type\":\"object\",\"properties\":{" +
-        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"tools\",\"skills\",\"mcp\",\"external_cli\",\"run_replay\",\"recent_failures\",\"system_health\",\"context_memory\",\"context_audit\",\"run_diagnostics\"],\"description\":\"What to read. 'agent' needs agent_id; 'mode' needs mode_id; 'prompt_pipeline' needs pipeline_id; 'run_replay' needs run_id (replay + frozen snapshot + invocations + prompt warnings); 'run_diagnostics' needs run_id (5% window occupancy buckets, Context Rot Detector, compaction reconciliation, and unified governance signals); 'context_audit' runs 64-char Winnowing overlap audit across workspace instructions, prompts, skills, and tool schemas (optional project_id/mode_id/agent_id/run_id); 'recent_failures' returns sanitized recent 5xx failures; 'system_health' returns ReadinessService, model cooling breakers, and MCP status; 'context_memory' reads [context]/[memory] runtime.toml policy, hot Markdown budgets & strategy presets (optional companion_id).\"}," +
+        "\"target\":{\"type\":\"string\",\"enum\":[\"agents\",\"agent\",\"modes\",\"mode\",\"catalog\",\"models\",\"prompts\",\"prompt_pipeline\",\"tools\",\"skills\",\"mcp\",\"external_cli\",\"run_replay\",\"recent_failures\",\"system_health\",\"context_memory\",\"context_audit\",\"run_diagnostics\",\"ui_preferences\"],\"description\":\"What to read. 'agent' needs agent_id; 'mode' needs mode_id; 'prompt_pipeline' needs pipeline_id; 'run_replay' needs run_id (replay + frozen snapshot + invocations + prompt warnings); 'run_diagnostics' needs run_id (5% window occupancy buckets, Context Rot Detector, compaction reconciliation, and unified governance signals); 'context_audit' runs 64-char Winnowing overlap audit across workspace instructions, prompts, skills, and tool schemas (optional project_id/mode_id/agent_id/run_id); 'recent_failures' returns sanitized recent 5xx failures; 'system_health' returns ReadinessService, model cooling breakers, and MCP status; 'context_memory' reads [context]/[memory] runtime.toml policy, hot Markdown budgets & strategy presets (optional companion_id); 'ui_preferences' reads user [appearance]/[interaction] preferences.toml.\"}," +
         "\"agent_id\":{\"type\":\"string\",\"description\":\"Agent id (GUID) or slug, required for target=agent and optional filter for target=context_audit.\"}," +
         "\"mode_id\":{\"type\":\"string\",\"description\":\"Mode id (GUID) or slug, required for target=mode and optional filter for target=context_audit.\"}," +
         "\"pipeline_id\":{\"type\":\"string\",\"description\":\"Prompt pipeline id (GUID) or slug, required for target=prompt_pipeline.\"}," +
@@ -184,4 +191,24 @@ public static class CoreTinadecConfigTools
         "\"expected_content_hash\":{\"type\":\"string\",\"description\":\"Optional optimistic SHA-256 hash when updating policy.\"}," +
         "\"payload\":{\"type\":\"object\",\"description\":\"Optional alias for policy or memory object fields.\"}" +
         "},\"required\":[\"action\"],\"additionalProperties\":false}";
+
+    private const string UpdateUiPreferencesSchema =
+        "{\"type\":\"object\",\"properties\":{" +
+        "\"appearance\":{\"type\":\"object\",\"properties\":{" +
+        "\"theme\":{\"type\":\"string\",\"enum\":[\"dark\",\"light\",\"system\"]}," +
+        "\"accent\":{\"type\":\"string\",\"enum\":[\"monochrome\",\"warm\",\"dynamic\",\"custom\",\"blue\",\"green\",\"orange\",\"purple\",\"pink\",\"red\",\"cyan\",\"yellow\"]}," +
+        "\"custom_accent_hex\":{\"type\":\"string\",\"pattern\":\"^#[0-9a-fA-F]{6}$\"}," +
+        "\"panel_effect\":{\"type\":\"string\",\"enum\":[\"solid\",\"translucent\",\"blur\",\"opaque\"]}," +
+        "\"workspace_view\":{\"type\":\"string\",\"enum\":[\"grid\",\"list\"]}," +
+        "\"workspace_folder_tone\":{\"type\":\"string\",\"enum\":[\"amber\",\"teal\",\"sky\",\"coral\",\"frost\"]}" +
+        "},\"additionalProperties\":false}," +
+        "\"interaction\":{\"type\":\"object\",\"properties\":{" +
+        "\"workspace_drop_action\":{\"type\":\"string\",\"enum\":[\"link\",\"copy\",\"ask\"]}," +
+        "\"spatial_promote_mode\":{\"type\":\"string\",\"enum\":[\"merge\",\"split\",\"parent_children\",\"merge_single\",\"split_many\",\"parent_with_children\"]}," +
+        "\"reduced_motion\":{\"type\":\"string\",\"enum\":[\"system\",\"on\",\"off\"]}" +
+        "},\"additionalProperties\":false}," +
+        "\"reset_defaults\":{\"type\":\"boolean\",\"description\":\"When true, resets preferences.toml to canonical defaults before applying any supplied fields.\"}," +
+        "\"expected_content_hash\":{\"type\":\"string\",\"description\":\"Optional optimistic sha256:<hex> content_hash from tinadec_inspect or tinadec://ui-preferences.\"}," +
+        "\"project_id\":{\"type\":\"string\",\"description\":\"Optional host scope project GUID (ignored for user-level preferences.toml).\"}" +
+        "},\"additionalProperties\":false}";
 }
