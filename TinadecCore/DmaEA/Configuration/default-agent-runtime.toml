@@ -144,7 +144,7 @@ enabled = true
 # Highest risk rank the auto-approve policy may release on its own:
 # low < medium < elevated < high < critical. "elevated" is never auto-approved
 # at any ceiling. Unknown values fail the runtime.toml load instead of guessing.
-risk_max = "low"
+risk_max = "medium"
 
 # Per-run ceiling on policy-minted approvals. When it is spent the call parks
 # for a person (never denied). Read-only tools also spend this budget, so raise

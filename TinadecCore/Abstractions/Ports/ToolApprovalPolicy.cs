@@ -47,7 +47,7 @@ public sealed record ToolApprovalPolicy
     public bool Enabled { get; init; } = true;
 
     /// <summary>Highest risk rank the auto policy may release without a person.</summary>
-    public string RiskMax { get; init; } = "low";
+    public string RiskMax { get; init; } = "medium";
 
     /// <summary>Auto approvals minted by policy per run before the call parks for a person.</summary>
     public int MaxPerRun { get; init; } = 32;

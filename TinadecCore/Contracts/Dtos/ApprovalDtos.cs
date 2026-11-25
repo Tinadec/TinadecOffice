@@ -2,6 +2,47 @@ using System.Text.Json.Serialization;
 
 namespace TinadecCore.Contracts.Dtos;
 
+/// <summary>Read-only effective approval policy summary returned by the control plane.</summary>
+public sealed class ApprovalPolicySummaryDto
+{
+    [JsonPropertyName("policy_version")]
+    public string PolicyVersion { get; init; } = "tool-approval-v1";
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("risk_max")]
+    public string RiskMax { get; init; } = "medium";
+
+    [JsonPropertyName("delegated_risk_max")]
+    public string DelegatedRiskMax { get; init; } = "medium";
+
+    [JsonPropertyName("max_per_run")]
+    public int MaxPerRun { get; init; }
+
+    [JsonPropertyName("release_read_only_in_ask_mode")]
+    public bool ReleaseReadOnlyInAskMode { get; init; }
+
+    [JsonPropertyName("human_only_tools")]
+    public IReadOnlyList<string> HumanOnlyTools { get; init; } = [];
+
+    [JsonPropertyName("delegation_blocked_tools")]
+    public IReadOnlyList<string> DelegationBlockedTools { get; init; } = [];
+}
+
+/// <summary>Optional atomic standing rule to create or reuse when approving a pending request.</summary>
+public sealed class ApprovalRememberRuleInputDto
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = string.Empty;
+
+    [JsonPropertyName("pattern")]
+    public string? Pattern { get; init; }
+
+    [JsonPropertyName("scope")]
+    public string? Scope { get; init; }
+}
+
 /// <summary>Human decision on a pending approval.</summary>
 public sealed class ApprovalDecisionRequestDto
 {
@@ -21,6 +62,88 @@ public sealed class ApprovalDecisionRequestDto
     /// </summary>
     [JsonPropertyName("scope")]
     public string? Scope { get; init; }
+
+    [JsonPropertyName("remember_rule")]
+    public ApprovalRememberRuleInputDto? RememberRule { get; init; }
+}
+
+/// <summary>Decision outcome returned by <c>POST /api/v1/approvals/{id}/decision</c>.</summary>
+public sealed class ApprovalDecisionResponseDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    [JsonPropertyName("decided_at")]
+    public DateTimeOffset? DecidedAt { get; init; }
+
+    [JsonPropertyName("scope")]
+    public string? Scope { get; init; }
+
+    [JsonPropertyName("run_scope_released")]
+    public int? RunScopeReleased { get; init; }
+
+    [JsonPropertyName("pre_authorization_id")]
+    public Guid? PreAuthorizationId { get; init; }
+
+    [JsonPropertyName("capability_grant_id")]
+    public Guid? CapabilityGrantId { get; init; }
+
+    [JsonPropertyName("created_rule_id")]
+    public Guid? CreatedRuleId { get; init; }
+
+    [JsonPropertyName("decision_reason")]
+    public string? DecisionReason { get; init; }
+
+    [JsonPropertyName("user_tool_action_id")]
+    public Guid? UserToolActionId { get; init; }
+
+    [JsonPropertyName("action")]
+    public object? Action { get; init; }
+}
+
+/// <summary>Batch human decision over up to 50 pending approvals.</summary>
+public sealed class BatchApprovalDecisionRequestDto
+{
+    [JsonPropertyName("approval_ids")]
+    public IReadOnlyList<Guid> ApprovalIds { get; init; } = [];
+
+    [JsonPropertyName("decision")]
+    public string Decision { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+
+    [JsonPropertyName("scope")]
+    public string? Scope { get; init; }
+}
+
+/// <summary>Per-approval outcome in a batch decision response.</summary>
+public sealed class BatchApprovalDecisionItemDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+
+    [JsonPropertyName("ok")]
+    public bool Ok { get; init; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [JsonPropertyName("error_code")]
+    public string? ErrorCode { get; init; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; init; }
+}
+
+/// <summary>Batch approval decision response.</summary>
+public sealed class BatchApprovalDecisionResponseDto
+{
+    [JsonPropertyName("results")]
+    public IReadOnlyList<BatchApprovalDecisionItemDto> Results { get; init; } = [];
 }
 
 /// <summary>

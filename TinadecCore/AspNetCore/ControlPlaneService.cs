@@ -54,6 +54,10 @@ public sealed class ControlPlaneService
     private readonly GlobalAgentConfiguration? _globalAgentConfig;
     private readonly ISessionLocator? _sessions;
     private readonly IToolSkillResourceService? _skills;
+    private readonly IToolApprovalPolicySource? _approvalPolicySource;
+    private readonly Microsoft.Extensions.Options.IOptions<TinadecCore.Governance.AutoApproveOptions> _autoApproveOptions;
+    private readonly IApprovalRules? _approvalRules;
+    private readonly IApprovalGateLedger? _approvalGateLedger;
 
     public ControlPlaneService(IDbContextFactory<ModelControlDbContext> models, IDbContextFactory<PromptControlDbContext> prompts,
         IDbContextFactory<LifecycleDbContext> lifecycle,
@@ -68,7 +72,11 @@ public sealed class ControlPlaneService
         IDbContextFactory<AgentConfigurationDbContext>? agentConfig = null,
         GlobalAgentConfiguration? globalAgentConfig = null,
         ISessionLocator? sessions = null,
-        IToolSkillResourceService? skills = null)
+        IToolSkillResourceService? skills = null,
+        IToolApprovalPolicySource? approvalPolicySource = null,
+        Microsoft.Extensions.Options.IOptions<TinadecCore.Governance.AutoApproveOptions>? autoApproveOptions = null,
+        IApprovalRules? approvalRules = null,
+        IApprovalGateLedger? approvalGateLedger = null)
     {
         _models = models; _prompts = prompts; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _userActions = userActions; _runs = runs; _engine = engine; _opencode = opencode; _acp = acp; _harnessBinaries = harnessBinaries; _terminalHost = terminalHost;
         _modelProfileCatalog = modelProfileCatalog;
@@ -78,6 +86,10 @@ public sealed class ControlPlaneService
         _globalAgentConfig = globalAgentConfig;
         _sessions = sessions;
         _skills = skills;
+        _approvalPolicySource = approvalPolicySource;
+        _autoApproveOptions = autoApproveOptions ?? Microsoft.Extensions.Options.Options.Create(new TinadecCore.Governance.AutoApproveOptions());
+        _approvalRules = approvalRules;
+        _approvalGateLedger = approvalGateLedger;
     }
 
     private TenantContext Tenant => _tenant.Current;
@@ -1879,6 +1891,22 @@ public sealed class ControlPlaneService
         }, statusCode: 201);
     }
 
+    public IResult GetApprovalPolicy()
+    {
+        var effective = _approvalPolicySource?.Current ?? _autoApproveOptions.Value.ToPolicy();
+        return Results.Ok(new ApprovalPolicySummaryDto
+        {
+            PolicyVersion = ToolApprovalPolicy.PolicyVersion,
+            Enabled = effective.Enabled,
+            RiskMax = effective.RiskMax,
+            DelegatedRiskMax = effective.DelegatedRiskMax,
+            MaxPerRun = effective.MaxPerRun,
+            ReleaseReadOnlyInAskMode = effective.ReleaseReadOnlyInAskMode,
+            HumanOnlyTools = effective.HumanOnlyTools,
+            DelegationBlockedTools = effective.DelegationBlockedTools
+        });
+    }
+
     public Task<IResult> GetApproval(Guid id, CancellationToken ct) =>
         SqliteTransientRetry.ReadAsync(token => ReadApprovalAsync(id, token), ct);
 
@@ -1902,29 +1930,281 @@ public sealed class ControlPlaneService
         var parkEvidence = await LoadParkEvidenceAsync(db, [id], ct);
         return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id), parkSessionId));
     }
+
+    private sealed record SingleApprovalDecisionResult(
+        int StatusCode,
+        ApprovalDecisionResponseDto? Response,
+        string? ErrorCode,
+        string? ErrorMessage,
+        IReadOnlySet<Guid>? ReleasedSiblingIds = null);
+
     public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
     {
-        var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
-        if (IsRunScope(input.Scope))
+        var outcome = await DecideApprovalCoreAsync(id, input, ct).ConfigureAwait(false);
+        if (outcome.Response is not null)
         {
-            var spec = permission?.Request.Claim.Resource == "tool://" + CoreVirtualToolPolicy.SpecProposeToolId;
-            if (!spec)
-            {
-                await using var reviewDb = await _lifecycle.CreateDbContextAsync(ct);
-                spec = await (from approval in reviewDb.ApprovalRequests.AsNoTracking()
-                              join execution in reviewDb.ToolExecutions.AsNoTracking() on approval.ExecutionId equals execution.Id
-                              where approval.Id == id && approval.TenantId == Tenant.TenantId && approval.WorkspaceId == Tenant.WorkspaceId
-                                  && execution.ToolId == CoreVirtualToolPolicy.SpecProposeToolId
-                              select approval.Id).AnyAsync(ct);
-            }
-            if (spec) return Results.BadRequest(new { code = "spec_confirmation_scope", message = "Confirm this specification document once. Each subsequent document needs its own review." });
+            return outcome.StatusCode == StatusCodes.Status200OK
+                ? Results.Ok(outcome.Response)
+                : Results.Json(outcome.Response, statusCode: outcome.StatusCode);
         }
+        return outcome.StatusCode switch
+        {
+            StatusCodes.Status404NotFound => Results.NotFound(new { code = outcome.ErrorCode ?? "not_found", message = outcome.ErrorMessage ?? "Approval was not found." }),
+            StatusCodes.Status409Conflict => Results.Conflict(new { code = outcome.ErrorCode ?? "conflict", message = outcome.ErrorMessage ?? "Approval is no longer actionable." }),
+            StatusCodes.Status400BadRequest => Results.BadRequest(new { code = outcome.ErrorCode ?? "invalid_request", message = outcome.ErrorMessage ?? "Invalid approval decision request." }),
+            _ => Results.Json(new { code = outcome.ErrorCode ?? "request_failed", message = outcome.ErrorMessage ?? "Approval decision failed." }, statusCode: outcome.StatusCode)
+        };
+    }
+
+    public async Task<IResult> BatchDecideApprovals(BatchApprovalDecisionRequestDto input, CancellationToken ct)
+    {
+        if (input?.ApprovalIds is not { Count: >= 1 and <= 50 })
+        {
+            return Results.BadRequest(new
+            {
+                code = "invalid_batch_size",
+                message = "approval_ids must contain between 1 and 50 approval IDs."
+            });
+        }
+        if (!TryParseDecision(input.Decision, out var batchApprove))
+        {
+            return Results.BadRequest(new
+            {
+                code = "invalid_decision",
+                message = "decision must be 'approved' or 'rejected'."
+            });
+        }
+        if (!TryParseScope(input.Scope, out _))
+        {
+            return Results.BadRequest(new
+            {
+                code = "invalid_scope",
+                message = "scope must be 'once' or 'run'."
+            });
+        }
+
+        var distinctIds = input.ApprovalIds.Distinct().ToList();
+        var results = new List<BatchApprovalDecisionItemDto>(distinctIds.Count);
+        var releasedInBatch = new HashSet<Guid>();
+
+        foreach (var approvalId in distinctIds)
+        {
+            if (approvalId == Guid.Empty)
+            {
+                results.Add(new BatchApprovalDecisionItemDto
+                {
+                    Id = approvalId,
+                    Ok = false,
+                    ErrorCode = "not_found",
+                    Error = "Approval was not found."
+                });
+                continue;
+            }
+            if (batchApprove && releasedInBatch.Contains(approvalId))
+            {
+                results.Add(new BatchApprovalDecisionItemDto
+                {
+                    Id = approvalId,
+                    Ok = true,
+                    Status = "approved"
+                });
+                continue;
+            }
+
+            var itemOutcome = await DecideApprovalCoreAsync(approvalId, new ApprovalDecisionRequestDto
+            {
+                Decision = input.Decision,
+                Reason = input.Reason,
+                Scope = input.Scope
+            }, ct).ConfigureAwait(false);
+
+            if (itemOutcome.Response is { } response)
+            {
+                if (itemOutcome.ReleasedSiblingIds is { Count: > 0 } siblings)
+                {
+                    releasedInBatch.UnionWith(siblings);
+                }
+                results.Add(new BatchApprovalDecisionItemDto
+                {
+                    Id = approvalId,
+                    Ok = true,
+                    Status = response.Status
+                });
+            }
+            else
+            {
+                results.Add(new BatchApprovalDecisionItemDto
+                {
+                    Id = approvalId,
+                    Ok = false,
+                    ErrorCode = itemOutcome.ErrorCode ?? "request_failed",
+                    Error = itemOutcome.ErrorMessage ?? "The approval decision failed."
+                });
+            }
+        }
+
+        return Results.Ok(new BatchApprovalDecisionResponseDto { Results = results });
+    }
+
+    private async Task<SingleApprovalDecisionResult> DecideApprovalCoreAsync(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
+    {
+        if (input is null || !TryParseDecision(input.Decision, out var approve))
+        {
+            return new SingleApprovalDecisionResult(
+                StatusCodes.Status400BadRequest,
+                null,
+                "invalid_decision",
+                "decision must be 'approved' or 'rejected'.");
+        }
+        if (!TryParseScope(input.Scope, out var requestedRunScope))
+        {
+            return new SingleApprovalDecisionResult(
+                StatusCodes.Status400BadRequest,
+                null,
+                "invalid_scope",
+                "scope must be 'once' or 'run'.");
+        }
+
+        var trimmedReason = string.IsNullOrWhiteSpace(input.Reason) ? null : input.Reason.Trim();
+        var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
+        ApprovalRequestRecord? approvalRow = null;
+        ToolExecutionRecord? executionRow = null;
+        Guid? resolvedSessionId = null;
+        Guid? resolvedRunId = null;
+        var resolvedToolId = string.Empty;
+        var resolvedRisk = "low";
+        string? projectedCommand = null;
+        var isSpecPropose = false;
+
+        await using (var inspectDb = await _lifecycle.CreateDbContextAsync(ct).ConfigureAwait(false))
+        {
+            if (permission is not null)
+            {
+                var resource = permission.Request.Claim.Resource;
+                resolvedToolId = resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
+                    ? resource["tool://".Length..]
+                    : resource;
+                resolvedRisk = permission.Request.Risk;
+                resolvedRunId = permission.Request.RunId;
+                executionRow = await inspectDb.ToolExecutions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.PermissionRequestId == id
+                        && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct)
+                    .ConfigureAwait(false);
+                if (executionRow is not null)
+                {
+                    if (executionRow.SessionId != Guid.Empty) resolvedSessionId = executionRow.SessionId;
+                    if (ApprovalEvidenceProjector.TryDecode(executionRow.ArgumentsDigest, out var execEv))
+                        projectedCommand = execEv.Command;
+                }
+                if (resolvedSessionId is null && resolvedRunId is { } pRunId)
+                {
+                    var runSession = await inspectDb.Runs.AsNoTracking()
+                        .Where(x => x.Id == pRunId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId)
+                        .Select(x => (Guid?)x.SessionId)
+                        .SingleOrDefaultAsync(ct)
+                        .ConfigureAwait(false);
+                    if (runSession is { } rs && rs != Guid.Empty) resolvedSessionId = rs;
+                }
+                isSpecPropose = CoreVirtualToolPolicy.IsSpecPropose(resolvedToolId)
+                    || (executionRow is not null && CoreVirtualToolPolicy.IsSpecPropose(executionRow.ToolId));
+            }
+            else
+            {
+                approvalRow = await inspectDb.ApprovalRequests.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == id
+                        && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct)
+                    .ConfigureAwait(false);
+                if (approvalRow is null)
+                {
+                    return new SingleApprovalDecisionResult(StatusCodes.Status404NotFound, null, "not_found", "Approval was not found.");
+                }
+                if (approvalRow.ExecutionId is { } execId)
+                {
+                    executionRow = await inspectDb.ToolExecutions.AsNoTracking()
+                        .SingleOrDefaultAsync(x => x.Id == execId
+                            && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct)
+                        .ConfigureAwait(false);
+                }
+                resolvedToolId = !string.IsNullOrWhiteSpace(approvalRow.ToolId)
+                    ? approvalRow.ToolId
+                    : (executionRow?.ToolId ?? string.Empty);
+                resolvedRisk = !string.IsNullOrWhiteSpace(approvalRow.Risk)
+                    ? approvalRow.Risk
+                    : (executionRow?.Risk ?? "low");
+                resolvedRunId = approvalRow.RunId ?? executionRow?.RunId;
+                resolvedSessionId = approvalRow.SessionId is { } aSid && aSid != Guid.Empty
+                    ? aSid
+                    : (executionRow is { } ex && ex.SessionId != Guid.Empty ? ex.SessionId : null);
+                if (resolvedSessionId is null && resolvedRunId is { } aRunId)
+                {
+                    var runSession = await inspectDb.Runs.AsNoTracking()
+                        .Where(x => x.Id == aRunId && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId)
+                        .Select(x => (Guid?)x.SessionId)
+                        .SingleOrDefaultAsync(ct)
+                        .ConfigureAwait(false);
+                    if (runSession is { } rs && rs != Guid.Empty) resolvedSessionId = rs;
+                }
+                if (ApprovalEvidenceProjector.TryDecode(approvalRow.ArgumentsDigest, out var appEv) && !string.IsNullOrWhiteSpace(appEv.Command))
+                {
+                    projectedCommand = appEv.Command;
+                }
+                else if (executionRow is not null && ApprovalEvidenceProjector.TryDecode(executionRow.ArgumentsDigest, out var exEv))
+                {
+                    projectedCommand = exEv.Command;
+                }
+                else if (!string.IsNullOrWhiteSpace(approvalRow.ParametersReference))
+                {
+                    try
+                    {
+                        var rawJson = await ReadAsync(_content, approvalRow.ParametersReference, ct).ConfigureAwait(false);
+                        using var doc = JsonDocument.Parse(rawJson);
+                        projectedCommand = CommandPrefixRules.CommandOf(resolvedToolId, doc.RootElement);
+                    }
+                    catch
+                    {
+                        // Ignore unreadable content reference; rule validation below rejects empty prefix cleanly.
+                    }
+                }
+                isSpecPropose = CoreVirtualToolPolicy.IsSpecPropose(resolvedToolId)
+                    || (executionRow is not null && CoreVirtualToolPolicy.IsSpecPropose(executionRow.ToolId));
+            }
+        }
+
+        if (isSpecPropose && (requestedRunScope || input.RememberRule is not null))
+        {
+            return new SingleApprovalDecisionResult(
+                StatusCodes.Status400BadRequest,
+                null,
+                "spec_confirmation_scope",
+                "Confirm this specification document once. Each subsequent document needs its own review.");
+        }
+
+        ApprovalRuleCreate? validatedRememberRule = null;
+        if (approve && input.RememberRule is { } rememberInput)
+        {
+            if (_approvalRules is null)
+            {
+                return new SingleApprovalDecisionResult(
+                    StatusCodes.Status400BadRequest,
+                    null,
+                    "invalid_rule",
+                    "Approval rules service is unavailable in this host.");
+            }
+            var ruleError = TryBuildRememberRule(rememberInput, resolvedToolId, resolvedSessionId, projectedCommand, out validatedRememberRule);
+            if (ruleError is not null)
+            {
+                return new SingleApprovalDecisionResult(
+                    StatusCodes.Status400BadRequest,
+                    null,
+                    "invalid_rule",
+                    ruleError);
+            }
+        }
+
         if (permission is not null)
         {
-            var approve = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(input.Decision, "granted", StringComparison.OrdinalIgnoreCase);
-            var resolved = await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(id, approve, null, null, input.Reason ?? string.Empty), ct).ConfigureAwait(false);
+            var resolved = await _authorization.DecidePermissionAsync(
+                new PermissionDecisionCommand(id, approve, null, null, trimmedReason ?? string.Empty), ct).ConfigureAwait(false);
 
             // User actions have no run/task graph. A permission decision must
             // wake the Core-owned action directly; never manufacture a run for
@@ -1935,40 +2215,87 @@ public sealed class ControlPlaneService
                     x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
                 if (userAction is not null)
                 {
+                    var createdActionRuleId = approve
+                        ? await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false)
+                        : null;
                     var resumed = await _userActions.ResumeAsync(userAction.Id, ct).ConfigureAwait(false);
-                    return Results.Json(new { id, user_tool_action_id = userAction.Id, status = resumed.Status, action = resumed },
-                        statusCode: resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser or UserToolActionStatuses.SnapshotRequired
-                            ? StatusCodes.Status202Accepted
-                            : StatusCodes.Status200OK);
+                    var statusCode = resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser or UserToolActionStatuses.SnapshotRequired
+                        ? StatusCodes.Status202Accepted
+                        : StatusCodes.Status200OK;
+                    return new SingleApprovalDecisionResult(
+                        statusCode,
+                        new ApprovalDecisionResponseDto
+                        {
+                            Id = id,
+                            Status = resumed.Status,
+                            DecidedAt = resolved.Decision.CreatedAt,
+                            CreatedRuleId = createdActionRuleId,
+                            DecisionReason = trimmedReason,
+                            UserToolActionId = userAction.Id,
+                            Action = resumed
+                        },
+                        null,
+                        null);
                 }
             }
+
             // "Always allow for this session" is applied AFTER the decision is
             // committed, so the scope can only ever cover a tool the human actually
             // approved — never a broader one.
-            var runScope = approve && IsRunScope(input.Scope);
+            var runScope = approve && requestedRunScope;
             RunScopeOutcome? runScopeOutcome = null;
+            Guid? createdRuleId = null;
             if (resolved.Request.Status == PermissionRequestStatuses.Granted && resolved.Request.RunId is { } permissionRun)
             {
-                if (runScope)
-                    runScopeOutcome = await ApplyRunScopeAsync(resolved.Request, ct).ConfigureAwait(false);
-
                 Guid? executionId = null;
-                await using var db = await _lifecycle.CreateDbContextAsync(ct);
-                var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
-                if (execution is not null)
+                Guid? linkedApprovalId = null;
+                await using (var db = await _lifecycle.CreateDbContextAsync(ct))
                 {
-                    executionId = execution.Id;
-                    var snapshot = await _executions.EnsureApprovalAsync(execution.Id, ct).ConfigureAwait(false);
-                    if (snapshot.ApprovalId is { } actionApproval)
-                        await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", input.Reason, ct).ConfigureAwait(false);
+                    var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                    if (execution is not null)
+                    {
+                        executionId = execution.Id;
+                        var snapshot = await _executions.EnsureApprovalAsync(execution.Id, ct).ConfigureAwait(false);
+                        if (snapshot.ApprovalId is { } actionApproval)
+                        {
+                            linkedApprovalId = actionApproval;
+                            try
+                            {
+                                await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", trimmedReason, ct).ConfigureAwait(false);
+                            }
+                            catch (InvalidOperationException)
+                            {
+                                // Idempotent replay of an already-decided linked approval.
+                            }
+                        }
+                    }
                 }
+
+                if (runScope)
+                {
+                    var resource = resolved.Request.Claim.Resource;
+                    if (resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        runScopeOutcome = await ApplyRunScopeCoreAsync(
+                            permissionRun,
+                            resource["tool://".Length..],
+                            resolved.Request.Risk,
+                            excludedPermissionId: id,
+                            excludedApprovalId: linkedApprovalId,
+                            ct).ConfigureAwait(false);
+                    }
+                }
+
+                createdRuleId = await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false);
+
                 await _runs.AppendEventAsync(permissionRun, "governance.permission_decided", new
                 {
                     permission_request_id = resolved.Request.Id,
                     authorization_decision_id = resolved.Decision.Id,
                     execution_id = executionId,
                     outcome = resolved.Decision.Outcome,
-                    reason_code = resolved.Decision.ReasonCode
+                    reason_code = resolved.Decision.ReasonCode,
+                    reason = trimmedReason
                 }, "Permission decision committed; run resumed.", cancellationToken: ct).ConfigureAwait(false);
                 await _runs.SetRunStatusAsync(permissionRun.ToString(), "executing", "Legacy approval decision committed; resuming run.", ct).ConfigureAwait(false);
                 await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
@@ -1989,57 +2316,339 @@ public sealed class ControlPlaneService
                     if (deniedRunState.Status is RunStatus.AwaitingApproval or RunStatus.AwaitingDelegate or RunStatus.AwaitingUser)
                     {
                         await _runs.SetRunStatusAsync(deniedRun.ToString(), "executing", "Permission request denied; resuming run to fail closed.", ct).ConfigureAwait(false);
+                        var deniedSummary = !approve && trimmedReason is not null
+                            ? $"Permission decision committed ({resolved.Decision.Outcome}): {trimmedReason}"
+                            : "Permission decision committed; run resumed.";
                         await _runs.AppendEventAsync(deniedRun, "governance.permission_decided", new
                         {
                             permission_request_id = resolved.Request.Id,
                             authorization_decision_id = resolved.Decision.Id,
                             outcome = resolved.Decision.Outcome,
-                            reason_code = resolved.Decision.ReasonCode
-                        }, "Permission decision committed; run resumed.", cancellationToken: ct).ConfigureAwait(false);
+                            reason_code = resolved.Decision.ReasonCode,
+                            reason = trimmedReason
+                        }, deniedSummary, cancellationToken: ct).ConfigureAwait(false);
                     }
                     await _engine.EnqueueAsync(deniedRun, ct).ConfigureAwait(false);
                 }
             }
-            return Results.Ok(new
+            else if (approve && resolved.Request.Status == PermissionRequestStatuses.Granted)
             {
-                id,
-                status = resolved.Request.Status,
-                decided_at = resolved.Decision.CreatedAt,
-                scope = runScope ? "run" : "once",
-                run_scope_released = runScopeOutcome?.Released ?? 0,
-                pre_authorization_id = runScopeOutcome?.PreAuthorizationId,
-                capability_grant_id = runScopeOutcome?.GrantId
-            });
-        }
-        var approveAction = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(input.Decision, "granted", StringComparison.OrdinalIgnoreCase);
-        await using (var actionDb = await _lifecycle.CreateDbContextAsync(ct))
-        {
-            var actionApproval = await actionDb.ApprovalRequests.AsNoTracking().SingleOrDefaultAsync(x =>
-                x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.UserToolActionId != null, ct);
-            if (actionApproval?.UserToolActionId is { } userActionId)
-            {
-                try { await _approvals.DecideAsync(id, approveAction ? "approved" : "rejected", input.Reason, ct); }
-                catch (KeyNotFoundException) { return Results.NotFound(); }
-                catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
-                var resumed = await _userActions.ResumeAsync(userActionId, ct);
-                return Results.Json(new { id, user_tool_action_id = userActionId, status = resumed.Status, action = resumed },
-                    statusCode: resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
+                createdRuleId = await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false);
             }
+
+            return new SingleApprovalDecisionResult(
+                StatusCodes.Status200OK,
+                new ApprovalDecisionResponseDto
+                {
+                    Id = id,
+                    Status = resolved.Request.Status,
+                    DecidedAt = resolved.Decision.CreatedAt,
+                    Scope = runScope ? "run" : "once",
+                    RunScopeReleased = runScopeOutcome?.Released ?? 0,
+                    PreAuthorizationId = runScopeOutcome?.PreAuthorizationId,
+                    CapabilityGrantId = runScopeOutcome?.GrantId,
+                    CreatedRuleId = createdRuleId,
+                    DecisionReason = trimmedReason
+                },
+                null,
+                null,
+                runScopeOutcome?.ReleasedIds);
         }
-        ToolApprovalDecision decision;
-        try { decision = await _approvals.DecideAsync(id, input.Decision, input.Reason, ct); }
-        catch (KeyNotFoundException) { return Results.NotFound(); }
-        catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
-        catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
-        if (decision.RunId is { } runId)
+
+        if (approvalRow!.UserToolActionId is { } userActionId)
         {
-            await _runs.AppendEventAsync(runId, "approval.decided", new { approval_id = id, execution_id = decision.ExecutionId, task_id = decision.TaskId, decision = decision.Status }, $"Approval {decision.Status}.", decision.Status == "approved" ? "info" : "warning", decision.TaskId, id, cancellationToken: ct);
-            await _engine.EnqueueAsync(runId, ct);
+            ToolApprovalDecision actionDecision;
+            try
+            {
+                actionDecision = await _approvals.DecideAsync(id, approve ? "approved" : "rejected", trimmedReason, ct).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException)
+            {
+                return new SingleApprovalDecisionResult(StatusCodes.Status404NotFound, null, "not_found", "Approval was not found.");
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new SingleApprovalDecisionResult(StatusCodes.Status409Conflict, null, "conflict", ex.Message);
+            }
+            var createdActionRuleId = approve
+                ? await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false)
+                : null;
+            var resumed = await _userActions.ResumeAsync(userActionId, ct).ConfigureAwait(false);
+            var statusCode = resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser
+                ? StatusCodes.Status202Accepted
+                : StatusCodes.Status200OK;
+            return new SingleApprovalDecisionResult(
+                statusCode,
+                new ApprovalDecisionResponseDto
+                {
+                    Id = id,
+                    Status = resumed.Status,
+                    DecidedAt = actionDecision.DecidedAt,
+                    CreatedRuleId = createdActionRuleId,
+                    DecisionReason = trimmedReason,
+                    UserToolActionId = userActionId,
+                    Action = resumed
+                },
+                null,
+                null);
         }
-        return Results.Ok(new { id = decision.ApprovalId, status = decision.Status, decided_at = decision.DecidedAt });
+
+        ToolApprovalDecision decision;
+        try
+        {
+            decision = await _approvals.DecideAsync(id, approve ? "approved" : "rejected", trimmedReason, ct).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException)
+        {
+            return new SingleApprovalDecisionResult(StatusCodes.Status404NotFound, null, "not_found", "Approval was not found.");
+        }
+        catch (ArgumentException ex)
+        {
+            return new SingleApprovalDecisionResult(StatusCodes.Status400BadRequest, null, "invalid_request", ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new SingleApprovalDecisionResult(StatusCodes.Status409Conflict, null, "conflict", ex.Message);
+        }
+
+        var toolRunScope = approve && requestedRunScope && string.Equals(approvalRow.Kind, "tool", StringComparison.OrdinalIgnoreCase);
+        RunScopeOutcome? toolRunScopeOutcome = null;
+        var effectiveRunId = decision.RunId ?? resolvedRunId;
+        if (toolRunScope && effectiveRunId is { } runForScope)
+        {
+            toolRunScopeOutcome = await ApplyRunScopeCoreAsync(
+                runForScope,
+                resolvedToolId,
+                resolvedRisk,
+                excludedPermissionId: null,
+                excludedApprovalId: id,
+                ct).ConfigureAwait(false);
+        }
+
+        var createdToolRuleId = approve
+            ? await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false)
+            : null;
+
+        if (effectiveRunId is { } runId)
+        {
+            var decidedSummary = !approve && trimmedReason is not null
+                ? $"Approval {decision.Status}: {trimmedReason}"
+                : $"Approval {decision.Status}.";
+            await _runs.AppendEventAsync(
+                runId,
+                "approval.decided",
+                new
+                {
+                    approval_id = id,
+                    execution_id = decision.ExecutionId,
+                    task_id = decision.TaskId,
+                    decision = decision.Status,
+                    scope = toolRunScope ? "run" : "once",
+                    reason = trimmedReason
+                },
+                decidedSummary,
+                decision.Status == "approved" ? "info" : "warning",
+                decision.TaskId,
+                id,
+                resolvedToolId,
+                cancellationToken: ct).ConfigureAwait(false);
+
+            if (_approvalGateLedger is not null)
+            {
+                var gateSnapshot = await _approvalGateLedger.GetAsync(id, ct).ConfigureAwait(false);
+                if (gateSnapshot is not null)
+                {
+                    await _runs.AppendEventAsync(
+                        runId,
+                        "approval.gate_updated",
+                        new
+                        {
+                            approval_id = id,
+                            session_id = resolvedSessionId,
+                            status = gateSnapshot.Status,
+                            gates = gateSnapshot.Gates.Select(gate => new
+                            {
+                                gate_index = gate.GateIndex,
+                                gate_kind = gate.GateKind,
+                                status = gate.Status,
+                                decider_agent = gate.DeciderAgent,
+                                reason = gate.Reason,
+                                evidence = gate.Evidence,
+                                created_at = gate.CreatedAt,
+                                decided_at = gate.DecidedAt
+                            }).ToArray()
+                        },
+                        $"Delegated approval gates updated ({gateSnapshot.Status}).",
+                        "info",
+                        decision.TaskId,
+                        id,
+                        resolvedToolId,
+                        cancellationToken: ct).ConfigureAwait(false);
+                }
+            }
+
+            await _engine.EnqueueAsync(runId, ct).ConfigureAwait(false);
+        }
+
+        return new SingleApprovalDecisionResult(
+            StatusCodes.Status200OK,
+            new ApprovalDecisionResponseDto
+            {
+                Id = decision.ApprovalId,
+                Status = decision.Status,
+                DecidedAt = decision.DecidedAt,
+                Scope = toolRunScope ? "run" : "once",
+                RunScopeReleased = toolRunScopeOutcome?.Released ?? 0,
+                PreAuthorizationId = toolRunScopeOutcome?.PreAuthorizationId,
+                CapabilityGrantId = toolRunScopeOutcome?.GrantId,
+                CreatedRuleId = createdToolRuleId,
+                DecisionReason = trimmedReason
+            },
+            null,
+            null,
+            toolRunScopeOutcome?.ReleasedIds);
     }
+
+    private static bool TryParseDecision(string? decision, out bool approve)
+    {
+        approve = false;
+        if (string.IsNullOrWhiteSpace(decision)) return false;
+        var normalized = decision.Trim();
+        if (string.Equals(normalized, "approved", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "approve", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "granted", StringComparison.OrdinalIgnoreCase))
+        {
+            approve = true;
+            return true;
+        }
+        if (string.Equals(normalized, "rejected", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "reject", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "denied", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "deny", StringComparison.OrdinalIgnoreCase))
+        {
+            approve = false;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryParseScope(string? scope, out bool runScope)
+    {
+        runScope = false;
+        if (string.IsNullOrWhiteSpace(scope)) return true;
+        var normalized = scope.Trim();
+        if (string.Equals(normalized, "once", StringComparison.OrdinalIgnoreCase)) return true;
+        if (IsRunScope(normalized))
+        {
+            runScope = true;
+            return true;
+        }
+        return false;
+    }
+
+    private static string? TryBuildRememberRule(
+        ApprovalRememberRuleInputDto input,
+        string? toolId,
+        Guid? approvalSessionId,
+        string? projectedCommand,
+        out ApprovalRuleCreate? validated)
+    {
+        validated = null;
+        var kind = input.Kind?.Trim() ?? string.Empty;
+        var tool = toolId?.Trim() ?? string.Empty;
+        if (kind.Contains('*', StringComparison.Ordinal)
+            || tool.Contains('*', StringComparison.Ordinal)
+            || (input.Pattern?.Contains('*', StringComparison.Ordinal) ?? false))
+        {
+            return "Wildcard '*' patterns are not allowed in approval rules.";
+        }
+
+        var scope = string.IsNullOrWhiteSpace(input.Scope)
+            ? "session"
+            : input.Scope.Trim().ToLowerInvariant();
+        if (scope is not ("session" or "workspace"))
+        {
+            return "remember_rule.scope must be 'session' or 'workspace'.";
+        }
+
+        if (string.Equals(kind, ApprovalRuleKinds.CommandPrefix, StringComparison.Ordinal))
+        {
+            if (!CommandPrefixRules.IsRuleTool(tool))
+            {
+                return $"A command_prefix rule requires tool_id to be one of: {string.Join(", ", CommandPrefixRules.Tools)}.";
+            }
+            var pattern = input.Pattern?.Trim();
+            if (string.IsNullOrEmpty(pattern) && !string.IsNullOrWhiteSpace(projectedCommand))
+            {
+                var tokens = CommandPrefixRules.Words(projectedCommand);
+                if (tokens.Length > 0) pattern = tokens[0];
+            }
+            pattern ??= string.Empty;
+            if (pattern.Contains('*', StringComparison.Ordinal))
+            {
+                return "Wildcard '*' patterns are not allowed in approval rules.";
+            }
+            if (CommandPrefixRules.PrefixError(pattern) is { } prefixError)
+            {
+                return prefixError;
+            }
+            Guid? ruleSessionId = null;
+            if (scope == "session")
+            {
+                if (approvalSessionId is not { } validSid || validSid == Guid.Empty)
+                {
+                    return "A session-scoped approval rule requires an approval bound to a valid session.";
+                }
+                ruleSessionId = validSid;
+            }
+            validated = new ApprovalRuleCreate(ApprovalRuleKinds.CommandPrefix, tool, pattern, ruleSessionId);
+            return null;
+        }
+
+        if (string.Equals(kind, ApprovalRuleKinds.DelegateTool, StringComparison.Ordinal))
+        {
+            if (!DelegatedToolOptInRules.IsEligibleTool(tool))
+            {
+                return $"A delegate_tool rule requires an eligible tool ({string.Join(", ", CommandPrefixRules.Tools)}).";
+            }
+            if (!string.IsNullOrWhiteSpace(input.Pattern))
+            {
+                return "A delegate_tool rule does not accept a pattern.";
+            }
+            if (scope != "session" || approvalSessionId is not { } validSid || validSid == Guid.Empty)
+            {
+                return "A delegate_tool rule must be session-scoped with a valid session_id.";
+            }
+            validated = new ApprovalRuleCreate(ApprovalRuleKinds.DelegateTool, tool, null, validSid);
+            return null;
+        }
+
+        return $"remember_rule.kind must be one of: {string.Join(", ", ApprovalRuleKinds.All)}.";
+    }
+
+    private async Task<Guid?> CreateOrReuseRememberRuleAsync(ApprovalRuleCreate? rule, CancellationToken ct)
+    {
+        if (rule is null || _approvalRules is null) return null;
+        var existing = FindMatchingRule(await _approvalRules.ListAsync(rule.SessionId, ct).ConfigureAwait(false), rule);
+        if (existing is not null) return existing.Id;
+        try
+        {
+            var created = await _approvalRules.CreateAsync(rule, ct).ConfigureAwait(false);
+            return created.Id;
+        }
+        catch (ApprovalRuleException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
+        {
+            var winner = FindMatchingRule(await _approvalRules.ListAsync(rule.SessionId, ct).ConfigureAwait(false), rule);
+            return winner?.Id;
+        }
+    }
+
+    private static ApprovalRuleView? FindMatchingRule(IReadOnlyList<ApprovalRuleView> rules, ApprovalRuleCreate target) =>
+        rules.FirstOrDefault(x =>
+            string.Equals(x.Kind, target.Kind, StringComparison.Ordinal)
+            && string.Equals(x.ToolId, target.ToolId, StringComparison.Ordinal)
+            && string.Equals(x.Pattern, target.Pattern, StringComparison.Ordinal)
+            && x.SessionId == target.SessionId);
 
     private static bool IsRunScope(string? scope) =>
         string.Equals(scope, "run", StringComparison.OrdinalIgnoreCase)
@@ -2056,42 +2665,43 @@ public sealed class ControlPlaneService
     /// <summary>How many calls a session approval covers before it must be renewed.</summary>
     private const int RunScopeMaxUses = 512;
 
-    private sealed record RunScopeOutcome(Guid PreAuthorizationId, Guid GrantId, int Released);
+    private sealed record RunScopeOutcome(Guid PreAuthorizationId, Guid GrantId, int Released, IReadOnlySet<Guid> ReleasedIds);
 
     /// <summary>
-    /// "Always allow for this session", applied as two durable envelopes because two
-    /// separate gates ask:
+    /// "Always allow for this session", applied uniformly to both <c>permission</c> and
+    /// <c>tool</c> approvals as two durable envelopes because two separate gates ask:
     /// <list type="bullet">
-    /// <item>the run-scoped PRE-AUTHORIZATION is what stops the tool-approval layer
-    /// from asking again — it mints an approval for a matching call with no human,
-    /// and its risk ceiling is the class the human actually approved, so a session
-    /// approval never widens the risk it was given;</item>
-    /// <item>the run-scoped CAPABILITY GRANT is what stops the PDP from asking again —
-    /// without it the next call has no grant to lease and parks before the approval
-    /// layer is ever consulted.</item>
+    /// <item>the run-scoped PRE-AUTHORIZATION stops the tool-approval layer from asking
+    /// again and caps risk at the class the human actually approved;</item>
+    /// <item>the run-scoped CAPABILITY GRANT stops the PDP from asking again.</item>
     /// </list>
-    /// The scope is always exactly one tool. A wildcard, an empty tool id, or a
-    /// non-tool claim is never widened by a decision. Finally, pending sibling
-    /// requests for the same tool are released with it: a decision that only applied
-    /// to the future would leave an already-parked sibling waiting for the very click
-    /// the user just declined to make.
+    /// Pending sibling requests (<c>PermissionRequests</c> and <c>ApprovalRequests</c>) in
+    /// the same <see cref="RunRecord"/> for the exact same tool within that risk ceiling are
+    /// released together with it.
     /// </summary>
-    private async Task<RunScopeOutcome?> ApplyRunScopeAsync(PermissionRequestSnapshot decided, CancellationToken ct)
+    private async Task<RunScopeOutcome?> ApplyRunScopeCoreAsync(
+        Guid runId,
+        string? rawToolId,
+        string? risk,
+        Guid? excludedPermissionId,
+        Guid? excludedApprovalId,
+        CancellationToken ct)
     {
-        var resource = decided.Claim.Resource;
-        if (!resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)) return null;
-        var toolId = resource["tool://".Length..];
-        if (string.IsNullOrWhiteSpace(toolId) || toolId == "*") return null;
-        if (decided.RunId is not { } runId) return null;
+        if (runId == Guid.Empty || string.IsNullOrWhiteSpace(rawToolId)) return null;
+        var toolId = rawToolId.Trim();
+        if (toolId == "*" || CoreVirtualToolPolicy.IsSpecPropose(toolId)) return null;
 
+        var resource = $"tool://{toolId}";
+        var riskCeiling = RiskCeiling(risk);
         var now = DateTimeOffset.UtcNow;
-        // The envelopes are run-scoped, so they cannot outlive the run's authority
-        // even if the window is generous; it only has to cover a long session.
         var expiresAt = now.AddHours(8);
+
         await using var db = await _lifecycle.CreateDbContextAsync(ct);
         var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId
             && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
-        if (run?.InitiatedByPrincipalId is not { } principal || principal == Guid.Empty) return null;
+        if (run is null) return null;
+        var principal = run.InitiatedByPrincipalId != Guid.Empty ? run.InitiatedByPrincipalId : Tenant.PrincipalId;
+        if (principal == Guid.Empty) return null;
 
         var row = new PreAuthorizationRecord
         {
@@ -2102,7 +2712,7 @@ public sealed class ControlPlaneService
             LaneKey = null,
             ToolScopeJson = JsonSerializer.Serialize(new[] { toolId }),
             ParameterConstraintHash = null,
-            RiskMax = RiskCeiling(decided.Risk),
+            RiskMax = riskCeiling,
             MaxUses = RunScopeMaxUses,
             UseCount = 0,
             ExpiresAt = expiresAt,
@@ -2114,8 +2724,6 @@ public sealed class ControlPlaneService
         db.PreAuthorizations.Add(row);
         await db.SaveChangesAsync(ct);
 
-        // SubjectAgentInstanceId stays null so the allowance covers every worker of
-        // this run, which is what "for this session" means to the user.
         var grant = await _authorization.GrantCapabilityAsync(new GrantCapabilityCommand(
             principal,
             SubjectAgentInstanceId: null,
@@ -2129,23 +2737,67 @@ public sealed class ControlPlaneService
             Reason: $"Run-scoped approval for '{toolId}'."), ct).ConfigureAwait(false);
 
         var released = 0;
-        var pending = await _authorization.ListPermissionRequestsAsync(null, runId, null, ct).ConfigureAwait(false);
-        foreach (var sibling in pending)
+        var releasedIds = new HashSet<Guid>();
+
+        var pendingPermissions = await _authorization.ListPermissionRequestsAsync(null, runId, null, ct).ConfigureAwait(false);
+        foreach (var sibling in pendingPermissions)
         {
-            if (sibling.Id == decided.Id) continue;
+            if (excludedPermissionId is { } excludedPerm && sibling.Id == excludedPerm) continue;
             if (sibling.Status is not (PermissionRequestStatuses.AwaitingUser or PermissionRequestStatuses.AwaitingDelegate)) continue;
             if (!string.Equals(sibling.Claim.Resource, resource, StringComparison.OrdinalIgnoreCase)) continue;
+            if (ToolApprovalPolicy.RiskRank(sibling.Risk) > ToolApprovalPolicy.RiskRank(riskCeiling)) continue;
             try
             {
                 await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(
                     sibling.Id, true, null, null, $"Released by a run-scoped approval for '{toolId}'."), ct).ConfigureAwait(false);
                 released++;
+                releasedIds.Add(sibling.Id);
             }
             catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
             {
-                // A sibling another actor decided first is not a failure of this
-                // decision: the user's intent is already satisfied either way.
                 Debug.WriteLine($"Sibling permission request {sibling.Id} was not released by the run scope: {ex.Message}");
+            }
+        }
+
+        var pendingApprovals = await db.ApprovalRequests.AsNoTracking()
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId
+                && x.RunId == runId && x.Status == "pending" && x.Kind == "tool" && x.UserToolActionId == null)
+            .ToListAsync(ct).ConfigureAwait(false);
+        foreach (var siblingApproval in pendingApprovals)
+        {
+            if (excludedApprovalId is { } excludedApp && siblingApproval.Id == excludedApp) continue;
+            if (!string.Equals(siblingApproval.ToolId, toolId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (ToolApprovalPolicy.RiskRank(siblingApproval.Risk) > ToolApprovalPolicy.RiskRank(riskCeiling)) continue;
+            try
+            {
+                var siblingDecision = await _approvals.DecideAsync(
+                    siblingApproval.Id,
+                    "approved",
+                    $"Released by a run-scoped approval for '{toolId}'.",
+                    ct).ConfigureAwait(false);
+                released++;
+                releasedIds.Add(siblingApproval.Id);
+                await _runs.AppendEventAsync(
+                    runId,
+                    "approval.decided",
+                    new
+                    {
+                        approval_id = siblingApproval.Id,
+                        execution_id = siblingDecision.ExecutionId,
+                        task_id = siblingDecision.TaskId,
+                        decision = siblingDecision.Status,
+                        scope = "run"
+                    },
+                    $"Approval {siblingDecision.Status} (released by run-scoped approval for '{toolId}').",
+                    "info",
+                    siblingDecision.TaskId,
+                    siblingApproval.Id,
+                    toolId,
+                    cancellationToken: ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+            {
+                Debug.WriteLine($"Sibling approval request {siblingApproval.Id} was not released by the run scope: {ex.Message}");
             }
         }
 
@@ -2160,7 +2812,7 @@ public sealed class ControlPlaneService
             released_pending = released
         }, $"Run-scoped approval granted for '{toolId}'.", "info", null, null, cancellationToken: ct).ConfigureAwait(false);
 
-        return new RunScopeOutcome(row.Id, grant.Id, released);
+        return new RunScopeOutcome(row.Id, grant.Id, released, releasedIds);
     }
 
     /// <summary>Executions behind these approvals that retry an unknown outcome; their approval rows carry a fixed retry sentence.</summary>

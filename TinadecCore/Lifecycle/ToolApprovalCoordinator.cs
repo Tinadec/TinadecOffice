@@ -762,9 +762,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             // answered, not that the tool call was wrong. The execution keeps
             // waiting and the lane escalates when the engine consumes
             // approval.park_expired.
+            var expiredNonceRef = approval.NonceSecretReference;
             approval.Status = "expired";
             approval.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await CleanupApprovalNonceAsync(approval.Id, expiredNonceRef, cancellationToken).ConfigureAwait(false);
             if (_lifecycle is not null)
             {
                 await _lifecycle.AppendEventAsync(execution.RunId, "approval.park_expired",
@@ -781,6 +783,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             var executionWindow = approval.ExecutionWindowExpiresAt ?? approval.ExpiresAt;
             if (executionWindow <= now)
             {
+                var expiredNonceRef = approval.NonceSecretReference;
                 approval.Status = "expired";
                 approval.UpdatedAt = now;
                 execution.Status = "failed";
@@ -789,6 +792,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 execution.UpdatedAt = now;
                 execution.CompletedAt = execution.UpdatedAt;
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await CleanupApprovalNonceAsync(approval.Id, expiredNonceRef, cancellationToken).ConfigureAwait(false);
                 return new ToolExecutionStartDecision("not_approved", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
             }
         }
@@ -800,7 +804,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             || !string.Equals(approval.ToolId, execution.ToolId, StringComparison.Ordinal)
             || !string.Equals(approval.RequestHash, execution.ParametersHash, StringComparison.OrdinalIgnoreCase)
             || string.IsNullOrWhiteSpace(approval.NonceHash)
-            || string.IsNullOrWhiteSpace(approval.NonceSecretReference))
+            || ((approval.Status is "pending" or "approved") && string.IsNullOrWhiteSpace(approval.NonceSecretReference)))
         {
             execution.Status = "failed";
             execution.ErrorCategory = RunErrorTaxonomy.ApprovalBindingMismatch;
@@ -813,9 +817,21 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (approval.Status == "pending") return new ToolExecutionStartDecision("awaiting_approval", snapshot, "Approval is pending.");
         if (approval.Status is "rejected" or "expired" or "cancelled")
         {
+            var rejectionReason = approval.Status == "rejected" && !string.IsNullOrWhiteSpace(approval.DecisionReason)
+                ? approval.DecisionReason.Trim()
+                : null;
             execution.Status = "failed";
             execution.ErrorCategory = RunErrorTaxonomy.NotApproved;
-            execution.SafeErrorMessage = $"Approval decision was '{approval.Status}'.";
+            execution.SafeErrorMessage = rejectionReason is not null
+                ? $"Approval decision was 'rejected': {rejectionReason}"
+                : $"Approval decision was '{approval.Status}'.";
+            ApplyAttribution(execution, new ToolOutcomeAttribution(
+                ToolOutcomes.Blocked,
+                Retryable: false,
+                PolicyRef: $"approval:{approval.Id:N}",
+                AgentGuidance: rejectionReason is not null
+                    ? $"The user rejected this tool call with feedback: {rejectionReason}"
+                    : "The tool call was not approved; do not repeat the identical call without addressing why it was refused."));
             execution.UpdatedAt = now;
             execution.CompletedAt = execution.UpdatedAt;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -848,9 +864,18 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         // Nothing here replays a tool, so the "Never replay a potentially mutating call
         // automatically" invariant above is about resetting a consumed execution back to a
         // startable state, and is untouched by this retry.
-        return await SqliteTransientRetry.WriteInTransactionAsync(
-            ct => ConsumeApprovalAndStartAsync(scope, executionId, approvalId, authority, ct), cancellationToken)
+        string? consumedNonceRef = null;
+        var started = await SqliteTransientRetry.WriteInTransactionAsync(
+            async ct =>
+            {
+                var (decision, nonceRef) = await ConsumeApprovalAndStartAsync(scope, executionId, approvalId, authority, ct).ConfigureAwait(false);
+                consumedNonceRef = nonceRef;
+                return decision;
+            }, cancellationToken)
             .ConfigureAwait(false);
+        if (started.Status == "running")
+            await CleanupApprovalNonceAsync(approvalId, consumedNonceRef, cancellationToken).ConfigureAwait(false);
+        return started;
     }
 
     /// <summary>
@@ -858,7 +883,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     /// Re-reads everything the write depends on and re-applies the same guards, so a retry
     /// after a lock conflict decides on committed state instead of the caller's stale read.
     /// </summary>
-    private async Task<ToolExecutionStartDecision> ConsumeApprovalAndStartAsync(
+    private async Task<(ToolExecutionStartDecision Decision, string? NonceReference)> ConsumeApprovalAndStartAsync(
         TenantContext scope,
         Guid executionId,
         Guid approvalId,
@@ -869,21 +894,21 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         var execution = await db.ToolExecutions.SingleOrDefaultAsync(x =>
             x.Id == executionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
             cancellationToken).ConfigureAwait(false);
-        if (execution is null) return new ToolExecutionStartDecision("not_found", null, "Tool execution was not found.");
+        if (execution is null) return (new ToolExecutionStartDecision("not_found", null, "Tool execution was not found."), null);
         var approval = await db.ApprovalRequests.SingleOrDefaultAsync(x =>
             x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
             cancellationToken).ConfigureAwait(false);
         if (approval is null || approval.Status != "approved"
             || !string.Equals(approval.Decision, "approved", StringComparison.OrdinalIgnoreCase))
-            return new ToolExecutionStartDecision("not_approved",
-                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval is not executable.");
+            return (new ToolExecutionStartDecision("not_approved",
+                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval is not executable."), null);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         if (authority is not null
             && !await TryClaimRunAuthorityAsync(db, execution, authority, cancellationToken).ConfigureAwait(false))
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return LostRunAuthority(await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
+            return (LostRunAuthority(await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false)), null);
         }
         var now = DateTimeOffset.UtcNow;
         var consumed = await db.ApprovalRequests
@@ -909,9 +934,10 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (consumed != 1)
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return new ToolExecutionStartDecision("not_approved",
-                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval could not be consumed.");
+            return (new ToolExecutionStartDecision("not_approved",
+                await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Approval could not be consumed."), null);
         }
+        var nonceRef = approval.NonceSecretReference;
         // ExecuteUpdate bypasses EF's tracked entity. Keep the in-memory row in sync so the
         // later execution save cannot restore its former status.
         approval.Status = "consumed";
@@ -922,7 +948,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         execution.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new ToolExecutionStartDecision("running", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
+        return (new ToolExecutionStartDecision("running", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false)), nonceRef);
     }
 
     private static ToolExecutionStartDecision LostRunAuthority(ToolExecutionSnapshot snapshot) =>
@@ -1178,7 +1204,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             execution.CompletedAt = execution.UpdatedAt = now;
         }
         if (approvals.Count != 0 || executions.Count != 0) await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var approval in approvals)
+            await CleanupApprovalNonceAsync(approval.Id, approval.NonceSecretReference, cancellationToken).ConfigureAwait(false);
     }
+
+    public const int DefaultHistoricalNonceCleanupBatchSize = 256;
 
     /// <summary>
     /// Observer for the expiry paths TryStartAsync only evaluates when a run
@@ -1187,45 +1217,116 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     /// resume re-enters TryStartAsync, which parks the approval with the
     /// park_expired signal and escalates the lane to awaiting_user); approvals
     /// nobody will ever drive again (run-less, or their run is terminal) are
-    /// expired directly so they cannot sit pending forever.
+    /// expired directly so they cannot sit pending forever. Also runs a bounded
+    /// cleanup sweep for terminal/expired approval nonce secret files.
     /// </summary>
     public async Task<ApprovalExpirySweepResult> SweepExpiredPendingApprovalsAsync(CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        // SQLite cannot translate DateTimeOffset comparisons; load the pending
-        // set and apply the window in memory, mirroring TryConsumeApprovalAsync.
-        var pending = await db.ApprovalRequests.AsNoTracking()
-            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "pending")
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var elapsed = pending.Where(x => x.ExpiresAt <= now).ToList();
-        if (elapsed.Count == 0) return new ApprovalExpirySweepResult([], 0);
+        List<ApprovalRequestRecord> elapsed;
+        List<ApprovalRequestRecord> orphaned = [];
+        List<Guid> wakeRunIds = [];
 
-        var runIds = elapsed.Where(x => x.RunId is not null).Select(x => x.RunId!.Value).Distinct().ToList();
-        var runs = await db.Runs.AsNoTracking().Where(x => runIds.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
-        var liveRunIds = runs.Where(x => !RunStatusMachine.IsTerminal(x.Status)).Select(x => x.Id).ToHashSet();
-
-        var orphaned = elapsed.Where(x => x.RunId is null || !liveRunIds.Contains(x.RunId.Value)).ToList();
-        foreach (var approval in orphaned)
+        await using (var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
         {
-            await db.ApprovalRequests
-                .Where(x => x.Id == approval.Id && x.Status == "pending")
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(x => x.Status, "expired")
-                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            // SQLite cannot translate DateTimeOffset comparisons; load the pending
+            // set and apply the window in memory, mirroring TryConsumeApprovalAsync.
+            var pending = await db.ApprovalRequests.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "pending")
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            elapsed = pending.Where(x => x.ExpiresAt <= now).ToList();
+            if (elapsed.Count > 0)
+            {
+                var runIds = elapsed.Where(x => x.RunId is not null).Select(x => x.RunId!.Value).Distinct().ToList();
+                var runs = await db.Runs.AsNoTracking().Where(x => runIds.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+                var liveRunIds = runs.Where(x => !RunStatusMachine.IsTerminal(x.Status)).Select(x => x.Id).ToHashSet();
+
+                orphaned = elapsed.Where(x => x.RunId is null || !liveRunIds.Contains(x.RunId.Value)).ToList();
+                foreach (var approval in orphaned)
+                {
+                    await db.ApprovalRequests
+                        .Where(x => x.Id == approval.Id && x.Status == "pending")
+                        .ExecuteUpdateAsync(set => set
+                            .SetProperty(x => x.Status, "expired")
+                            .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+                }
+
+                // A live run whose approval elapsed is woken, not marked: marking it
+                // here would turn the next TryStartAsync into a hard not_approved
+                // failure instead of the park-and-escalate path the M8 unattended
+                // design requires.
+                wakeRunIds = elapsed
+                    .Where(x => x.RunId is not null && liveRunIds.Contains(x.RunId.Value))
+                    .Select(x => x.RunId!.Value)
+                    .Distinct()
+                    .ToList();
+            }
         }
 
-        // A live run whose approval elapsed is woken, not marked: marking it
-        // here would turn the next TryStartAsync into a hard not_approved
-        // failure instead of the park-and-escalate path the M8 unattended
-        // design requires.
-        var wakeRunIds = elapsed
-            .Where(x => x.RunId is not null && liveRunIds.Contains(x.RunId.Value))
-            .Select(x => x.RunId!.Value)
-            .Distinct()
-            .ToList();
+        foreach (var approval in orphaned)
+            await CleanupApprovalNonceAsync(approval.Id, approval.NonceSecretReference, cancellationToken).ConfigureAwait(false);
+
+        await CleanupTerminalApprovalNoncesAsync(DefaultHistoricalNonceCleanupBatchSize, cancellationToken).ConfigureAwait(false);
+
         return new ApprovalExpirySweepResult(wakeRunIds, orphaned.Count);
+    }
+
+    /// <summary>
+    /// Bounded cleanup pass for historical terminal/expired approvals that still retain a
+    /// <see cref="ApprovalRequestRecord.NonceSecretReference"/> on disk or in the database.
+    /// </summary>
+    public async Task<int> CleanupTerminalApprovalNoncesAsync(int maxBatchSize = DefaultHistoricalNonceCleanupBatchSize, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        var take = Math.Clamp(maxBatchSize, 1, 1024);
+        List<(Guid Id, string NonceRef)> stale;
+        await using (var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var rows = await db.ApprovalRequests.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.NonceSecretReference != null
+                    && (x.Status == "consumed" || x.Status == "rejected" || x.Status == "expired" || x.Status == "cancelled"))
+                .OrderBy(x => x.Id)
+                .Take(take)
+                .Select(x => new { x.Id, x.NonceSecretReference })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            stale = rows
+                .Where(x => !string.IsNullOrWhiteSpace(x.NonceSecretReference))
+                .Select(x => (x.Id, x.NonceSecretReference!))
+                .ToList();
+        }
+        if (stale.Count == 0) return 0;
+
+        var cleaned = 0;
+        foreach (var (id, nonceRef) in stale)
+        {
+            if (await CleanupApprovalNonceAsync(id, nonceRef, cancellationToken).ConfigureAwait(false))
+                cleaned++;
+        }
+        return cleaned;
+    }
+
+    private async Task<bool> CleanupApprovalNonceAsync(Guid approvalId, string? nonceReference, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(nonceReference)) return false;
+        try
+        {
+            await _nonceMaterials.DeleteAsync(nonceReference, cancellationToken).ConfigureAwait(false);
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await db.ApprovalRequests
+                .Where(x => x.Id == approvalId && x.NonceSecretReference == nonceReference
+                    && (x.Status == "consumed" || x.Status == "rejected" || x.Status == "expired" || x.Status == "cancelled"))
+                .ExecuteUpdateAsync(set => set.SetProperty(x => x.NonceSecretReference, (string?)null), cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Non-fatal IO error: retain NonceSecretReference so the next bounded sweep retries deletion.
+            return false;
+        }
     }
 
     public async Task<Guid> CreateToolApprovalAsync(
@@ -1292,16 +1393,18 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         var protectedNonce = await _nonceMaterials.GetAsync(candidate.NonceSecretReference ?? string.Empty, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(protectedNonce) || !FixedEquals(candidate.NonceHash, HashNonce(protectedNonce)))
         {
-            await db.ApprovalRequests.Where(x => x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "approved")
+            var cancelled = await db.ApprovalRequests.Where(x => x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "approved")
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "cancelled")
                     .SetProperty(x => x.Decision, "rejected").SetProperty(x => x.DecisionReason, "approval_nonce_unavailable")
                     .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            if (cancelled == 1)
+                await CleanupApprovalNonceAsync(approvalId, candidate.NonceSecretReference, cancellationToken).ConfigureAwait(false);
             return false;
         }
 
         if (candidate.ExpiresAt <= now)
         {
-            await db.ApprovalRequests.Where(x => x.Id == approvalId
+            var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
                 && x.TenantId == scope.TenantId
                 && x.WorkspaceId == scope.WorkspaceId
                 && x.Status == "approved"
@@ -1313,6 +1416,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 .ExecuteUpdateAsync(set => set
                     .SetProperty(x => x.Status, "expired")
                     .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            if (expired == 1)
+                await CleanupApprovalNonceAsync(approvalId, candidate.NonceSecretReference, cancellationToken).ConfigureAwait(false);
             return false;
         }
 
@@ -1330,7 +1435,12 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 .SetProperty(x => x.ConsumedByExecutionId, executionGuid)
                 .SetProperty(x => x.ConsumedAt, now)
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-        return updated == 1;
+        if (updated == 1)
+        {
+            await CleanupApprovalNonceAsync(approvalId, candidate.NonceSecretReference, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        return false;
     }
 
     public Task<ToolApprovalDecision> DecideAsync(Guid approvalId, string decision, string? reason, CancellationToken cancellationToken = default) =>
@@ -1347,63 +1457,84 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (normalized is not ("approved" or "rejected")) throw new ArgumentException("decision must be approved or rejected", nameof(decision));
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
-        return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+        string? nonceToCleanup = null;
+        try
         {
-            await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-            await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
-            var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
-                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false)
-                ?? throw new KeyNotFoundException("Approval was not found.");
-            if (decidedByPrincipalId == Guid.Empty && row.ExecutionId is { } specExecutionId
-                && await db.ToolExecutions.AsNoTracking().AnyAsync(item => item.Id == specExecutionId
-                    && item.ToolId == CoreVirtualToolPolicy.SpecProposeToolId, ct).ConfigureAwait(false))
-                throw new InvalidOperationException("Specification documents require the user's own confirmation.");
-            if (row.ExpiresAt <= now && row.Status == "pending")
+            var decided = await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
             {
-                var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
+                nonceToCleanup = null;
+                await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                await using var transaction = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct).ConfigureAwait(false)
+                    ?? throw new KeyNotFoundException("Approval was not found.");
+                if (decidedByPrincipalId == Guid.Empty && row.ExecutionId is { } specExecutionId
+                    && await db.ToolExecutions.AsNoTracking().AnyAsync(item => item.Id == specExecutionId
+                        && item.ToolId == CoreVirtualToolPolicy.SpecProposeToolId, ct).ConfigureAwait(false))
+                    throw new InvalidOperationException("Specification documents require the user's own confirmation.");
+                if (row.ExpiresAt <= now && row.Status == "pending")
+                {
+                    var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
+                            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                            && x.Status == "pending")
+                        .ExecuteUpdateAsync(set => set
+                            .SetProperty(x => x.Status, "expired")
+                            .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
+                    if (expired == 1)
+                    {
+                        nonceToCleanup = row.NonceSecretReference;
+                        await transaction.CommitAsync(ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    }
+                    throw new InvalidOperationException("Approval is no longer actionable.");
+                }
+                if (row.Status != "pending")
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    throw new InvalidOperationException("Approval is no longer actionable.");
+                }
+                var decisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
+                var changed = await db.ApprovalRequests.Where(x => x.Id == approvalId
                         && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
                         && x.Status == "pending")
                     .ExecuteUpdateAsync(set => set
-                        .SetProperty(x => x.Status, "expired")
+                        .SetProperty(x => x.Status, normalized)
+                        .SetProperty(x => x.Decision, normalized)
+                        .SetProperty(x => x.DecisionReason, decisionReason)
+                        .SetProperty(x => x.DecidedAt, now)
+                        // The execution window only starts on an approval: after it
+                        // lapses the approved call hard-fails instead of replaying.
+                        .SetProperty(x => x.ExecutionWindowExpiresAt, normalized == "approved" ? now.Add(_executionWindow) : (DateTimeOffset?)null)
                         .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
-                if (expired == 1)
-                    await transaction.CommitAsync(ct).ConfigureAwait(false);
-                else
-                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
-                throw new InvalidOperationException("Approval is no longer actionable.");
-            }
-            if (row.Status != "pending")
-            {
-                await transaction.RollbackAsync(ct).ConfigureAwait(false);
-                throw new InvalidOperationException("Approval is no longer actionable.");
-            }
-            var decisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
-            var changed = await db.ApprovalRequests.Where(x => x.Id == approvalId
-                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
-                    && x.Status == "pending")
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(x => x.Status, normalized)
-                    .SetProperty(x => x.Decision, normalized)
-                    .SetProperty(x => x.DecisionReason, decisionReason)
-                    .SetProperty(x => x.DecidedAt, now)
-                    // The execution window only starts on an approval: after it
-                    // lapses the approved call hard-fails instead of replaying.
-                    .SetProperty(x => x.ExecutionWindowExpiresAt, normalized == "approved" ? now.Add(_executionWindow) : (DateTimeOffset?)null)
-                    .SetProperty(x => x.UpdatedAt, now), ct).ConfigureAwait(false);
-            if (changed != 1)
-            {
-                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                throw new InvalidOperationException("Approval is no longer actionable.");
-            }
-            db.ApprovalDecisions.Add(new ApprovalDecisionRecord
-            {
-                Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
-                DecidedByPrincipalId = decidedByPrincipalId ?? scope.PrincipalId, CreatedAt = now
-            });
-            await db.SaveChangesAsync(ct).ConfigureAwait(false);
-            await transaction.CommitAsync(ct).ConfigureAwait(false);
-            return new ToolApprovalDecision(row.Id, normalized, row.RunId, row.TaskId, row.ExecutionId, now);
-        }, cancellationToken).ConfigureAwait(false);
+                if (changed != 1)
+                {
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    throw new InvalidOperationException("Approval is no longer actionable.");
+                }
+                if (normalized == "rejected")
+                    nonceToCleanup = row.NonceSecretReference;
+                db.ApprovalDecisions.Add(new ApprovalDecisionRecord
+                {
+                    Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
+                    DecidedByPrincipalId = decidedByPrincipalId ?? scope.PrincipalId, CreatedAt = now
+                });
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                return new ToolApprovalDecision(row.Id, normalized, row.RunId, row.TaskId, row.ExecutionId, now);
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (nonceToCleanup is not null)
+                await CleanupApprovalNonceAsync(approvalId, nonceToCleanup, cancellationToken).ConfigureAwait(false);
+            return decided;
+        }
+        catch (InvalidOperationException) when (nonceToCleanup is not null)
+        {
+            await CleanupApprovalNonceAsync(approvalId, nonceToCleanup, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private async Task<ToolExecutionRecord> GetExecutionForWriteAsync(Guid executionId, CancellationToken cancellationToken)

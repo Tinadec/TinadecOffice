@@ -15,6 +15,28 @@ public sealed class AutoApprovePolicyTests
     private static readonly CapabilityRule AllowToolFile = new("allow", "tool.file", "tool.invoke", "tool://*");
 
     [Fact]
+    public async Task ToolApprovalPolicy_DefaultRiskMaxIsMedium_WhilePreservingHumanRedlines()
+    {
+        var policy = ToolApprovalPolicy.Default;
+        var auto = new ToolApprovalAutoPolicy(Options.Create(new AutoApproveOptions()), new FixedPolicySource(policy));
+        var runId = Guid.NewGuid();
+
+        Assert.Equal("medium", policy.RiskMax);
+        Assert.Equal("medium", policy.DelegatedRiskMax);
+        Assert.True(policy.Enabled);
+        Assert.True((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "low", runId))).Approved);
+        Assert.True((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "medium", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "elevated", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "high", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "critical", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("shell", "low", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("command_run", "low", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("git_push", "low", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("file_delete", "low", runId))).Approved);
+        Assert.False((await auto.EvaluateAsync(new ToolApprovalAutoPolicyContext("delete_item", "low", runId))).Approved);
+    }
+
+    [Fact]
     public async Task AutoPolicy_DisabledByDefault_KeepsUnauthorizedApprover()
     {
         await using var harness = await GovernanceHarness.CreateAsync();

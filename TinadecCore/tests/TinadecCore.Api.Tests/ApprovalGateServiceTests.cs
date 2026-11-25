@@ -96,6 +96,46 @@ public sealed class ApprovalGateServiceTests : IAsyncLifetime
         Assert.Equal("pending", (await db.ApprovalRequests.SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task GateTransitions_EmitApprovalGateUpdatedEvents_WithSnakeCasePayload()
+    {
+        var events = new List<(string EventType, string PayloadJson)>();
+        var approvals = new FakeApprovalCoordinator(_lifecycleFactory, _tenant);
+        var lifecycleManager = RecordingLifecycleProxy.Create(events);
+        var approvingJudge = new VerdictJudge("approve", "Safe low-risk write.");
+
+        await using var customServices = new ServiceCollection()
+            .AddSingleton<IApprovalGateJudge>(approvingJudge)
+            .AddSingleton<IApprovalRules, AlwaysOptedIn>()
+            .AddSingleton<IToolApprovalCoordinator>(approvals)
+            .AddSingleton<ILifecycleManager>(lifecycleManager)
+            .BuildServiceProvider();
+        using var service = new ApprovalGateService(
+            customServices,
+            _lifecycleFactory,
+            _graphFactory,
+            _tenant,
+            NullLogger<ApprovalGateService>.Instance,
+            Options.Create(new ApprovalGateOptions { BatchSize = 1, Parallelism = 1 }));
+
+        var id = Assert.Single(await SeedAsync(1, "write_file", "low"));
+        Assert.Equal(1, await service.RunPassAsync());
+
+        var gateUpdates = events.Where(e => e.EventType == "approval.gate_updated").ToList();
+        Assert.Equal(2, gateUpdates.Count);
+
+        using var firstDoc = System.Text.Json.JsonDocument.Parse(gateUpdates[0].PayloadJson);
+        Assert.Equal(id, firstDoc.RootElement.GetProperty("approval_id").GetGuid());
+        Assert.NotEqual(Guid.Empty, firstDoc.RootElement.GetProperty("session_id").GetGuid());
+        Assert.Equal("evaluating", firstDoc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("evaluating", firstDoc.RootElement.GetProperty("gates")[0].GetProperty("status").GetString());
+
+        using var secondDoc = System.Text.Json.JsonDocument.Parse(gateUpdates[1].PayloadJson);
+        Assert.Equal("approved", secondDoc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("approved", secondDoc.RootElement.GetProperty("gates")[0].GetProperty("status").GetString());
+        Assert.Equal("reviewer_agent", secondDoc.RootElement.GetProperty("gates")[0].GetProperty("gate_kind").GetString());
+    }
+
     private async Task<Guid[]> SeedAsync(int count, string tool, string risk)
     {
         await using var db = _lifecycleFactory.CreateDbContext();
@@ -148,5 +188,56 @@ public sealed class ApprovalGateServiceTests : IAsyncLifetime
         public Task<ApprovalRuleView?> MatchCommandAsync(Guid sessionId, string tool, string command, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<bool> VerifyCommandRuleAsync(Guid id, Guid runId, string tool, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ApprovalRuleView> RecordUseAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class VerdictJudge(string decision, string rationale) : IApprovalGateJudge
+    {
+        public Task<ApprovalGateVerdict> JudgeAsync(ApprovalGateRequest request, CancellationToken ct = default) =>
+            Task.FromResult(new ApprovalGateVerdict(decision, rationale, "{}", "reviewer"));
+    }
+
+    private sealed class FakeApprovalCoordinator(IDbContextFactory<LifecycleDbContext> factory, ITenantContextAccessor tenant) : IToolApprovalCoordinator
+    {
+        public Task<Guid> CreateToolApprovalAsync(string sessionId, string runId, string taskId, string toolId, string parametersHash, string summary, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+        public Task<bool> TryConsumeApprovalAsync(Guid approvalId, string executionId, string expectedRequestHash, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+        public async Task<ToolApprovalDecision> DecideAsync(Guid approvalId, string decision, string? reason, CancellationToken ct = default)
+        {
+            var scope = tenant.Current;
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var row = await db.ApprovalRequests.SingleAsync(x => x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, ct);
+            row.Status = decision;
+            row.Decision = decision;
+            row.DecisionReason = reason;
+            row.DecidedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return new ToolApprovalDecision(row.Id, decision, row.RunId, row.TaskId, row.ExecutionId, row.DecidedAt.Value);
+        }
+    }
+
+    public class RecordingLifecycleProxy : System.Reflection.DispatchProxy
+    {
+        private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
+        public List<(string EventType, string PayloadJson)> Events { get; set; } = [];
+
+        public static ILifecycleManager Create(List<(string EventType, string PayloadJson)> events)
+        {
+            var proxy = Create<ILifecycleManager, RecordingLifecycleProxy>();
+            ((RecordingLifecycleProxy)(object)proxy).Events = events;
+            return proxy;
+        }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == nameof(ILifecycleManager.AppendEventAsync) && args is { Length: >= 3 })
+            {
+                var eventType = args[1] as string ?? string.Empty;
+                var payloadJson = System.Text.Json.JsonSerializer.Serialize(args[2], JsonOptions);
+                Events.Add((eventType, payloadJson));
+                return Task.FromResult((long)Events.Count);
+            }
+            throw new NotSupportedException(targetMethod?.Name);
+        }
     }
 }

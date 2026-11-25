@@ -642,7 +642,19 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                     }, cancellationToken, execution.TaskId, execution.ToolId, "warning").ConfigureAwait(false);
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.OutcomeUnknown, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.OutcomeUnknown, Message = start.Message };
             case "not_approved":
-                return new ToolDispatchResultDto { Status = ToolDispatchStatus.NotApproved, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "not_approved", Message = start.Message };
+                return new ToolDispatchResultDto
+                {
+                    Status = ToolDispatchStatus.NotApproved,
+                    ExecutionId = executionId,
+                    ApprovalId = execution.ApprovalId?.ToString(),
+                    Attempt = execution.Attempt,
+                    ErrorCategory = "not_approved",
+                    Message = start.Message,
+                    Outcome = start.Execution?.Outcome ?? ToolOutcomes.Blocked,
+                    Retryable = start.Execution?.Retryable ?? false,
+                    PolicyRef = start.Execution?.PolicyRef,
+                    AgentGuidance = start.Execution?.AgentGuidance
+                };
             case "cancelled":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.Cancelled, Message = start.Message };
             case "completed":
@@ -2585,7 +2597,10 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         authorization.AuthorizationDecisionId is { } decision && decision != Guid.Empty
             ? $"authorization_decision:{decision:N}"
             : authorization.ErrorCategory is { Length: > 0 } reason ? $"policy:{reason}" : null,
-        "Policy denied this call; do not retry it with the same arguments. Change the request or report the blockage.");
+        string.Equals(authorization.ErrorCategory, RunErrorTaxonomy.ApproverRejected, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(authorization.Message)
+            ? $"The user rejected this tool call with feedback: {authorization.Message}"
+            : "Policy denied this call; do not retry it with the same arguments. Change the request or report the blockage.");
 
     /// <summary>
     /// Top-level string arguments as a lookup for <see cref="ResourceClaimResolver"/>. Only strings

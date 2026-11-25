@@ -253,6 +253,7 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
                 .SetProperty(gate => gate.ClaimedAtUnixMs, claim)
                 .SetProperty(gate => gate.Revision, gate => gate.Revision + 1), ct).ConfigureAwait(false);
         if (claimed != 1) return false;
+        await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
 
         var judge = _services.GetService<IApprovalGateJudge>();
         var verdict = judge is null
@@ -282,13 +283,19 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
         if (status == ApprovalGateStatuses.Approved)
         {
             // Only the last gate's approval decides; an earlier one just lets the next gate be asked.
-            if (gates.Any(gate => gate.GateIndex > next.GateIndex)) return true;
+            if (gates.Any(gate => gate.GateIndex > next.GateIndex))
+            {
+                await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
+                return true;
+            }
             await ApplyAsync(candidate, await GatesOfAsync(db, candidate.ApprovalId, ct).ConfigureAwait(false), "approved", ct).ConfigureAwait(false);
             return true;
         }
         await SkipAfterAsync(db, candidate.ApprovalId, next.GateIndex, ct).ConfigureAwait(false);
         if (status == ApprovalGateStatuses.Rejected)
             await ApplyAsync(candidate, await GatesOfAsync(db, candidate.ApprovalId, ct).ConfigureAwait(false), "rejected", ct).ConfigureAwait(false);
+        else
+            await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
         return true;
     }
 
@@ -344,6 +351,7 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
         if (changed != 1) return false;
         await SkipAfterAsync(db, candidate.ApprovalId, open.GateIndex, ct).ConfigureAwait(false);
         await AppendGateEventAsync(candidate, open, ApprovalGateStatuses.Escalated, null, reason, ct).ConfigureAwait(false);
+        await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
         return true;
     }
 
@@ -377,8 +385,10 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
                 .ExecuteUpdateAsync(set => set
                     .SetProperty(gate => gate.Status, ApprovalGateStatuses.Superseded)
                     .SetProperty(gate => gate.Revision, gate => gate.Revision + 1), ct).ConfigureAwait(false);
+            await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
             return false;
         }
+        await EmitGateUpdatedAsync(candidate, ct).ConfigureAwait(false);
         if (_services.GetService<ILifecycleManager>() is { } lifecycle)
         {
             await lifecycle.AppendEventAsync(candidate.RunId, "approval.decided", new
@@ -424,6 +434,49 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.TryLogDebug(ex, "Could not record gate {Gate} of approval {ApprovalId}.", gate.GateKind, candidate.ApprovalId);
+        }
+    }
+
+    public Task<ApprovalGatesDto?> GetGatesAsync(Guid approvalId, CancellationToken cancellationToken = default) =>
+        GetAsync(approvalId, cancellationToken);
+
+    private async Task EmitGateUpdatedAsync(Candidate candidate, CancellationToken ct)
+    {
+        if (_services.GetService<ILifecycleManager>() is not { } lifecycle) return;
+        try
+        {
+            var snapshot = await GetGatesAsync(candidate.ApprovalId, ct).ConfigureAwait(false);
+            if (snapshot is null) return;
+            await lifecycle.AppendEventAsync(
+                candidate.RunId,
+                "approval.gate_updated",
+                new
+                {
+                    approval_id = candidate.ApprovalId,
+                    session_id = candidate.SessionId,
+                    status = snapshot.Status,
+                    gates = snapshot.Gates.Select(gate => new
+                    {
+                        gate_index = gate.GateIndex,
+                        gate_kind = gate.GateKind,
+                        status = gate.Status,
+                        decider_agent = gate.DeciderAgent,
+                        reason = gate.Reason,
+                        evidence = gate.Evidence,
+                        created_at = gate.CreatedAt,
+                        decided_at = gate.DecidedAt
+                    }).ToArray()
+                },
+                $"Delegated approval gates updated ({snapshot.Status}) for '{candidate.ToolId}'.",
+                snapshot.Status is "rejected" or "escalated" ? "warning" : "info",
+                candidate.TaskId,
+                candidate.ApprovalId,
+                candidate.ToolId,
+                cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.TryLogDebug(ex, "Could not emit gate update for approval {ApprovalId}.", candidate.ApprovalId);
         }
     }
 

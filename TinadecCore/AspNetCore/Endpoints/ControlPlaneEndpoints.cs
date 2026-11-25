@@ -116,10 +116,15 @@ public static class ControlPlaneEndpoints
             return await service.PreviewPromptContext(body ?? EmptyJsonObject(), ct);
         });
 
+        app.MapGet("/api/v1/approvals/policy", (ControlPlaneService service) => service.GetApprovalPolicy())
+            .Produces<ApprovalPolicySummaryDto>();
+        app.MapPost("/api/v1/approvals/batch-decision", (BatchApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.BatchDecideApprovals(input, ct))
+            .Produces<BatchApprovalDecisionResponseDto>();
         app.MapPost("/api/v1/approvals/pre-authorizations", (PreAuthorizationRequestDto input, ControlPlaneService service, CancellationToken ct) => service.CreatePreAuthorization(input, ct));
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
         app.MapGet("/api/v1/approvals/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.GetApproval(id, ct));
-        app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct));
+        app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct))
+            .Produces<ApprovalDecisionResponseDto>();
         // The delegated gates of one approval (delegate-* permission modes): who was asked, what each
         // decided and what each was shown. 404 when the approval was never delegated.
         // (Named approvalId, not id: the Gateway's approval routes already bind that segment by this name.)
