@@ -7,6 +7,7 @@ import { hostRuntimeTarget } from "./runtimeTargets.mjs";
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = join(desktopDir, ".runtime-cache", "tmp");
 const ARTIFACT_LABEL_RE = /^[0-9A-Za-z._-]+$/u;
+const VALID_COMPRESSIONS = new Set(["store", "normal", "maximum"]);
 
 // electron-builder's own flag names, keyed by the platform facts module so the packaging entry and
 // the staged runtime can never disagree about which platforms exist.
@@ -58,20 +59,39 @@ export function artifactLabelOverrides(targetKey, { artifactLabel, packageVersio
 	}
 }
 
+export function compressionOverrides({
+	compression = process.env.OFFICE_BUILDER_COMPRESSION,
+} = {}) {
+	if (compression === undefined || compression === null) return [];
+	const mode = String(compression).trim();
+	if (!mode) return [];
+	if (!VALID_COMPRESSIONS.has(mode)) {
+		throw new Error(
+			`Invalid builder compression '${mode}'. Expected one of: store, normal, maximum (or empty for default).`,
+		);
+	}
+	return [`-c.compression=${mode}`];
+}
+
 export function builderArgs(
 	targetKey,
 	extra = [],
 	{
 		artifactLabel = process.env.OFFICE_ARTIFACT_LABEL,
 		packageVersion = readDesktopVersion(),
+		compression = process.env.OFFICE_BUILDER_COMPRESSION,
 	} = {},
 ) {
 	const entry = requireBuilderTarget(targetKey);
-	const overrides = artifactLabelOverrides(targetKey, { artifactLabel, packageVersion });
+	const overrides = [
+		...artifactLabelOverrides(targetKey, { artifactLabel, packageVersion }),
+		...compressionOverrides({ compression }),
+	];
 	return [entry.flag, entry.arch, "--publish", "never", ...overrides, ...extra];
 }
 
-const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+const isDirectRun =
+	process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (isDirectRun) {
 	const target = hostRuntimeTarget();

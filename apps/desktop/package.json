@@ -9,6 +9,7 @@
     "dev": "bun scripts/dev.mjs",
     "electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "vue-tsc --noEmit && vite build",
+    "build:vite": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run && bun ../../scripts/run-node-tests.mjs electron scripts",
     "generate:client": "openapi-typescript ../../TinadecGateway/tests/__snapshots__/openapi.external.json -o src/generated/schema.d.ts",
@@ -17,16 +18,16 @@
     "typecheck": "vue-tsc --noEmit",
     "stage:runtime": "bun scripts/stage-runtime.mjs",
     "check:runtime": "bun scripts/check-runtime.mjs",
-    "package:win": "bun run rebuild:native && bun run build && bun run stage:runtime && bun run check:runtime && bun scripts/package.mjs",
-    "package:portable": "bun run rebuild:native && bun run build && bun run stage:runtime && bun run check:runtime && bun scripts/package.mjs portable",
+    "package:win": "bun scripts/run-package.mjs",
+    "package:portable": "bun scripts/run-package.mjs portable",
     "verify:package": "bun scripts/verify-package-output.mjs",
     "check:deb": "bun scripts/check-deb-package.mjs",
     "smoke:packaged": "bun scripts/smoke-packaged-windows.mjs",
     "smoke:packaged:posix": "bun scripts/smoke-packaged-posix.mjs",
     "smoke:installed": "bun scripts/smoke-installed-windows.mjs",
     "dist:win": "bun run package:win",
-    "package:linux": "bun run rebuild:native && bun run build && bun run stage:runtime && bun run check:runtime && bun scripts/package.mjs",
-    "package:mac": "bun run rebuild:native && bun run build && bun run stage:runtime && bun run check:runtime && bun scripts/package.mjs"
+    "package:linux": "bun scripts/run-package.mjs",
+    "package:mac": "bun scripts/run-package.mjs"
   },
   "build": {
     "appId": "com.tinadec.office",

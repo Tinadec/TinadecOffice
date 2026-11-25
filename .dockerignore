@@ -17,3 +17,8 @@ scripts
 .claude
 .agents
 .tinadec_dev
+native
+miniapps
+.tinadec
+logs
+signatures
