@@ -351,7 +351,7 @@ function toggleExpanded(): void {
   font-weight: 600;
   line-height: 1.35;
   flex-shrink: 0;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
 }
 
@@ -392,7 +392,7 @@ function toggleExpanded(): void {
 
 .ld-trajectory-link:hover {
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .ld-chapter-head {
@@ -460,7 +460,7 @@ function toggleExpanded(): void {
   max-width: 100%;
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
@@ -521,7 +521,7 @@ function toggleExpanded(): void {
   margin: 0;
   padding: 6px 8px;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.5;
@@ -531,7 +531,7 @@ function toggleExpanded(): void {
   margin: 0;
   padding: 6px 8px;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -615,7 +615,7 @@ function toggleExpanded(): void {
   padding: 3px 7px;
   border-radius: 5px;
   border: 0;
-  background: var(--bg-secondary);
+  background: var(--surface-button, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11.5px;
   font-weight: 500;
@@ -625,7 +625,7 @@ function toggleExpanded(): void {
 }
 
 .ld-link-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 

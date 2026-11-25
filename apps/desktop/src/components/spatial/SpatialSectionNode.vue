@@ -371,11 +371,16 @@ function onOpenDigest() {
   min-height: 36px;
   padding: 6px 10px;
   border-radius: 15px 15px 0 0;
-  background: var(--section-header-bg);
-  border-bottom: 1px solid var(--section-border);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--section-swatch) 12%, var(--material-floating-bg, var(--surface-raised)));
+  border-bottom: 1px solid var(--material-floating-border, var(--section-border));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   cursor: grab;
   user-select: none;
+}
+
+.spatial-section-node[data-section-tone='neutral'] .spatial-section-header {
+  background: var(--material-floating-bg, var(--surface-raised));
 }
 
 .spatial-section-header-main {

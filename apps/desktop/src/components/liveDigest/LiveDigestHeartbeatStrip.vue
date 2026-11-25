@@ -187,7 +187,7 @@ function handleOpenPanel(): void {
   padding: 0 10px;
   border-radius: var(--radius-control-md, 8px);
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1;
@@ -196,7 +196,7 @@ function handleOpenPanel(): void {
 }
 
 .ld-heartbeat-bar:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   border-color: var(--border-default);
 }
 
@@ -245,7 +245,7 @@ function handleOpenPanel(): void {
   align-items: center;
   padding: 2px 6px;
   border-radius: 999px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -276,7 +276,7 @@ function handleOpenPanel(): void {
   gap: 3px;
   padding: 2px 6px;
   border-radius: 999px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   color: var(--text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -302,7 +302,7 @@ function handleOpenPanel(): void {
   width: 34px;
   height: 4px;
   border-radius: 999px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   overflow: hidden;
 }
 

@@ -275,7 +275,8 @@ function onCursorPillClick(item: CursorView, event: Event) {
         'is-paused': item.paused,
       }"
       :style="{
-        transform: `translate3d(${item.screenX.toFixed(1)}px, ${item.screenY.toFixed(1)}px, 0)`,
+        left: `${item.screenX.toFixed(1)}px`,
+        top: `${item.screenY.toFixed(1)}px`,
       }"
       :data-cursor-client="item.collaborator.clientId"
     >
@@ -400,8 +401,7 @@ function onCursorPillClick(item: CursorView, event: Event) {
   display: inline-flex;
   align-items: flex-start;
   pointer-events: none;
-  transition: transform 80ms linear;
-  will-change: transform;
+  transition: left 80ms linear, top 80ms linear;
 }
 
 .spatial-cursor-arrow {
@@ -454,9 +454,10 @@ function onCursorPillClick(item: CursorView, event: Event) {
   max-width: 244px;
   padding: 4px 9px;
   border-radius: 999px;
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--surface-raised, var(--bg-overlay)) 88%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-family: inherit;
   font-size: 11px;
@@ -473,7 +474,7 @@ function onCursorPillClick(item: CursorView, event: Event) {
 
 .spatial-cursor-thought-bubble:hover {
   border-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--surface-raised, var(--bg-overlay)) 96%, transparent);
+  box-shadow: var(--shadow-elevated, 0 6px 18px rgba(0, 0, 0, 0.22));
 }
 
 .spatial-cursor-thought-bubble.is-paused {
@@ -537,17 +538,20 @@ function onCursorPillClick(item: CursorView, event: Event) {
 .spatial-follow-hud {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 5px 8px 5px 12px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--follow-color, var(--accent-primary)) 52%, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-raised, var(--bg-overlay)) 92%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid color-mix(in srgb, var(--follow-color, var(--accent-primary)) 52%, var(--material-floating-border, var(--border-muted)));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;

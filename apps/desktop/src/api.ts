@@ -233,6 +233,13 @@ export type UiAccentPreference =
   | 'cyan'
   | 'yellow';
 export type UiPanelEffectPreference = 'solid' | 'translucent' | 'blur';
+export type UiPanelPresetPreference =
+  | 'solid'
+  | 'frosted'
+  | 'crystal'
+  | 'mica'
+  | 'translucent'
+  | 'custom';
 export type UiWorkspaceViewPreference = 'grid' | 'list';
 export type UiWorkspaceFolderTone = 'amber' | 'teal' | 'sky' | 'coral' | 'frost';
 export type UiWorkspaceDropAction = 'link' | 'copy' | 'ask';
@@ -244,6 +251,10 @@ export interface UiAppearancePreferencesDto {
   accent: UiAccentPreference;
   custom_accent_hex: string;
   panel_effect: UiPanelEffectPreference;
+  panel_preset?: UiPanelPresetPreference;
+  panel_opacity?: number;
+  panel_blur?: number;
+  panel_saturation?: number;
   workspace_view: UiWorkspaceViewPreference;
   workspace_folder_tone: UiWorkspaceFolderTone;
 }

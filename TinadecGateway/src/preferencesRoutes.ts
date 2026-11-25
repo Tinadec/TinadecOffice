@@ -5,6 +5,7 @@ import {
   externalJsonResponse,
   UI_PREFERENCES_ACCENTS,
   UI_PREFERENCES_PANEL_EFFECTS,
+  UI_PREFERENCES_PANEL_PRESETS,
   UI_PREFERENCES_REDUCED_MOTIONS,
   UI_PREFERENCES_SPATIAL_PROMOTE_MODES,
   UI_PREFERENCES_THEMES,
@@ -22,21 +23,37 @@ export { uiPreferencesOpenApiSchemas as preferencesSchemas };
 const THEME_SET = new Set<string>(UI_PREFERENCES_THEMES);
 const ACCENT_SET = new Set<string>(UI_PREFERENCES_ACCENTS);
 const PANEL_EFFECT_SET = new Set<string>(UI_PREFERENCES_PANEL_EFFECTS);
+const PANEL_PRESET_SET = new Set<string>(UI_PREFERENCES_PANEL_PRESETS);
 const WORKSPACE_VIEW_SET = new Set<string>(UI_PREFERENCES_WORKSPACE_VIEWS);
 const WORKSPACE_FOLDER_TONE_SET = new Set<string>(UI_PREFERENCES_WORKSPACE_FOLDER_TONES);
 const WORKSPACE_DROP_ACTION_SET = new Set<string>(UI_PREFERENCES_WORKSPACE_DROP_ACTIONS);
 const SPATIAL_PROMOTE_MODE_SET = new Set<string>(UI_PREFERENCES_SPATIAL_PROMOTE_MODES);
 const REDUCED_MOTION_SET = new Set<string>(UI_PREFERENCES_REDUCED_MOTIONS);
 
+const PANEL_PRESET_DEFAULT_EFFECT: Record<string, string> = {
+  solid: 'solid',
+  frosted: 'blur',
+  crystal: 'blur',
+  mica: 'blur',
+  translucent: 'translucent',
+};
+
 const PUT_ROOT_KEYS = new Set(['expected_content_hash', 'reset_defaults', 'appearance', 'interaction']);
 const PATCH_ROOT_KEYS = new Set(['expected_content_hash', 'appearance', 'interaction']);
-const APPEARANCE_KEYS = new Set([
+const APPEARANCE_REQUIRED_PUT_KEYS = new Set([
   'theme',
   'accent',
   'custom_accent_hex',
   'panel_effect',
   'workspace_view',
   'workspace_folder_tone',
+]);
+const APPEARANCE_KEYS = new Set([
+  ...APPEARANCE_REQUIRED_PUT_KEYS,
+  'panel_preset',
+  'panel_opacity',
+  'panel_blur',
+  'panel_saturation',
 ]);
 const INTERACTION_KEYS = new Set([
   'workspace_drop_action',
@@ -107,8 +124,15 @@ function validateAppearanceSection(
     }
   }
   if (requireAllFields) {
-    for (const requiredKey of APPEARANCE_KEYS) {
+    for (const requiredKey of APPEARANCE_REQUIRED_PUT_KEYS) {
       if (raw[requiredKey] === undefined || raw[requiredKey] === null) {
+        if (
+          requiredKey === 'panel_effect'
+          && typeof raw.panel_preset === 'string'
+          && raw.panel_preset in PANEL_PRESET_DEFAULT_EFFECT
+        ) {
+          continue;
+        }
         return { ok: false, detail: `Missing required appearance preference "${requiredKey}".` };
       }
     }
@@ -155,8 +179,15 @@ function validateAppearanceSection(
   if ('panel_effect' in raw) {
     const v = raw.panel_effect;
     if (v === null || v === undefined) {
-      if (requireAllFields) return { ok: false, detail: 'appearance.panel_effect is required.' };
-      if (v === null) normalized.panel_effect = null;
+      if (requireAllFields) {
+        if (typeof raw.panel_preset === 'string' && raw.panel_preset in PANEL_PRESET_DEFAULT_EFFECT) {
+          normalized.panel_effect = PANEL_PRESET_DEFAULT_EFFECT[raw.panel_preset];
+        } else {
+          return { ok: false, detail: 'appearance.panel_effect is required.' };
+        }
+      } else if (v === null) {
+        normalized.panel_effect = null;
+      }
     } else if (typeof v !== 'string') {
       return { ok: false, detail: 'Invalid appearance.panel_effect value.' };
     } else {
@@ -165,6 +196,56 @@ function validateAppearanceSection(
         return { ok: false, detail: 'Invalid appearance.panel_effect value.' };
       }
       normalized.panel_effect = mapped;
+    }
+  } else if (
+    requireAllFields
+    && typeof raw.panel_preset === 'string'
+    && raw.panel_preset in PANEL_PRESET_DEFAULT_EFFECT
+  ) {
+    normalized.panel_effect = PANEL_PRESET_DEFAULT_EFFECT[raw.panel_preset];
+  }
+
+  if ('panel_preset' in raw) {
+    const v = raw.panel_preset;
+    if (v === null || v === undefined) {
+      if (v === null) normalized.panel_preset = null;
+    } else if (typeof v !== 'string' || !PANEL_PRESET_SET.has(v)) {
+      return { ok: false, detail: 'Invalid appearance.panel_preset value.' };
+    } else {
+      normalized.panel_preset = v;
+    }
+  }
+
+  if ('panel_opacity' in raw) {
+    const v = raw.panel_opacity;
+    if (v === null || v === undefined) {
+      if (v === null) normalized.panel_opacity = null;
+    } else if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
+      return { ok: false, detail: 'Invalid appearance.panel_opacity value; expected integer 0..100.' };
+    } else {
+      normalized.panel_opacity = v;
+    }
+  }
+
+  if ('panel_blur' in raw) {
+    const v = raw.panel_blur;
+    if (v === null || v === undefined) {
+      if (v === null) normalized.panel_blur = null;
+    } else if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v <= -1 || v > 32) {
+      return { ok: false, detail: 'Invalid appearance.panel_blur value; expected integer 0..32.' };
+    } else {
+      normalized.panel_blur = v;
+    }
+  }
+
+  if ('panel_saturation' in raw) {
+    const v = raw.panel_saturation;
+    if (v === null || v === undefined) {
+      if (v === null) normalized.panel_saturation = null;
+    } else if (typeof v !== 'number' || !Number.isInteger(v) || v < 100 || v > 200) {
+      return { ok: false, detail: 'Invalid appearance.panel_saturation value; expected integer 100..200.' };
+    } else {
+      normalized.panel_saturation = v;
     }
   }
 

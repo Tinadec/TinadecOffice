@@ -417,7 +417,7 @@ function isSegmentActive(seg: ContextCompositionSegment): boolean {
   flex-direction: column;
   gap: 5px;
   padding: 8px 14px 10px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
@@ -519,7 +519,7 @@ function isSegmentActive(seg: ContextCompositionSegment): boolean {
   height: 10px;
   width: 100%;
   border-radius: 5px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   overflow: hidden;
 }
 

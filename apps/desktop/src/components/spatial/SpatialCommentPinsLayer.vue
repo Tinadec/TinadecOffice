@@ -60,7 +60,7 @@ watch(() => props.activePinId, () => {
 function screenPos(x: number, y: number) {
   const sx = x * props.viewport.zoom + props.viewport.x
   const sy = y * props.viewport.zoom + props.viewport.y
-  return { transform: `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0)` }
+  return { left: `${sx.toFixed(1)}px`, top: `${sy.toFixed(1)}px` }
 }
 
 function pinInitial(pin: SpatialCommentPin): string {
@@ -380,9 +380,10 @@ function submitReply() {
   gap: 8px;
   padding: 10px;
   border-radius: 12px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 95%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
   z-index: 12;

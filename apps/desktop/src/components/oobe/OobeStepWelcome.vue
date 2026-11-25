@@ -3,14 +3,25 @@ import { Check, Laptop, Moon, Sun } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { UiSelectField } from '@/components/ui'
 import {
+  PANEL_MATERIAL_PRESETS,
+  usePanelStyles,
+  type NonCustomPanelMaterialPresetId,
+} from '@/composables/usePanelStyles'
+import {
   MONOCHROME_ACCENT_KEY,
   WARM_ACCENT_KEY,
   useTheme,
   type Theme,
 } from '@/composables/useTheme'
+import {
+  panelEffectFromLocal,
+  useUiPreferences,
+  type UiAppearancePreferencesDto,
+} from '@/composables/useUiPreferences'
 
 const { t, te, locale } = useI18n()
 const { theme, setTheme, accentColor, setAccentColor } = useTheme()
+const { panelStyle, applyPreset } = usePanelStyles()
 
 function label(key: string, fallback: string): string {
   return te(key) ? String(t(key)) : fallback
@@ -48,6 +59,58 @@ const themeModes: Array<{ value: Theme; icon: typeof Sun; key: string; fallback:
   { value: 'light', icon: Sun, key: 'settings.themeLight', fallback: '浅色' },
   { value: 'dark', icon: Moon, key: 'settings.themeDark', fallback: '深色' },
 ]
+
+const materialPresets: Array<{
+  id: NonCustomPanelMaterialPresetId
+  titleKey: string
+  titleFallback: string
+  chip: string
+  recommended?: boolean
+}> = [
+  {
+    id: 'solid',
+    titleKey: 'settings.materialPresetSolid',
+    titleFallback: '纯实心',
+    chip: `${PANEL_MATERIAL_PRESETS.solid.opacity}%`,
+  },
+  {
+    id: 'frosted',
+    titleKey: 'settings.materialPresetFrosted',
+    titleFallback: '柔和磨砂',
+    chip: `${PANEL_MATERIAL_PRESETS.frosted.opacity}% · ${PANEL_MATERIAL_PRESETS.frosted.blur}px`,
+    recommended: true,
+  },
+  {
+    id: 'crystal',
+    titleKey: 'settings.materialPresetCrystal',
+    titleFallback: '清透玻璃',
+    chip: `${PANEL_MATERIAL_PRESETS.crystal.opacity}% · ${PANEL_MATERIAL_PRESETS.crystal.blur}px`,
+  },
+  {
+    id: 'mica',
+    titleKey: 'settings.materialPresetMica',
+    titleFallback: '沉稳厚砂',
+    chip: `${PANEL_MATERIAL_PRESETS.mica.opacity}% · ${PANEL_MATERIAL_PRESETS.mica.blur}px`,
+  },
+  {
+    id: 'translucent',
+    titleKey: 'settings.materialPresetTranslucent',
+    titleFallback: '轻半透明',
+    chip: `${PANEL_MATERIAL_PRESETS.translucent.opacity}%`,
+  },
+]
+
+function onSelectMaterialPreset(presetId: NonCustomPanelMaterialPresetId): void {
+  const next = applyPreset(presetId)
+  const uiPrefs = useUiPreferences()
+  void uiPrefs.updateAppearance({
+    panel_preset: next.preset,
+    panel_effect: panelEffectFromLocal(next.effect),
+    panel_opacity: Math.round(next.opacity),
+    panel_blur: Math.round(next.blur),
+    panel_saturation: Math.round(next.saturation),
+  } as Partial<UiAppearancePreferencesDto>)
+}
 
 function onChangeLocale(nextLocale: string): void {
   if (!nextLocale) return
@@ -140,6 +203,39 @@ function onChangeLocale(nextLocale: string): void {
         </div>
       </div>
 
+      <div class="oobe-hairline-row oobe-hairline-row--material" data-testid="oobe-material-row">
+        <div class="oobe-material-head">
+          <span class="oobe-row-label">{{ label('oobe.welcome.materialLabel', '界面材质') }}</span>
+          <span class="oobe-row-hint">{{ label('oobe.welcome.materialCustomHint', '设置中心支持自定义滑块精细调节') }}</span>
+        </div>
+        <div
+          class="oobe-material-grid"
+          role="radiogroup"
+          :aria-label="label('oobe.welcome.materialLabel', '界面材质')"
+          data-testid="oobe-material-presets"
+        >
+          <button
+            v-for="item in materialPresets"
+            :key="item.id"
+            type="button"
+            role="radio"
+            class="oobe-material-pill"
+            :class="{ 'is-active': panelStyle.preset === item.id }"
+            :aria-checked="panelStyle.preset === item.id"
+            :data-testid="`oobe-material-${item.id}`"
+            @click="onSelectMaterialPreset(item.id)"
+          >
+            <span class="oobe-material-pill__top">
+              <span class="oobe-material-pill__title">{{ label(item.titleKey, item.titleFallback) }}</span>
+              <span v-if="item.recommended" class="oobe-material-pill__badge">
+                {{ label('settings.materialRecommendedBadge', '推荐') }}
+              </span>
+            </span>
+            <span class="oobe-material-pill__chip">{{ item.chip }}</span>
+          </button>
+        </div>
+      </div>
+
       <div class="oobe-hairline-row">
         <div class="oobe-row-copy">
           <span class="oobe-row-label">{{ label('oobe.welcome.languageLabel', '界面语言') }}</span>
@@ -219,17 +315,12 @@ function onChangeLocale(nextLocale: string): void {
   cursor: pointer;
   transition:
     border-color 140ms ease,
-    background-color 140ms ease,
-    transform 140ms cubic-bezier(0.2, 0, 0, 1);
+    background-color 140ms ease;
 }
 
 .oobe-palette-card:hover {
   border-color: var(--border-default, var(--border-muted));
   background: var(--surface-raised);
-}
-
-.oobe-palette-card:active {
-  transform: scale(0.99);
 }
 
 .oobe-palette-card.is-selected {
@@ -425,10 +516,115 @@ function onChangeLocale(nextLocale: string): void {
   border-top: 1px solid var(--border-muted);
 }
 
+.oobe-hairline-row--material {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.oobe-material-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .oobe-row-label {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
+}
+
+.oobe-row-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.oobe-material-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+@media (max-width: 520px) {
+  .oobe-material-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.oobe-material-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.oobe-material-pill:hover {
+  border-color: var(--border-default, var(--border-muted));
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.oobe-material-pill.is-active {
+  border-color: var(--text-primary);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-subtle, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
+.oobe-material-pill:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.oobe-material-pill__top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.oobe-material-pill__title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: inherit;
+}
+
+.oobe-material-pill__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.oobe-material-pill__chip {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 .oobe-mode-segmented {

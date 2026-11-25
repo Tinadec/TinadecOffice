@@ -672,25 +672,26 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 1400;
-  background: color-mix(in srgb, var(--bg-overlay, rgba(0, 0, 0, 0.65)) 72%, transparent);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.48);
 }
 
 .dir-picker-modal {
   position: fixed;
-  top: 50%;
-  left: 50%;
+  inset: 0;
+  margin: auto;
   z-index: 1401;
-  transform: translate(-50%, -50%);
   width: min(680px, calc(100vw - 32px));
+  height: fit-content;
   max-height: min(640px, calc(100vh - 40px));
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 18px;
   border-radius: var(--radius-lg, 12px);
-  border: 1px solid var(--border-muted, var(--border-default));
-  background: var(--surface-raised, var(--bg-secondary));
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: var(--shadow-panel, 0 20px 50px rgba(0, 0, 0, 0.35));
   outline: none;
@@ -746,7 +747,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   border-radius: 999px;
   border: 1px solid var(--border-muted, var(--border-default));
-  background: var(--surface-section, var(--bg-primary));
+  background: var(--surface-section);
   color: var(--text-secondary);
   cursor: pointer;
   transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
@@ -756,7 +757,7 @@ onBeforeUnmount(() => {
 .dir-picker-root-chip:hover {
   border-color: var(--accent-primary);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-section, var(--bg-primary)));
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-section));
 }
 
 .dir-picker-nav {
@@ -777,7 +778,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border-radius: 9px;
   border: 1px solid var(--border-muted, var(--border-default));
-  background: var(--surface-section, var(--bg-primary));
+  background: var(--surface-section);
 }
 
 .dir-picker-mkdir-input {
@@ -818,7 +819,7 @@ onBeforeUnmount(() => {
   padding: 4px;
   border-radius: 10px;
   border: 1px solid var(--border-muted, var(--border-default));
-  background: var(--bg-primary);
+  background: var(--surface-section, var(--surface-canvas));
 }
 
 .dir-picker-state {
@@ -925,7 +926,7 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--border-muted, var(--border-default));
-  background: var(--surface-section, var(--bg-primary));
+  background: var(--surface-section);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 11px;

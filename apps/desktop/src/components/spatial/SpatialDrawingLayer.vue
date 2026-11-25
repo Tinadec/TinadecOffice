@@ -335,16 +335,19 @@ function onStrokeClick(id: string) {
 .spatial-drawing-hint {
   position: absolute;
   top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 90%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;

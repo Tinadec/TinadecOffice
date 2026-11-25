@@ -6,6 +6,7 @@ import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
 import { api as baseApi, type ApprovalDto, type ApprovalRememberRuleInput, type ApprovalRuleDto, type BatchApprovalDecisionInput, type CreateApprovalRuleInput, type EventEnvelope, type OrchestrationRunDto, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { setSelectedStorage, registerSessionStorage, scopedApi } from '@/lib/storageScope'
 import { useTheme } from '@/composables/useTheme'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { selectPrimaryRunId } from '@/composables/useLiveDigest'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
@@ -51,8 +52,11 @@ setSelectedStorage(storageId.value)
 if (sessionId.value) registerSessionStorage(sessionId.value, storageId.value)
 const api = scopedApi(baseApi, () => storageId.value)
 
-// ---- Initialize theme (independent window) ----
+// ---- Initialize theme & material system (independent window) ----
 const { applyInitialTheme, theme, accentColor } = useTheme()
+const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
+const materialStyle = computed(() => getPanelStyle())
+const materialAttributes = computed(() => getPanelDataAttributes())
 
 // ---- Loading and error state ----
 const loading = ref(true)
@@ -254,7 +258,7 @@ watch(sessionId, () => {
 </script>
 
 <template>
-  <main class="detached-panel-shell">
+  <main class="detached-panel-shell" :style="materialStyle" v-bind="materialAttributes">
     <!-- Custom title bar (frameless window) -->
     <header
       class="detached-titlebar"
@@ -412,7 +416,9 @@ watch(sessionId, () => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-primary);
+  background: var(--material-floating-bg, var(--surface-canvas, var(--bg-primary)));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   overflow: hidden;
 }
 
@@ -420,10 +426,8 @@ watch(sessionId, () => {
   display: flex;
   align-items: center;
   height: 38px;
-  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: none;
+  background: var(--surface-chrome, transparent);
+  border-bottom: 1px solid var(--material-floating-border, var(--border-muted));
   flex-shrink: 0;
   position: relative;
 }

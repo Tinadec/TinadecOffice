@@ -169,9 +169,10 @@ function onOpenClick() {
   height: 20px;
   padding: 0 7px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-default, var(--border-muted)) 78%, transparent);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 92%, transparent);
-  backdrop-filter: blur(8px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 10.5px;
   font-weight: 600;
@@ -224,9 +225,10 @@ function onOpenClick() {
   max-width: 260px;
   padding: 7px 9px;
   border-radius: 9px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #18181b) 96%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
   pointer-events: none;

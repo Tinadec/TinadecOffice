@@ -906,7 +906,7 @@ function handleExportHtml(): void {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
 }
 
@@ -914,7 +914,7 @@ function handleExportHtml(): void {
   flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .twb-turnbar-row {
@@ -930,7 +930,7 @@ function handleExportHtml(): void {
   padding: 0 7px;
   border: 1px solid var(--border-default);
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 10.5px;
   cursor: pointer;
@@ -948,14 +948,14 @@ function handleExportHtml(): void {
   justify-content: center;
   border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   cursor: pointer;
 }
 
 .twb-icon-btn:hover {
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -973,7 +973,7 @@ function handleExportHtml(): void {
 .twb-header-popover {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   display: flex;
   justify-content: center;
 }
@@ -984,7 +984,7 @@ function handleExportHtml(): void {
   gap: 7px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11.5px;
   line-height: 1.4;
@@ -996,7 +996,7 @@ function handleExportHtml(): void {
   gap: 4px;
   padding: 7px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .twb-finding-row {
@@ -1026,7 +1026,7 @@ function handleExportHtml(): void {
   gap: 16px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   overflow-x: auto;
 }
 
@@ -1082,7 +1082,7 @@ function handleExportHtml(): void {
 .twb-overlap-toggle-row {
   padding: 8px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .twb-overlap-switch {

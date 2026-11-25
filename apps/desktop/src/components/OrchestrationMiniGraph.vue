@@ -1080,7 +1080,7 @@ const flowEdges = computed<Edge[]>(() =>
         fill: 'var(--text-muted)',
       },
       labelBgStyle: {
-        fill: 'var(--bg-primary)',
+        fill: 'var(--surface-raised, var(--bg-primary))',
         fillOpacity: 0.9,
       },
     }
@@ -1309,7 +1309,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   min-width: 0;
   border: 1px solid var(--obs-hairline, var(--border-muted));
   border-radius: 8px;
-  background: var(--obs-surface, var(--bg-primary));
+  background: var(--obs-surface, var(--surface-canvas, var(--bg-primary)));
   overflow: hidden;
   transition: height 0.18s ease;
   font-variant-numeric: tabular-nums;
@@ -1334,7 +1334,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   padding: 0;
   border: 1px solid var(--obs-hairline, var(--border-muted));
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
@@ -1343,7 +1343,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 .mini-graph-fit-btn:hover {
   color: var(--text-primary);
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .orchestration-mini-graph :deep(.vue-flow__node-default),
@@ -1394,7 +1394,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   box-sizing: border-box;
   padding: 8px 10px;
   border-radius: 7px;
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
   border: 1px solid var(--obs-hairline, var(--border-muted));
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   display: flex;
@@ -1417,7 +1417,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 
 .mini-topo-node--coordinator {
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .mini-topo-status--running {
@@ -1497,7 +1497,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 }
 
 .mini-topo-steer-btn:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -1531,7 +1531,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   padding: 1px 5px;
   border-radius: 4px;
   color: var(--text-secondary);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .mini-topo-node--coordinator .mini-topo-tier {
@@ -1554,7 +1554,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .mini-topo-status-pill.pill--running {
@@ -1570,7 +1570,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
 
 .mini-topo-status-pill.pill--completed {
   color: var(--text-secondary);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .mini-topo-status-pill.pill--failed {
@@ -1585,7 +1585,7 @@ function onFlowNodeClick(event: { node: { id: string }; event?: Event }): void {
   max-width: 118px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 9.5px;

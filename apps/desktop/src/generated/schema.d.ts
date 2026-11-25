@@ -5213,8 +5213,13 @@ export interface components {
       /** @enum {string} */
       accent: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow";
       custom_accent_hex: string;
+      panel_blur?: string | number;
       /** @enum {string} */
       panel_effect: "solid" | "translucent" | "blur";
+      panel_opacity?: string | number;
+      /** @enum {string} */
+      panel_preset?: "solid" | "frosted" | "crystal" | "mica" | "translucent" | "custom";
+      panel_saturation?: string | number;
       /** @enum {string} */
       theme: "dark" | "light" | "system";
       /** @enum {string} */
@@ -5226,8 +5231,13 @@ export interface components {
       /** @enum {string} */
       accent: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow";
       custom_accent_hex: string;
+      panel_blur?: number | null;
       /** @enum {string} */
       panel_effect: "solid" | "translucent" | "blur" | "opaque";
+      panel_opacity?: number | null;
+      /** @enum {string|null} */
+      panel_preset?: "solid" | "frosted" | "crystal" | "mica" | "translucent" | "custom" | null;
+      panel_saturation?: number | null;
       /** @enum {string} */
       theme: "dark" | "light" | "system";
       /** @enum {string} */
@@ -5239,8 +5249,13 @@ export interface components {
       /** @enum {string|null} */
       accent?: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow" | null;
       custom_accent_hex?: string | null;
+      panel_blur?: number | null;
       /** @enum {string|null} */
       panel_effect?: "solid" | "translucent" | "blur" | "opaque" | null;
+      panel_opacity?: number | null;
+      /** @enum {string|null} */
+      panel_preset?: "solid" | "frosted" | "crystal" | "mica" | "translucent" | "custom" | null;
+      panel_saturation?: number | null;
       /** @enum {string|null} */
       theme?: "dark" | "light" | "system" | null;
       /** @enum {string|null} */

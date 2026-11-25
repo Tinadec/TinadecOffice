@@ -823,7 +823,7 @@ function handleExportOfflineReport(): void {
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
 }
 
@@ -842,7 +842,7 @@ function handleExportOfflineReport(): void {
   gap: 8px 18px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .eval-kpi-item {
@@ -917,7 +917,7 @@ function handleExportOfflineReport(): void {
   padding: 0 9px;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
@@ -927,7 +927,7 @@ function handleExportOfflineReport(): void {
 
 .eval-export-btn:hover {
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -1124,13 +1124,13 @@ function handleExportOfflineReport(): void {
 
 .eval-shape-clean {
   fill: var(--eval-blue);
-  stroke: var(--bg-primary);
+  stroke: var(--surface-canvas, var(--bg-primary));
   stroke-width: 1;
 }
 
 .eval-shape-error {
   fill: var(--eval-red);
-  stroke: var(--bg-primary);
+  stroke: var(--surface-canvas, var(--bg-primary));
   stroke-width: 1;
 }
 
@@ -1139,7 +1139,7 @@ function handleExportOfflineReport(): void {
 }
 
 .eval-pill-text--a {
-  fill: var(--bg-primary);
+  fill: var(--text-on-primary, var(--bg-primary));
   font-size: 9.5px;
   font-weight: 600;
   font-family: var(--font-mono);
@@ -1147,7 +1147,7 @@ function handleExportOfflineReport(): void {
 }
 
 .eval-pill-bg--b {
-  fill: var(--bg-primary);
+  fill: var(--surface-raised, var(--bg-primary));
   stroke: var(--eval-blue);
   stroke-width: 1;
 }

@@ -300,7 +300,7 @@ function formatPct(rate: number): string {
   padding: 0 6px;
   border-radius: 4px;
   border: 1px dashed var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
 }
 
@@ -374,7 +374,7 @@ function formatPct(rate: number): string {
 }
 
 .latency-dot {
-  fill: var(--bg-primary);
+  fill: var(--surface-raised, var(--bg-primary));
   stroke: var(--accent-primary);
   stroke-width: 1.5;
 }

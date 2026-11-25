@@ -555,7 +555,7 @@ function formatBytes(bytes: number): string {
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
@@ -599,7 +599,7 @@ function formatBytes(bytes: number): string {
   padding: 0 6px;
   border-radius: 5px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-input, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11px;
 }
@@ -612,7 +612,7 @@ function formatBytes(bytes: number): string {
   padding: 0 7px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10.5px;
 }
@@ -664,12 +664,12 @@ function formatBytes(bytes: number): string {
 }
 
 .tm-crumb-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
 .tm-crumb-btn.active {
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -682,7 +682,7 @@ function formatBytes(bytes: number): string {
   padding: 0 7px;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   font-size: 10.5px;
   cursor: pointer;
@@ -720,7 +720,7 @@ function formatBytes(bytes: number): string {
   width: 100%;
   height: 236px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   overflow: auto;
 }
 
@@ -740,7 +740,7 @@ function formatBytes(bytes: number): string {
   align-items: flex-start;
   gap: 3px;
   padding: 7px 8px;
-  border: 1px solid var(--bg-primary);
+  border: 1px solid var(--border-muted);
   text-align: left;
   cursor: pointer;
   overflow: hidden;
@@ -769,25 +769,25 @@ function formatBytes(bytes: number): string {
 }
 
 .tm-tile.tone-system {
-  background-color: color-mix(in srgb, var(--obs-ctx-system, #8053e3) 14%, var(--bg-primary));
+  background-color: var(--obs-ctx-system-soft, color-mix(in srgb, var(--obs-ctx-system, #8053e3) 14%, transparent));
 }
 .tm-tile.tone-tools {
-  background-color: color-mix(in srgb, var(--obs-ctx-assistant, #5b9fe8) 15%, var(--bg-primary));
+  background-color: color-mix(in srgb, var(--obs-ctx-assistant, #5b9fe8) 15%, transparent);
 }
 .tm-tile.tone-user {
-  background-color: color-mix(in srgb, var(--obs-ctx-user, #44a56b) 14%, var(--bg-primary));
+  background-color: var(--obs-ctx-user-soft, color-mix(in srgb, var(--obs-ctx-user, #44a56b) 14%, transparent));
 }
 .tm-tile.tone-inject {
-  background-color: color-mix(in srgb, var(--obs-ctx-inject, #c442a7) 13%, var(--bg-primary));
+  background-color: var(--obs-ctx-inject-soft, color-mix(in srgb, var(--obs-ctx-inject, #c442a7) 13%, transparent));
 }
 .tm-tile.tone-skill {
-  background-color: color-mix(in srgb, var(--obs-ctx-skill, #e66d26) 14%, var(--bg-primary));
+  background-color: var(--obs-ctx-skill-soft, color-mix(in srgb, var(--obs-ctx-skill, #e66d26) 14%, transparent));
 }
 .tm-tile.tone-tool-output {
-  background-color: color-mix(in srgb, var(--obs-ctx-tool-output, #3ab4a4) 15%, var(--bg-primary));
+  background-color: var(--obs-ctx-tool-output-soft, color-mix(in srgb, var(--obs-ctx-tool-output, #3ab4a4) 15%, transparent));
 }
 .tm-tile.tone-other {
-  background-color: var(--bg-secondary);
+  background-color: var(--surface-section, var(--bg-secondary));
 }
 
 .tm-tile__head {
@@ -901,7 +901,7 @@ function formatBytes(bytes: number): string {
 }
 
 .tm-close-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 

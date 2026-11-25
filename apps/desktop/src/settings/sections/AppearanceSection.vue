@@ -10,7 +10,9 @@ import LivingWorkspaceFolder from '@/components/workspace/LivingWorkspaceFolder.
 import { FOLDER_TONE_PALETTES } from '@/components/workspace/workspaceVisuals'
 import {
   UI_WORKSPACE_FOLDER_TONES,
+  panelEffectFromLocal,
   useUiPreferences,
+  type UiAppearancePreferencesDto,
   type UiWorkspaceFolderTone,
   type UiWorkspaceViewPreference,
 } from '@/composables/useUiPreferences'
@@ -24,7 +26,7 @@ import {
   previewSwatches,
 } from '@/lib/monetExtract'
 import { useBackground } from '@/composables/useBackground'
-import { usePanelStyles } from '@/composables/usePanelStyles'
+import { usePanelStyles, type PanelStyleSettings } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
 import { CODE_FONTS, codeFont, codeFontStack, setCodeFont } from '@/lib/codeFont'
 
@@ -67,6 +69,7 @@ const {
 
 const {
   panelStyle,
+  applyPreset,
   updatePanelStyle,
 } = usePanelStyles()
 
@@ -74,6 +77,24 @@ const {
   appearance: uiAppearance,
   updateAppearance,
 } = useUiPreferences()
+
+function handlePanelStyleUpdate(patch: Partial<PanelStyleSettings>): void {
+  const next = patch.preset && patch.preset !== 'custom'
+    && patch.effect === undefined
+    && patch.opacity === undefined
+    && patch.blur === undefined
+    && patch.saturation === undefined
+    ? applyPreset(patch.preset)
+    : updatePanelStyle(patch)
+
+  void updateAppearance({
+    panel_preset: next.preset,
+    panel_effect: panelEffectFromLocal(next.effect),
+    panel_opacity: Math.round(next.opacity),
+    panel_blur: Math.round(next.blur),
+    panel_saturation: Math.round(next.saturation),
+  } as Partial<UiAppearancePreferencesDto>)
+}
 
 const folderToneOptions = computed(() =>
   UI_WORKSPACE_FOLDER_TONES.map((tone) => ({
@@ -456,7 +477,7 @@ function resetBackgroundToDefault(): void {
       <PanelStyleControl
         :label="t('settings.globalMaterial')"
         :settings="panelStyle"
-        @update="updatePanelStyle($event)"
+        @update="handlePanelStyleUpdate($event)"
       />
     </section>
 

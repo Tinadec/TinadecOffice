@@ -824,7 +824,7 @@ const noBlueprintLabel = computed(() =>
   flex-direction: column;
   min-height: 100%;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
@@ -839,7 +839,7 @@ const noBlueprintLabel = computed(() =>
   padding: 0 12px;
   min-height: 36px;
   border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   flex-shrink: 0;
 }
 
@@ -894,7 +894,7 @@ const noBlueprintLabel = computed(() =>
   padding: 0 7px;
   border: 0;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-button, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
@@ -906,14 +906,14 @@ const noBlueprintLabel = computed(() =>
 .topology-clear-btn:hover,
 .orchestration-plan-toggle:hover,
 .orchestration-plan-toggle.is-open {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
 .orchestration-plan-drawer {
   padding: 8px 12px;
   border-bottom: 1px solid var(--obs-hairline, var(--border-muted));
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   flex-shrink: 0;
 }
 
@@ -924,7 +924,7 @@ const noBlueprintLabel = computed(() =>
   flex-direction: column;
   min-height: clamp(360px, 75dvh, 720px);
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .orchestration-timeline-wrap,
@@ -942,7 +942,7 @@ const noBlueprintLabel = computed(() =>
   height: 100%;
   border: 0;
   border-radius: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .orchestration-empty {
@@ -961,7 +961,7 @@ const noBlueprintLabel = computed(() =>
   gap: 6px;
   padding: 10px 12px;
   border-top: 1px solid var(--obs-hairline, var(--border-muted));
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   flex-shrink: 0;
   min-width: 0;
 }
@@ -1012,7 +1012,7 @@ const noBlueprintLabel = computed(() =>
   padding: 1px 6px;
   border-radius: 4px;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
 }
 
 .focused-node-card__status {
@@ -1022,7 +1022,7 @@ const noBlueprintLabel = computed(() =>
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
 }
 
 .focused-node-card__status.is-running {
@@ -1092,7 +1092,7 @@ const noBlueprintLabel = computed(() =>
   font-size: 10.5px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
   color: var(--text-secondary);
   max-width: 100%;
   overflow: hidden;
@@ -1135,7 +1135,7 @@ const noBlueprintLabel = computed(() =>
   padding: 0 9px;
   border: 1px solid var(--obs-hairline, var(--border-muted));
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11.5px;
   font-weight: 500;
@@ -1144,14 +1144,14 @@ const noBlueprintLabel = computed(() =>
 }
 
 .focused-node-card__jump-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover, var(--bg-hover));
   border-color: var(--border-default);
 }
 
 /* ── Compact Supervision Findings Bar ──────────────────────────── */
 .orchestration-supervision-bar {
   border-top: 1px solid var(--obs-hairline, var(--border-muted));
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   flex-shrink: 0;
 }
 
@@ -1171,7 +1171,7 @@ const noBlueprintLabel = computed(() =>
 }
 
 .supervision-bar__toggle:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .supervision-bar__icon {
@@ -1186,7 +1186,7 @@ const noBlueprintLabel = computed(() =>
   font-weight: 600;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised, var(--bg-secondary));
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -1213,7 +1213,7 @@ const noBlueprintLabel = computed(() =>
   gap: 3px;
   padding: 6px 8px;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   font-size: 11.5px;
 }
 

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { CheckCircle2, FileWarning, RefreshCw, X } from '@lucide/vue'
 import { useUserActionStore } from '@/stores/userAction'
 import { userToolActionDetail, userToolActionReason, userToolActionStatusMessage } from '@/userToolAction'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 
 const props = withDefaults(defineProps<{
   open?: boolean
@@ -21,6 +22,8 @@ const emit = defineEmits<{
 
 const store = useUserActionStore()
 const { t, te } = useI18n()
+const { getPanelDataAttributes } = usePanelStyles()
+const materialAttributes = computed(() => getPanelDataAttributes())
 
 const internalOpen = ref(false)
 const eventActionId = ref<string | null>(null)
@@ -118,6 +121,7 @@ onBeforeUnmount(() => {
         aria-modal="true"
         :aria-label="t('governance.recoveryTitle')"
         data-testid="recovery-check-dialog"
+        v-bind="materialAttributes"
       >
         <header class="recovery-dialog__header">
           <div>
@@ -197,7 +201,6 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 16px;
   background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(2px);
 }
 
 .recovery-dialog {
@@ -209,8 +212,10 @@ onBeforeUnmount(() => {
   gap: 14px;
   padding: 18px 20px;
   border-radius: 14px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-panel, var(--surface-section));
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: var(--shadow-panel);
 }
 

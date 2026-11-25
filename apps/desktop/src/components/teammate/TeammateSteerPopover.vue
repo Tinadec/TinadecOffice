@@ -592,9 +592,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-island, 12px);
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--surface-raised, var(--bg-overlay)) 94%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: var(--shadow-elevated, 0 8px 28px rgba(0, 0, 0, 0.28));
   color: var(--text-primary);
   box-sizing: border-box;
@@ -616,6 +617,7 @@ onBeforeUnmount(() => {
   width: 100%;
   box-shadow: var(--shadow-card-subtle);
   backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   background: var(--surface-raised, var(--bg-overlay));
 }
 

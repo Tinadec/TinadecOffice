@@ -19,6 +19,10 @@ function samplePreferencesDoc(overrides: Partial<Record<string, unknown>> = {}) 
       accent: 'monochrome',
       custom_accent_hex: '#18181b',
       panel_effect: 'translucent',
+      panel_preset: 'translucent',
+      panel_opacity: 76,
+      panel_blur: 0,
+      panel_saturation: 100,
       workspace_view: 'grid',
       workspace_folder_tone: 'amber',
     },
@@ -163,6 +167,78 @@ test('GET, PUT, and PATCH /api/v1/preferences proxy cleanly and normalize input 
       },
     });
   }
+
+  // 5. PUT and PATCH with #61 material preset & custom slider fields (0..100, 0..32, 100..200)
+  const putMaterialRes = await app.handle(
+    new Request('http://gateway.local/api/v1/preferences', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        appearance: {
+          theme: 'dark',
+          accent: 'monochrome',
+          custom_accent_hex: '#18181b',
+          panel_preset: 'frosted',
+          panel_opacity: 68,
+          panel_blur: 18,
+          panel_saturation: 160,
+          workspace_view: 'grid',
+          workspace_folder_tone: 'amber',
+        },
+        interaction: {
+          workspace_drop_action: 'link',
+          spatial_promote_mode: 'merge',
+          reduced_motion: 'system',
+        },
+      }),
+    }),
+  );
+  assert.equal(putMaterialRes.status, 200);
+  assert.deepEqual(calls.at(-1)?.body, {
+    appearance: {
+      theme: 'dark',
+      accent: 'monochrome',
+      custom_accent_hex: '#18181b',
+      panel_effect: 'blur',
+      panel_preset: 'frosted',
+      panel_opacity: 68,
+      panel_blur: 18,
+      panel_saturation: 160,
+      workspace_view: 'grid',
+      workspace_folder_tone: 'amber',
+    },
+    interaction: {
+      workspace_drop_action: 'link',
+      spatial_promote_mode: 'merge',
+      reduced_motion: 'system',
+    },
+  });
+
+  const patchCustomRes = await app.handle(
+    new Request('http://gateway.local/api/v1/preferences', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        appearance: {
+          panel_preset: 'custom',
+          panel_effect: 'blur',
+          panel_opacity: 0,
+          panel_blur: 32,
+          panel_saturation: 200,
+        },
+      }),
+    }),
+  );
+  assert.equal(patchCustomRes.status, 200);
+  assert.deepEqual(calls.at(-1)?.body, {
+    appearance: {
+      panel_preset: 'custom',
+      panel_effect: 'blur',
+      panel_opacity: 0,
+      panel_blur: 32,
+      panel_saturation: 200,
+    },
+  });
 });
 
 test('PUT and PATCH /api/v1/preferences fail-closed on unknown keys, invalid enums, and malformed bodies', { concurrency: false }, async () => {
@@ -207,6 +283,46 @@ test('PUT and PATCH /api/v1/preferences fail-closed on unknown keys, invalid enu
       method: 'PATCH',
       rawBody: JSON.stringify({ appearance: { custom_accent_hex: 'blue' } }),
       label: 'invalid custom_accent_hex pattern',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_preset: 'acrylic' } }),
+      label: 'invalid panel_preset enum',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_opacity: -1 } }),
+      label: 'panel_opacity below 0',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_opacity: 101 } }),
+      label: 'panel_opacity above 100',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_opacity: 68.5 } }),
+      label: 'non-integer panel_opacity',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_blur: -1 } }),
+      label: 'panel_blur below 0',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_blur: 33 } }),
+      label: 'panel_blur above 32',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_saturation: 99 } }),
+      label: 'panel_saturation below 100',
+    },
+    {
+      method: 'PATCH',
+      rawBody: JSON.stringify({ appearance: { panel_saturation: 201 } }),
+      label: 'panel_saturation above 200',
     },
     {
       method: 'PATCH',

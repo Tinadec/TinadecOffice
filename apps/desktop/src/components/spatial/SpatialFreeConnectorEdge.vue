@@ -150,7 +150,8 @@ function toggleCurve() {
         v-if="editing || resolvedLabel || selected"
         class="spatial-connector-label-wrap nodrag nopan"
         :style="{
-          transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+          left: `${labelX}px`,
+          top: `${labelY}px`,
         }"
         @dblclick.stop="startEditing"
       >
@@ -209,13 +210,15 @@ function toggleCurve() {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 94%, transparent);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 11.5px;
   font-weight: 500;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+  transform: translate(-50%, -50%);
 }
 
 .spatial-connector-pill.is-selected {
@@ -254,10 +257,13 @@ function toggleCurve() {
   padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--accent-primary, #7c3aed);
-  background: var(--surface-raised, #ffffff);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 12px;
   outline: none;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  transform: translate(-50%, -50%);
 }
 </style>

@@ -1166,9 +1166,10 @@ defineExpose({
   font-weight: 600;
   white-space: nowrap;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border-muted);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
 }
 
 .lane-header.op {
@@ -1228,9 +1229,10 @@ defineExpose({
   font-size: 11px;
   line-height: 1.3;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border-muted);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   padding: 3px 9px;
   border-radius: var(--radius-control, 6px);
   pointer-events: auto;
@@ -1238,7 +1240,7 @@ defineExpose({
 
 .vf-panel.is-readonly {
   color: var(--text-secondary);
-  border-color: color-mix(in srgb, var(--accent-primary) 26%, var(--border-muted));
+  border-color: color-mix(in srgb, var(--accent-primary) 26%, var(--material-floating-border, var(--border-muted)));
 }
 
 .vf :deep(.vue-flow__controls) {
@@ -1247,8 +1249,10 @@ defineExpose({
   gap: 2px;
   padding: 3px;
   border-radius: 9px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-raised);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 4px 12px color-mix(in srgb, #000 12%, transparent);
 }
 
@@ -1270,8 +1274,10 @@ defineExpose({
 
 .vf :deep(.vue-flow__minimap) {
   border-radius: 9px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-raised);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   overflow: hidden;
   box-shadow: 0 4px 12px color-mix(in srgb, #000 12%, transparent);
 }

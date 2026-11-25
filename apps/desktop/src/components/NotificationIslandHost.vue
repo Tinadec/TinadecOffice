@@ -447,22 +447,26 @@ function taskLabel(item: NotificationItem) {
   pointer-events: auto; -webkit-app-region: no-drag;
   display: flex; align-items: center; gap: 7px; height: 28px;
   min-width: 0; max-width: 160px; padding: 0 12px;
-  border: none;
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   border-radius: 999px;
-  background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 66%, transparent);
+  background-color: var(--material-floating-bg, var(--surface-raised));
   background-image: linear-gradient(color-mix(in srgb, var(--level) 12%, transparent), color-mix(in srgb, var(--level) 12%, transparent));
   color: var(--text-primary, #eadef7);
   box-shadow: 0 1px 2px rgb(0 0 0 / 18%), 0 6px 18px rgb(0 0 0 / 22%);
-  backdrop-filter: blur(18px) saturate(125%);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   font: inherit; font-size: 11px; line-height: 1; overflow: hidden; position: relative;
   transition: max-width 200ms cubic-bezier(.2,.8,.2,1), padding 200ms cubic-bezier(.2,.8,.2,1),
     background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
-.island-capsule--status { background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 62%, transparent); }
-.island-capsule--transient { background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 72%, transparent); }
+.island-capsule--status {
+  background-color: var(--material-floating-bg, var(--surface-raised));
+}
+.island-capsule--transient {
+  background-color: var(--material-floating-bg, var(--surface-raised));
+}
 .island-capsule--active {
-  background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 52%, transparent);
+  background-color: var(--material-floating-bg, var(--surface-raised));
   box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
 }
 .island-capsule--success { --level: var(--accent-success, #3fb950); }
@@ -515,7 +519,7 @@ function taskLabel(item: NotificationItem) {
 /* overflow badge */
 .island-capsule--overflow {
   max-width: 48px; padding: 0 10px;
-  background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 64%, transparent);
+  background-color: var(--material-floating-bg, var(--surface-raised));
   background-image: linear-gradient(color-mix(in srgb, var(--text-secondary, #7d8590) 10%, transparent), color-mix(in srgb, var(--text-secondary, #7d8590) 10%, transparent));
 }
 .island-capsule--overflow .island-capsule__icon { color: var(--text-secondary, #7d8590); }
@@ -524,13 +528,13 @@ function taskLabel(item: NotificationItem) {
 .island-card {
   --level: var(--accent-primary, #d2bdf5); pointer-events: auto;
   width: min(340px, 100cqw); margin-top: 8px; padding: 13px;
-  border: none;
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary, #15121a) 86%, transparent);
+  background: var(--material-floating-bg, var(--surface-raised));
   color: var(--text-primary, #eadef7);
   box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
-  backdrop-filter: blur(18px) saturate(125%);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   -webkit-app-region: no-drag;
   cursor: pointer; /* the whole card opens the detail dialog */
 }
@@ -604,12 +608,13 @@ function taskLabel(item: NotificationItem) {
 .island-overflow {
   pointer-events: auto; width: min(380px, 100cqw); max-height: 340px;
   margin-top: 8px; display: flex; flex-direction: column;
-  border: none; border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary, #15121a) 88%, transparent);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  border-radius: 8px;
+  background: var(--material-floating-bg, var(--surface-raised));
   color: var(--text-primary, #eadef7);
   box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
-  backdrop-filter: blur(18px) saturate(125%);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   -webkit-app-region: no-drag; overflow: hidden;
 }
 .island-overflow__header {
@@ -682,7 +687,7 @@ function taskLabel(item: NotificationItem) {
 /* ── AGGREGATED HERO ── */
 .island-capsule--hero { max-width: 200px; }
 .island-capsule--stack-open {
-  background-color: color-mix(in srgb, var(--bg-secondary, #1d1a22) 52%, transparent);
+  background-color: var(--material-floating-bg, var(--surface-raised));
   box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
 }
 /* Fold badge — a small rounded count showing how many items are collapsed. */
@@ -704,12 +709,13 @@ function taskLabel(item: NotificationItem) {
 .island-stack {
   pointer-events: auto; width: min(340px, 100cqw); max-height: 320px;
   margin-top: 8px; display: flex; flex-direction: column;
-  border: none; border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary, #15121a) 88%, transparent);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  border-radius: 8px;
+  background: var(--material-floating-bg, var(--surface-raised));
   color: var(--text-primary, #eadef7);
   box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
-  backdrop-filter: blur(18px) saturate(125%);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   -webkit-app-region: no-drag; overflow: hidden;
 }
 .island-stack__header {

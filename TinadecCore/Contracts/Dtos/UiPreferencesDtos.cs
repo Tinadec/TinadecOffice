@@ -17,6 +17,18 @@ public sealed record UiPreferencesAppearanceDto
     [JsonPropertyName("panel_effect")]
     public string PanelEffect { get; init; } = string.Empty;
 
+    [JsonPropertyName("panel_preset")]
+    public string? PanelPreset { get; init; }
+
+    [JsonPropertyName("panel_opacity")]
+    public int? PanelOpacity { get; init; }
+
+    [JsonPropertyName("panel_blur")]
+    public int? PanelBlur { get; init; }
+
+    [JsonPropertyName("panel_saturation")]
+    public int? PanelSaturation { get; init; }
+
     [JsonPropertyName("workspace_view")]
     public string WorkspaceView { get; init; } = string.Empty;
 
@@ -29,6 +41,10 @@ public sealed record UiPreferencesAppearanceDto
         Accent = "monochrome",
         CustomAccentHex = "#18181b",
         PanelEffect = "translucent",
+        PanelPreset = "translucent",
+        PanelOpacity = 76,
+        PanelBlur = 0,
+        PanelSaturation = 100,
         WorkspaceView = "grid",
         WorkspaceFolderTone = "amber",
     };
@@ -105,6 +121,18 @@ public sealed record UiPreferencesAppearancePatchDto
 
     [JsonPropertyName("panel_effect")]
     public string? PanelEffect { get; init; }
+
+    [JsonPropertyName("panel_preset")]
+    public string? PanelPreset { get; init; }
+
+    [JsonPropertyName("panel_opacity")]
+    public int? PanelOpacity { get; init; }
+
+    [JsonPropertyName("panel_blur")]
+    public int? PanelBlur { get; init; }
+
+    [JsonPropertyName("panel_saturation")]
+    public int? PanelSaturation { get; init; }
 
     [JsonPropertyName("workspace_view")]
     public string? WorkspaceView { get; init; }

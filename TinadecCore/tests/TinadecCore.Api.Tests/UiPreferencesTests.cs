@@ -67,6 +67,10 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.Equal("monochrome", initial.Appearance.Accent);
         Assert.Equal("#18181b", initial.Appearance.CustomAccentHex);
         Assert.Equal("translucent", initial.Appearance.PanelEffect);
+        Assert.Equal("translucent", initial.Appearance.PanelPreset);
+        Assert.Equal(76, initial.Appearance.PanelOpacity);
+        Assert.Equal(0, initial.Appearance.PanelBlur);
+        Assert.Equal(100, initial.Appearance.PanelSaturation);
         Assert.Equal("grid", initial.Appearance.WorkspaceView);
         Assert.Equal("amber", initial.Appearance.WorkspaceFolderTone);
         Assert.Equal("link", initial.Interaction.WorkspaceDropAction);
@@ -74,7 +78,8 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.Equal("system", initial.Interaction.ReducedMotion);
         Assert.False(File.Exists(expectedPath));
 
-        // 2. PUT normalizes aliases ("opaque" -> "solid", "parent_with_children" -> "parent_children", uppercase hex -> lowercase)
+        // 2. PUT normalizes aliases ("opaque" -> "solid", "parent_with_children" -> "parent_children", uppercase hex -> lowercase),
+        //    derives canonical preset/material parameters when legacy callers omit the 4 new fields,
         //    and writes deterministic TOML atomically with no leftover temp files.
         var putResp = await client.PutAsJsonAsync("/api/v1/preferences", new
         {
@@ -100,6 +105,10 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.NotNull(afterPut);
         Assert.Equal("#ff5500", afterPut!.Appearance.CustomAccentHex);
         Assert.Equal("solid", afterPut.Appearance.PanelEffect);
+        Assert.Equal("solid", afterPut.Appearance.PanelPreset);
+        Assert.Equal(100, afterPut.Appearance.PanelOpacity);
+        Assert.Equal(0, afterPut.Appearance.PanelBlur);
+        Assert.Equal(100, afterPut.Appearance.PanelSaturation);
         Assert.Equal("parent_children", afterPut.Interaction.SpatialPromoteMode);
         Assert.NotEqual(initial.ContentHash, afterPut.ContentHash);
         Assert.True(File.Exists(expectedPath));
@@ -113,18 +122,22 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.Equal("light", appTable["theme"]);
         Assert.Equal("#ff5500", appTable["custom_accent_hex"]);
         Assert.Equal("solid", appTable["panel_effect"]);
+        Assert.Equal("solid", appTable["panel_preset"]);
+        Assert.Equal(100L, appTable["panel_opacity"]);
+        Assert.Equal(0L, appTable["panel_blur"]);
+        Assert.Equal(100L, appTable["panel_saturation"]);
         Assert.Equal("teal", appTable["workspace_folder_tone"]);
         Assert.Equal("ask", intTable["workspace_drop_action"]);
         Assert.Equal("parent_children", intTable["spatial_promote_mode"]);
         Assert.Equal("on", intTable["reduced_motion"]);
 
-        // 3. PATCH merges partial fields while preserving untouched values.
+        // 3. PATCH merges partial fields (including preset expansion and custom material sliders) while preserving untouched values.
         using var patchReq = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/preferences")
         {
             Content = JsonContent.Create(new
             {
                 expected_content_hash = afterPut.ContentHash,
-                appearance = new { workspace_folder_tone = "coral" },
+                appearance = new { workspace_folder_tone = "coral", panel_preset = "frosted" },
                 interaction = new { spatial_promote_mode = "split_many" },
             }),
         };
@@ -134,14 +147,52 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.NotNull(afterPatch);
         Assert.Equal("light", afterPatch!.Appearance.Theme);
         Assert.Equal("#ff5500", afterPatch.Appearance.CustomAccentHex);
+        Assert.Equal("blur", afterPatch.Appearance.PanelEffect);
+        Assert.Equal("frosted", afterPatch.Appearance.PanelPreset);
+        Assert.Equal(68, afterPatch.Appearance.PanelOpacity);
+        Assert.Equal(18, afterPatch.Appearance.PanelBlur);
+        Assert.Equal(160, afterPatch.Appearance.PanelSaturation);
         Assert.Equal("coral", afterPatch.Appearance.WorkspaceFolderTone);
         Assert.Equal("ask", afterPatch.Interaction.WorkspaceDropAction);
         Assert.Equal("split", afterPatch.Interaction.SpatialPromoteMode);
 
+        // 3b. Full PUT with explicit custom material parameters (opacity 0..100, blur 0..32, saturation 100..200) round-trips cleanly.
+        var customPutResp = await client.PutAsJsonAsync("/api/v1/preferences", new
+        {
+            expected_content_hash = afterPatch.ContentHash,
+            appearance = new
+            {
+                theme = "dark",
+                accent = "monochrome",
+                custom_accent_hex = "#18181b",
+                panel_effect = "blur",
+                panel_preset = "custom",
+                panel_opacity = 42,
+                panel_blur = 32,
+                panel_saturation = 195,
+                workspace_view = "grid",
+                workspace_folder_tone = "sky",
+            },
+            interaction = new
+            {
+                workspace_drop_action = "link",
+                spatial_promote_mode = "merge",
+                reduced_motion = "system",
+            },
+        });
+        Assert.Equal(HttpStatusCode.OK, customPutResp.StatusCode);
+        var afterCustomPut = await customPutResp.Content.ReadFromJsonAsync<UiPreferencesDocumentDto>();
+        Assert.NotNull(afterCustomPut);
+        Assert.Equal("custom", afterCustomPut!.Appearance.PanelPreset);
+        Assert.Equal("blur", afterCustomPut.Appearance.PanelEffect);
+        Assert.Equal(42, afterCustomPut.Appearance.PanelOpacity);
+        Assert.Equal(32, afterCustomPut.Appearance.PanelBlur);
+        Assert.Equal(195, afterCustomPut.Appearance.PanelSaturation);
+
         // 4. PUT reset_defaults restores canonical defaults and deterministic hash.
         var resetResp = await client.PutAsJsonAsync("/api/v1/preferences", new
         {
-            expected_content_hash = afterPatch.ContentHash,
+            expected_content_hash = afterCustomPut.ContentHash,
             reset_defaults = true,
         });
         Assert.Equal(HttpStatusCode.OK, resetResp.StatusCode);
@@ -217,6 +268,13 @@ public sealed class UiPreferencesTests : IAsyncLifetime
             "{\"appearance\":{\"theme\":\"neon\"}}",
             "{\"appearance\":{\"custom_accent_hex\":\"18181b\"}}",
             "{\"appearance\":{\"custom_accent_hex\":\"#fff\"}}",
+            "{\"appearance\":{\"panel_preset\":\"glass\"}}",
+            "{\"appearance\":{\"panel_opacity\":-1}}",
+            "{\"appearance\":{\"panel_opacity\":101}}",
+            "{\"appearance\":{\"panel_blur\":-1}}",
+            "{\"appearance\":{\"panel_blur\":33}}",
+            "{\"appearance\":{\"panel_saturation\":99}}",
+            "{\"appearance\":{\"panel_saturation\":201}}",
             "{\"appearance\":{\"workspace_folder_tone\":\"gold\"}}",
             "{\"interaction\":{\"workspace_drop_action\":\"move\"}}",
             "{\"interaction\":{\"spatial_promote_mode\":\"invalid_mode\"}}",
@@ -312,6 +370,10 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         Assert.Equal("light", thirdEvent.Payload.Appearance.Theme);
         Assert.Equal("green", thirdEvent.Payload.Appearance.Accent);
         Assert.Equal("blur", thirdEvent.Payload.Appearance.PanelEffect);
+        Assert.Equal("frosted", thirdEvent.Payload.Appearance.PanelPreset);
+        Assert.Equal(68, thirdEvent.Payload.Appearance.PanelOpacity);
+        Assert.Equal(18, thirdEvent.Payload.Appearance.PanelBlur);
+        Assert.Equal(160, thirdEvent.Payload.Appearance.PanelSaturation);
         Assert.Equal("frost", thirdEvent.Payload.Appearance.WorkspaceFolderTone);
         Assert.Equal("copy", thirdEvent.Payload.Interaction.WorkspaceDropAction);
         Assert.Equal("merge", thirdEvent.Payload.Interaction.SpatialPromoteMode);
@@ -351,7 +413,12 @@ public sealed class UiPreferencesTests : IAsyncLifetime
             arguments = new
             {
                 expected_content_hash = initialDoc.ContentHash,
-                appearance = new { workspace_folder_tone = "teal", accent = "cyan", panel_effect = "opaque" },
+                appearance = new
+                {
+                    workspace_folder_tone = "teal",
+                    accent = "cyan",
+                    panel_preset = "crystal",
+                },
                 interaction = new { workspace_drop_action = "copy", spatial_promote_mode = "split_many" },
             },
         });
@@ -360,9 +427,37 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         var updatedDoc = callOkResult.GetProperty("structuredContent").Deserialize<UiPreferencesDocumentDto>()!;
         Assert.Equal("teal", updatedDoc.Appearance.WorkspaceFolderTone);
         Assert.Equal("cyan", updatedDoc.Appearance.Accent);
-        Assert.Equal("solid", updatedDoc.Appearance.PanelEffect);
+        Assert.Equal("blur", updatedDoc.Appearance.PanelEffect);
+        Assert.Equal("crystal", updatedDoc.Appearance.PanelPreset);
+        Assert.Equal(48, updatedDoc.Appearance.PanelOpacity);
+        Assert.Equal(24, updatedDoc.Appearance.PanelBlur);
+        Assert.Equal(180, updatedDoc.Appearance.PanelSaturation);
         Assert.Equal("copy", updatedDoc.Interaction.WorkspaceDropAction);
         Assert.Equal("split", updatedDoc.Interaction.SpatialPromoteMode);
+
+        // 4b. tools/call tinadec_update_ui_preferences supports custom integer sliders (opacity, blur, saturation)
+        var callCustomResp = await PostMcpAsync(client, "tools/call", new
+        {
+            name = "tinadec_update_ui_preferences",
+            arguments = new
+            {
+                expected_content_hash = updatedDoc.ContentHash,
+                appearance = new
+                {
+                    panel_preset = "custom",
+                    panel_effect = "blur",
+                    panel_opacity = 55,
+                    panel_blur = 28,
+                    panel_saturation = 175,
+                },
+            },
+        });
+        Assert.False(callCustomResp.GetProperty("result").GetProperty("isError").GetBoolean());
+        updatedDoc = callCustomResp.GetProperty("result").GetProperty("structuredContent").Deserialize<UiPreferencesDocumentDto>()!;
+        Assert.Equal("custom", updatedDoc.Appearance.PanelPreset);
+        Assert.Equal(55, updatedDoc.Appearance.PanelOpacity);
+        Assert.Equal(28, updatedDoc.Appearance.PanelBlur);
+        Assert.Equal(175, updatedDoc.Appearance.PanelSaturation);
 
         // 5. tinadec_inspect target=ui_preferences returns the updated document
         var inspectResp = await PostMcpAsync(client, "tools/call", new
@@ -374,13 +469,20 @@ public sealed class UiPreferencesTests : IAsyncLifetime
         var inspectedDoc = inspectResp.GetProperty("result").GetProperty("structuredContent").Deserialize<UiPreferencesDocumentDto>()!;
         Assert.Equal(updatedDoc.ContentHash, inspectedDoc.ContentHash);
         Assert.Equal("teal", inspectedDoc.Appearance.WorkspaceFolderTone);
+        Assert.Equal("custom", inspectedDoc.Appearance.PanelPreset);
+        Assert.Equal(28, inspectedDoc.Appearance.PanelBlur);
 
-        // 6. Fail-closed on unknown keys, invalid enums, and stale expected_content_hash
+        // 6. Fail-closed on unknown keys, invalid enums, out-of-range integers, and stale expected_content_hash
         foreach (var invalidArgs in new object[]
         {
             new { unknown_root = 1 },
             new { appearance = new { bogus_key = "dark" } },
             new { appearance = new { theme = "neon" } },
+            new { appearance = new { panel_preset = "invalid_preset" } },
+            new { appearance = new { panel_opacity = 101 } },
+            new { appearance = new { panel_blur = 33 } },
+            new { appearance = new { panel_saturation = 99 } },
+            new { appearance = new { panel_blur = "18" } },
             new { interaction = new { workspace_drop_action = "teleport" } },
             new { expected_content_hash = initialDoc.ContentHash, appearance = new { theme = "light" } },
         })

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { X } from '@lucide/vue'
 import GovernanceBoardContent, { type GovernanceBoardTab } from './GovernanceBoardContent.vue'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 
 const props = withDefaults(defineProps<{
   open?: boolean
@@ -18,6 +19,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { getPanelDataAttributes } = usePanelStyles()
+const materialAttributes = computed(() => getPanelDataAttributes())
 const internalOpen = ref(false)
 const activeTab = ref<GovernanceBoardTab>(props.initialTab)
 
@@ -72,6 +75,7 @@ onBeforeUnmount(() => {
         aria-modal="true"
         :aria-label="t('governance.boardTitle')"
         data-testid="governance-drawer"
+        v-bind="materialAttributes"
       >
         <header class="governance-drawer__head">
           <h2>{{ t('governance.boardTitle') }}</h2>
@@ -102,7 +106,6 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.36);
-  backdrop-filter: blur(2px);
 }
 
 .governance-drawer {
@@ -110,8 +113,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   width: min(920px, 94vw);
   height: 100%;
-  background: var(--surface-panel, var(--surface-section));
-  border-left: 1px solid var(--border-muted);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
+  border-left: 1px solid var(--material-floating-border, var(--border-muted));
   box-shadow: var(--shadow-panel);
   overflow: hidden;
 }

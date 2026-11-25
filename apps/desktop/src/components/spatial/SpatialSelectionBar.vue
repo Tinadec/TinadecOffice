@@ -413,9 +413,10 @@ const alignButtons: Array<{ mode: SpatialAlignMode; key: string; icon: unknown }
   gap: 4px;
   padding: 4px 6px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 92%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
   z-index: 11;
@@ -552,9 +553,10 @@ const alignButtons: Array<{ mode: SpatialAlignMode; key: string; icon: unknown }
   min-width: 248px;
   padding: 6px;
   border-radius: 12px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 96%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
   display: flex;

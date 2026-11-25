@@ -218,6 +218,8 @@
   /* Card boundary & subtle elevation */
   --border-card: rgba(255, 255, 255, 0.07);
   --border-card-active: rgba(255, 255, 255, 0.11);
+  --material-glass-border: rgba(255, 255, 255, 0.09);
+  --material-glass-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.07), var(--shadow-card-subtle);
   --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.08),
                         0 4px 12px rgba(0, 0, 0, 0.05);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
@@ -300,6 +302,8 @@
   /* Card boundary & subtle elevation */
   --border-card: rgba(0, 0, 0, 0.08);
   --border-card-active: rgba(0, 0, 0, 0.12);
+  --material-glass-border: rgba(255, 255, 255, 0.62);
+  --material-glass-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.78), var(--shadow-card-subtle);
   --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.06),
                         0 4px 12px rgba(0, 0, 0, 0.04);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
@@ -341,6 +345,7 @@
    data-panel-effect attribute re-map them to the effect-specific alpha
    tiers defined in the Panel Style Effects section. */
 :root {
+  --surface-canvas: var(--bg-primary);
   --surface-chrome: var(--bg-tertiary);
   --surface-section: var(--bg-secondary);
   --surface-raised: var(--bg-tertiary);
@@ -352,6 +357,14 @@
   --surface-button-hover: var(--bg-button-hover);
   --material-filter-section: none;
   --material-filter-raised: none;
+  --material-glass-border: rgba(255, 255, 255, 0.09);
+  --material-glass-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --material-panel-bg: var(--bg-secondary);
+  --material-panel-filter: none;
+  --material-panel-border: var(--border-card, rgba(255, 255, 255, 0.07));
+  --material-floating-bg: var(--bg-secondary);
+  --material-floating-filter: none;
+  --material-floating-border: var(--border-default);
 }
 
 * {
@@ -5451,9 +5464,17 @@ Triggered by the page-level transition on the parent .settings-page. */
    the action hierarchy. */
 
 /* ---- Material surface re-mapping ----
-   Re-map the surface tokens on each material root. Custom properties
-   inherit through every descendant, including scoped Vue components. */
+   Re-map the surface tokens on both :root[data-global-panel-effect] and each
+   panel carrying data-panel-effect. Custom properties inherit through every
+   descendant, including scoped Vue components and teleported overlays. */
+:root[data-global-panel-effect="opaque"],
+[data-panel-effect="opaque"] {
+  --surface-canvas: var(--bg-primary);
+}
+
+:root[data-global-panel-effect="translucent"],
 [data-panel-effect="translucent"] {
+  --surface-canvas: transparent;
   --surface-chrome: rgba(var(--bg-tertiary-rgb), 0.72);
   --surface-section: rgba(var(--bg-secondary-rgb), 0.70);
   --surface-raised: rgba(var(--bg-tertiary-rgb), 0.78);
@@ -5463,11 +5484,15 @@ Triggered by the page-level transition on the parent .settings-page. */
   --surface-input: rgba(var(--bg-input-rgb), 0.88);
   --surface-button: rgba(var(--bg-button-rgb), 0.80);
   --surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.90);
-
-  border-color: transparent;
 }
 
+[data-panel-effect="translucent"] {
+  border-color: var(--border-muted);
+}
+
+:root[data-global-panel-effect="blur"],
 [data-panel-effect="blur"] {
+  --surface-canvas: transparent;
   --surface-chrome: rgba(var(--bg-tertiary-rgb), 0.18);
   --surface-section: rgba(var(--bg-secondary-rgb), 0.38);
   --surface-raised: rgba(var(--bg-tertiary-rgb), 0.50);
@@ -5477,8 +5502,17 @@ Triggered by the page-level transition on the parent .settings-page. */
   --surface-input: rgba(var(--bg-input-rgb), 0.70);
   --surface-button: rgba(var(--bg-button-rgb), 0.58);
   --surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.72);
+}
 
-  border-color: transparent;
+[data-panel-effect="blur"] {
+  border-color: var(--material-glass-border);
+}
+
+/* Immersive columns (e.g. Home chat stack) intentionally float directly over the
+   window background without an outer card frame, so suppress panel-root border/highlight. */
+.uie-stack--immersive {
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 /* ---- Tailwind shadcn neutral utility re-pointing ----

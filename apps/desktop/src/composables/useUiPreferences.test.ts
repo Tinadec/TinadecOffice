@@ -72,6 +72,9 @@ import {
   __resetUiPreferencesForTests,
   DEFAULT_UI_APPEARANCE_PREFERENCES,
   DEFAULT_UI_INTERACTION_PREFERENCES,
+  mergeAppearancePreferences,
+  normalizeAppearancePreferences,
+  UI_PANEL_PRESET_DEFAULTS,
   UI_PREFERENCES_MIGRATED_KEY,
   useUiPreferences,
 } from './useUiPreferences'
@@ -106,10 +109,7 @@ beforeEach(() => {
   })
   apiMocks.patchUiPreferences.mockImplementation(async (patch) => ({
     version: 1,
-    appearance: {
-      ...DEFAULT_UI_APPEARANCE_PREFERENCES,
-      ...(patch?.appearance ?? {}),
-    },
+    appearance: mergeAppearancePreferences(DEFAULT_UI_APPEARANCE_PREFERENCES, patch?.appearance),
     interaction: {
       ...DEFAULT_UI_INTERACTION_PREFERENCES,
       ...(patch?.interaction ?? {}),
@@ -155,6 +155,10 @@ describe('useUiPreferences unified store', () => {
         theme: 'light',
         accent: 'warm',
         panel_effect: 'solid',
+        panel_preset: 'solid',
+        panel_opacity: 100,
+        panel_blur: 0,
+        panel_saturation: 100,
       }),
       interaction: expect.objectContaining({
         spatial_promote_mode: 'parent_children',
@@ -162,6 +166,7 @@ describe('useUiPreferences unified store', () => {
     })
     expect(store.appearance.theme).toBe('light')
     expect(store.appearance.panel_effect).toBe('solid')
+    expect(store.appearance.panel_preset).toBe('solid')
     expect(store.interaction.spatial_promote_mode).toBe('parent_children')
 
     apiMocks.patchUiPreferences.mockClear()
@@ -169,7 +174,92 @@ describe('useUiPreferences unified store', () => {
     expect(apiMocks.patchUiPreferences).not.toHaveBeenCalled()
   })
 
-  it('bridges useTheme, usePanelStyles, spatial board promotion, and dataset.reducedMotion bidirectionally without feedback loops', async () => {
+  it('normalizes canonical presets, clamps custom ranges (0..100, 0..32, 100..200), and derives legacy panel_effect fallbacks', () => {
+    // Legacy payloads omitting the 4 new fields derive canonical presets
+    expect(
+      normalizeAppearancePreferences({
+        theme: 'dark',
+        accent: 'monochrome',
+        custom_accent_hex: '#18181b',
+        panel_effect: 'solid',
+        workspace_view: 'grid',
+        workspace_folder_tone: 'amber',
+      }),
+    ).toMatchObject({
+      panel_effect: 'solid',
+      panel_preset: 'solid',
+      panel_opacity: 100,
+      panel_blur: 0,
+      panel_saturation: 100,
+    })
+
+    expect(
+      normalizeAppearancePreferences({
+        panel_effect: 'blur',
+      }),
+    ).toMatchObject({
+      panel_effect: 'blur',
+      panel_preset: 'frosted',
+      panel_opacity: 68,
+      panel_blur: 18,
+      panel_saturation: 160,
+    })
+
+    expect(
+      normalizeAppearancePreferences({
+        panel_effect: 'translucent',
+      }),
+    ).toMatchObject({
+      panel_effect: 'translucent',
+      panel_preset: 'translucent',
+      panel_opacity: 76,
+      panel_blur: 0,
+      panel_saturation: 100,
+    })
+
+    // Named presets expand canonical optical parameters
+    for (const preset of ['solid', 'frosted', 'crystal', 'mica', 'translucent'] as const) {
+      expect(normalizeAppearancePreferences({ panel_preset: preset })).toMatchObject({
+        panel_preset: preset,
+        ...UI_PANEL_PRESET_DEFAULTS[preset],
+      })
+    }
+
+    // Custom clamping: opacity 0..100, blur 0..32, saturation 100..200
+    expect(
+      normalizeAppearancePreferences({
+        panel_preset: 'custom',
+        panel_effect: 'blur',
+        panel_opacity: 145,
+        panel_blur: 48,
+        panel_saturation: 260,
+      }),
+    ).toMatchObject({
+      panel_preset: 'custom',
+      panel_effect: 'blur',
+      panel_opacity: 100,
+      panel_blur: 32,
+      panel_saturation: 200,
+    })
+
+    expect(
+      normalizeAppearancePreferences({
+        panel_preset: 'custom',
+        panel_effect: 'blur',
+        panel_opacity: -15,
+        panel_blur: -4,
+        panel_saturation: 40,
+      }),
+    ).toMatchObject({
+      panel_preset: 'custom',
+      panel_effect: 'blur',
+      panel_opacity: 0,
+      panel_blur: 0,
+      panel_saturation: 100,
+    })
+  })
+
+  it('bridges useTheme, usePanelStyles (including presets & custom sliders), spatial board promotion, and dataset.reducedMotion bidirectionally without feedback loops', async () => {
     localStorage.setItem(UI_PREFERENCES_MIGRATED_KEY, '1')
     setHostAccessStatus({ state: 'ready', managed: true })
 
@@ -182,15 +272,25 @@ describe('useUiPreferences unified store', () => {
     // Store -> Theme / Panel / Spatial / Reduced Motion
     await store.updateAppearance({
       theme: 'light',
-      panel_effect: 'solid',
+      panel_preset: 'crystal',
       workspace_view: 'list',
       workspace_folder_tone: 'teal',
     })
     expect(apiMocks.patchUiPreferences).toHaveBeenCalledTimes(1)
     expect(themeCtl.theme.value).toBe('light')
-    expect(panelCtl.panelStyle.value.effect).toBe('opaque')
+    expect(panelCtl.panelStyle.value.effect).toBe('blur')
+    expect(panelCtl.panelStyle.value.opacity).toBe(48)
+    expect(panelCtl.panelStyle.value.blur).toBe(24)
+    expect(store.appearance.panel_preset).toBe('crystal')
+    expect(store.appearance.panel_saturation).toBe(180)
     expect(store.appearance.workspace_view).toBe('list')
     expect(store.appearance.workspace_folder_tone).toBe('teal')
+
+    await store.updateAppearance({
+      panel_effect: 'solid',
+    })
+    expect(panelCtl.panelStyle.value.effect).toBe('opaque')
+    expect(store.appearance.panel_preset).toBe('solid')
 
     await store.updateInteraction({
       spatial_promote_mode: 'parent_children',
@@ -202,7 +302,7 @@ describe('useUiPreferences unified store', () => {
     await store.updateInteraction({ reduced_motion: 'off' })
     expect(document.documentElement.dataset.reducedMotion).toBe('false')
 
-    // Reverse direction: SpatialSelectionBar / useTheme -> Store & PATCH
+    // Reverse direction: SpatialSelectionBar / usePanelStyles -> Store & PATCH
     apiMocks.patchUiPreferences.mockClear()
     saveSpatialPromotionPreference({ mode: 'split_many', target_status: 'ready' })
     await flushPromises()
@@ -219,23 +319,27 @@ describe('useUiPreferences unified store', () => {
     expect(apiMocks.patchUiPreferences).toHaveBeenCalledTimes(1)
   })
 
-  it('applies live SSE preferences.updated frames without echoing PATCH back to the server', async () => {
+  it('applies live SSE preferences.updated frames (including legacy and preset payloads) without echoing PATCH back to the server', async () => {
     localStorage.setItem(UI_PREFERENCES_MIGRATED_KEY, '1')
     setHostAccessStatus({ state: 'ready', managed: true })
 
     const store = useUiPreferences()
+    const panelCtl = usePanelStyles()
     await flushPromises()
     apiMocks.patchUiPreferences.mockClear()
 
+    // Legacy SSE payload omitting the 4 new fields derives frosted defaults for blur
     emitSsePreferencesUpdated({
       version: 1,
       file_path: 'C:/Users/demo/.tinadec/preferences.toml',
       content_hash: 'hash-sse-2',
       appearance: {
-        ...DEFAULT_UI_APPEARANCE_PREFERENCES,
+        theme: 'dark',
+        accent: 'monochrome',
+        custom_accent_hex: '#18181b',
+        panel_effect: 'blur',
         workspace_view: 'list',
         workspace_folder_tone: 'coral',
-        panel_effect: 'blur',
       },
       interaction: {
         ...DEFAULT_UI_INTERACTION_PREFERENCES,
@@ -247,6 +351,14 @@ describe('useUiPreferences unified store', () => {
 
     expect(store.appearance.workspace_view).toBe('list')
     expect(store.appearance.workspace_folder_tone).toBe('coral')
+    expect(store.appearance.panel_effect).toBe('blur')
+    expect(store.appearance.panel_preset).toBe('frosted')
+    expect(store.appearance.panel_opacity).toBe(68)
+    expect(store.appearance.panel_blur).toBe(18)
+    expect(store.appearance.panel_saturation).toBe(160)
+    expect(panelCtl.panelStyle.value.effect).toBe('blur')
+    expect(panelCtl.panelStyle.value.opacity).toBe(68)
+    expect(panelCtl.panelStyle.value.blur).toBe(18)
     expect(store.interaction.workspace_drop_action).toBe('ask')
     expect(document.documentElement.dataset.reducedMotion).toBe('true')
     expect(store.contentHash.value).toBe('hash-sse-2')
@@ -257,9 +369,17 @@ describe('useUiPreferences unified store', () => {
     setHostAccessStatus({ state: 'preview', managed: false })
     const store = useUiPreferences()
 
-    await store.updateAppearance({ workspace_folder_tone: 'sky', workspace_view: 'list' })
+    await store.updateAppearance({
+      workspace_folder_tone: 'sky',
+      workspace_view: 'list',
+      panel_preset: 'mica',
+    })
     expect(store.appearance.workspace_folder_tone).toBe('sky')
     expect(store.appearance.workspace_view).toBe('list')
+    expect(store.appearance.panel_preset).toBe('mica')
+    expect(store.appearance.panel_opacity).toBe(82)
+    expect(store.appearance.panel_blur).toBe(14)
+    expect(store.appearance.panel_saturation).toBe(130)
     expect(apiMocks.patchUiPreferences).not.toHaveBeenCalled()
 
     setHostAccessStatus({ state: 'ready', managed: true })
@@ -273,5 +393,6 @@ describe('useUiPreferences unified store', () => {
     })
     expect(store.appearance.workspace_folder_tone).toBe('amber')
     expect(store.appearance.workspace_view).toBe('grid')
+    expect(store.appearance.panel_preset).toBe('translucent')
   })
 })

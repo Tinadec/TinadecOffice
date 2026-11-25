@@ -967,7 +967,7 @@ onBeforeUnmount(() => {
   padding: 2px;
   border-radius: 10px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-section, var(--bg-primary));
 }
 
 .preview-mode-btn {
@@ -990,7 +990,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-mode-btn.active {
-  background: var(--bg-secondary);
+  background: var(--surface-active, var(--bg-secondary));
   border-color: var(--border-muted);
   color: var(--text-primary);
   font-weight: 600;
@@ -1037,7 +1037,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-tab.active {
-  background: var(--bg-secondary);
+  background: var(--surface-active, var(--bg-secondary));
   border-color: var(--border-muted);
   color: var(--text-primary);
   font-weight: 600;
@@ -1062,7 +1062,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   border-bottom: 1px solid var(--border-muted);
   flex-shrink: 0;
   flex-wrap: wrap;
@@ -1208,7 +1208,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   justify-content: center;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   overflow: auto;
 }
 
@@ -1289,7 +1289,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+  background: var(--surface-section, color-mix(in srgb, var(--bg-primary) 75%, transparent));
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -1302,7 +1302,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   overflow: auto;
 }
 
@@ -1325,7 +1325,7 @@ onBeforeUnmount(() => {
   height: 44px;
   border-radius: 12px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   display: grid;
   place-items: center;
@@ -1367,7 +1367,7 @@ onBeforeUnmount(() => {
 }
 
 .mirror-space-pill.active {
-  background: var(--bg-secondary);
+  background: var(--surface-active, var(--bg-secondary));
   border-color: var(--accent-primary);
   color: var(--text-primary);
   font-weight: 600;
@@ -1441,7 +1441,7 @@ onBeforeUnmount(() => {
 
 .mirror-control-badge.is-finished {
   border-color: var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-muted);
 }
 
@@ -1483,7 +1483,7 @@ onBeforeUnmount(() => {
   padding: 5px 10px;
   border-radius: 10px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-button, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 11.5px;
   font-weight: 500;
@@ -1580,7 +1580,7 @@ onBeforeUnmount(() => {
   min-height: 220px;
   border-radius: 12px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   display: flex;
   flex-direction: column;
   overflow: hidden;

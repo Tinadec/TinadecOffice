@@ -221,9 +221,10 @@ function setScale(scale: SpatialTextScale) {
   gap: 2px;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised, #ffffff) 94%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
   z-index: 4;
 }

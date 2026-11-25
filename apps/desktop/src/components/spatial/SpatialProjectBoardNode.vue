@@ -549,9 +549,10 @@ function onBodyDragEnd(event: DragEvent) {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  border: 1px solid var(--border-card, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-raised, var(--bg-secondary)) 94%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow:
     0 12px 32px rgba(15, 23, 42, 0.12),

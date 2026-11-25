@@ -411,17 +411,17 @@ const footerHints = computed(() => [
   max-height: none;
   margin: 0 auto;
   padding: 0;
-  border: 1px solid var(--border-default, var(--border-muted));
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   border-radius: 14px;
   color: var(--text-primary);
-  background: var(--surface-section);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: var(--shadow-elevated, 0 16px 48px rgba(0, 0, 0, 0.28));
   -webkit-app-region: no-drag;
 }
 .command-palette::backdrop {
-  background: color-mix(in srgb, var(--bg-primary) 26%, transparent);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.36);
 }
 .search-screen { display: flex; flex-direction: column; height: min(590px, calc(100dvh - 90px)); width: 100%; margin: 0 auto; padding: 0; }
 .command-palette--fullscreen,

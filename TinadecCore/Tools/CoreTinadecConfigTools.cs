@@ -82,7 +82,7 @@ public static class CoreTinadecConfigTools
         CoreVirtualToolPolicy.TinadecUpdateUiPreferencesToolId => Entry(
             CoreVirtualToolPolicy.TinadecUpdateUiPreferencesToolId,
             "Update user-level [appearance] and [interaction] UI preferences in preferences.toml "
-            + "(theme, accent, custom_accent_hex, panel_effect, workspace_view, workspace_folder_tone, "
+            + "(theme, accent, custom_accent_hex, panel_effect, panel_preset, panel_opacity, panel_blur, panel_saturation, workspace_view, workspace_folder_tone, "
             + "workspace_drop_action, spatial_promote_mode, reduced_motion, or reset_defaults) and hot-broadcast to connected Desktop clients.",
             UpdateUiPreferencesSchema, requiresApproval: false, risk: "medium", retrySafety: "safe", confirmation: []),
         _ => throw new InvalidOperationException($"No tinadec configuration tool named '{toolId}'."),
@@ -199,6 +199,10 @@ public static class CoreTinadecConfigTools
         "\"accent\":{\"type\":\"string\",\"enum\":[\"monochrome\",\"warm\",\"dynamic\",\"custom\",\"blue\",\"green\",\"orange\",\"purple\",\"pink\",\"red\",\"cyan\",\"yellow\"]}," +
         "\"custom_accent_hex\":{\"type\":\"string\",\"pattern\":\"^#[0-9a-fA-F]{6}$\"}," +
         "\"panel_effect\":{\"type\":\"string\",\"enum\":[\"solid\",\"translucent\",\"blur\",\"opaque\"]}," +
+        "\"panel_preset\":{\"type\":\"string\",\"enum\":[\"solid\",\"frosted\",\"crystal\",\"mica\",\"translucent\",\"custom\"]}," +
+        "\"panel_opacity\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100}," +
+        "\"panel_blur\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":32}," +
+        "\"panel_saturation\":{\"type\":\"integer\",\"minimum\":100,\"maximum\":200}," +
         "\"workspace_view\":{\"type\":\"string\",\"enum\":[\"grid\",\"list\"]}," +
         "\"workspace_folder_tone\":{\"type\":\"string\",\"enum\":[\"amber\",\"teal\",\"sky\",\"coral\",\"frost\"]}" +
         "},\"additionalProperties\":false}," +

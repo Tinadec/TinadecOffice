@@ -7,6 +7,7 @@ import {
   type UiAppearancePreferencesDto,
   type UiInteractionPreferencesDto,
   type UiPanelEffectPreference,
+  type UiPanelPresetPreference,
   type UiPreferencesDocumentDto,
   type UiReducedMotionPreference,
   type UiSpatialPromoteMode,
@@ -20,7 +21,7 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useHostAccess } from '@/lib/hostAccess'
 import { isValidHexColor } from '@/lib/monetExtract'
 import { ScopedEventSource } from '@/lib/scopedEventSource'
-import type { PanelEffect } from '@/types/background'
+import type { PanelEffect, PanelStyleSettings } from '@/types/background'
 
 export type {
   PatchUiPreferencesInput,
@@ -29,6 +30,7 @@ export type {
   UiAppearancePreferencesDto,
   UiInteractionPreferencesDto,
   UiPanelEffectPreference,
+  UiPanelPresetPreference,
   UiPreferencesDocumentDto,
   UiReducedMotionPreference,
   UiSpatialPromoteMode,
@@ -36,6 +38,20 @@ export type {
   UiWorkspaceDropAction,
   UiWorkspaceFolderTone,
   UiWorkspaceViewPreference,
+}
+
+export interface NormalizedUiAppearancePreferencesDto extends UiAppearancePreferencesDto {
+  panel_preset: UiPanelPresetPreference
+  panel_opacity: number
+  panel_blur: number
+  panel_saturation: number
+}
+
+type NamedUiPanelPreset = Exclude<UiPanelPresetPreference, 'custom'>
+
+type BridgeablePanelStyle = PanelStyleSettings & {
+  preset?: UiPanelPresetPreference
+  saturation?: number
 }
 
 export const UI_PREFERENCES_CACHE_KEY = 'tinadec-ui-preferences-cache'
@@ -62,6 +78,21 @@ export const UI_ACCENTS: readonly UiAccentPreference[] = [
   'yellow',
 ] as const
 export const UI_PANEL_EFFECTS: readonly UiPanelEffectPreference[] = ['solid', 'translucent', 'blur'] as const
+export const UI_PANEL_PRESETS: readonly UiPanelPresetPreference[] = [
+  'solid',
+  'frosted',
+  'crystal',
+  'mica',
+  'translucent',
+  'custom',
+] as const
+export const UI_NAMED_PANEL_PRESETS: readonly NamedUiPanelPreset[] = [
+  'solid',
+  'frosted',
+  'crystal',
+  'mica',
+  'translucent',
+] as const
 export const UI_WORKSPACE_VIEWS: readonly UiWorkspaceViewPreference[] = ['grid', 'list'] as const
 export const UI_WORKSPACE_FOLDER_TONES: readonly UiWorkspaceFolderTone[] = [
   'amber',
@@ -78,11 +109,33 @@ export const UI_SPATIAL_PROMOTE_MODES: readonly UiSpatialPromoteMode[] = [
 ] as const
 export const UI_REDUCED_MOTION_MODES: readonly UiReducedMotionPreference[] = ['system', 'on', 'off'] as const
 
-export const DEFAULT_UI_APPEARANCE_PREFERENCES: UiAppearancePreferencesDto = {
+export const UI_PANEL_PRESET_DEFAULTS: Readonly<
+  Record<
+    NamedUiPanelPreset,
+    {
+      panel_effect: UiPanelEffectPreference
+      panel_opacity: number
+      panel_blur: number
+      panel_saturation: number
+    }
+  >
+> = {
+  solid: { panel_effect: 'solid', panel_opacity: 100, panel_blur: 0, panel_saturation: 100 },
+  frosted: { panel_effect: 'blur', panel_opacity: 68, panel_blur: 18, panel_saturation: 160 },
+  crystal: { panel_effect: 'blur', panel_opacity: 48, panel_blur: 24, panel_saturation: 180 },
+  mica: { panel_effect: 'blur', panel_opacity: 82, panel_blur: 14, panel_saturation: 130 },
+  translucent: { panel_effect: 'translucent', panel_opacity: 76, panel_blur: 0, panel_saturation: 100 },
+}
+
+export const DEFAULT_UI_APPEARANCE_PREFERENCES: NormalizedUiAppearancePreferencesDto = {
   theme: 'dark',
   accent: 'monochrome',
   custom_accent_hex: '#18181b',
   panel_effect: 'translucent',
+  panel_preset: 'translucent',
+  panel_opacity: 76,
+  panel_blur: 0,
+  panel_saturation: 100,
   workspace_view: 'grid',
   workspace_folder_tone: 'amber',
 }
@@ -105,6 +158,32 @@ export function panelEffectFromLocal(effect: string | null | undefined): UiPanel
   return 'translucent'
 }
 
+export function defaultPanelPresetForEffect(effect: UiPanelEffectPreference): NamedUiPanelPreset {
+  if (effect === 'solid') return 'solid'
+  if (effect === 'blur') return 'frosted'
+  return 'translucent'
+}
+
+export function matchCanonicalPanelPreset(
+  effect: UiPanelEffectPreference,
+  opacity: number,
+  blur: number,
+  saturation: number,
+): NamedUiPanelPreset | null {
+  for (const preset of UI_NAMED_PANEL_PRESETS) {
+    const spec = UI_PANEL_PRESET_DEFAULTS[preset]
+    if (
+      spec.panel_effect === effect
+      && spec.panel_opacity === opacity
+      && spec.panel_blur === blur
+      && spec.panel_saturation === saturation
+    ) {
+      return preset
+    }
+  }
+  return null
+}
+
 export function spatialPromoteToBoardMode(
   mode: UiSpatialPromoteMode,
 ): 'merge_single' | 'split_many' | 'parent_with_children' {
@@ -123,33 +202,210 @@ function isOneOf<T extends string>(list: readonly T[], value: unknown): value is
   return typeof value === 'string' && (list as readonly string[]).includes(value)
 }
 
+function normalizeOptionalPanelEffect(value: unknown): UiPanelEffectPreference | undefined {
+  if (value === 'opaque') return 'solid'
+  return isOneOf(UI_PANEL_EFFECTS, value) ? value : undefined
+}
+
+function normalizeOptionalInt(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const rounded = Math.round(value)
+  return Math.max(min, Math.min(max, rounded))
+}
+
+function resolveFallbackAppearance(
+  fallback: UiAppearancePreferencesDto,
+): NormalizedUiAppearancePreferencesDto {
+  const fbEffect = normalizeOptionalPanelEffect(fallback.panel_effect) ?? 'translucent'
+  const fbDerivedPreset = defaultPanelPresetForEffect(fbEffect)
+  const fbSpec = UI_PANEL_PRESET_DEFAULTS[fbDerivedPreset]
+  const fbPreset = isOneOf(UI_PANEL_PRESETS, fallback.panel_preset)
+    ? fallback.panel_preset
+    : fbDerivedPreset
+  const presetSpec =
+    fbPreset !== 'custom' ? UI_PANEL_PRESET_DEFAULTS[fbPreset] : fbSpec
+
+  return {
+    theme: isOneOf(UI_THEMES, fallback.theme) ? fallback.theme : DEFAULT_UI_APPEARANCE_PREFERENCES.theme,
+    accent: isOneOf(UI_ACCENTS, fallback.accent) ? fallback.accent : DEFAULT_UI_APPEARANCE_PREFERENCES.accent,
+    custom_accent_hex:
+      typeof fallback.custom_accent_hex === 'string' && isValidHexColor(fallback.custom_accent_hex)
+        ? fallback.custom_accent_hex.toLowerCase()
+        : DEFAULT_UI_APPEARANCE_PREFERENCES.custom_accent_hex,
+    panel_effect: fbEffect,
+    panel_preset: fbPreset,
+    panel_opacity: normalizeOptionalInt(fallback.panel_opacity, 0, 100) ?? presetSpec.panel_opacity,
+    panel_blur: normalizeOptionalInt(fallback.panel_blur, 0, 32) ?? presetSpec.panel_blur,
+    panel_saturation: normalizeOptionalInt(fallback.panel_saturation, 100, 200) ?? presetSpec.panel_saturation,
+    workspace_view: isOneOf(UI_WORKSPACE_VIEWS, fallback.workspace_view)
+      ? fallback.workspace_view
+      : DEFAULT_UI_APPEARANCE_PREFERENCES.workspace_view,
+    workspace_folder_tone: isOneOf(UI_WORKSPACE_FOLDER_TONES, fallback.workspace_folder_tone)
+      ? fallback.workspace_folder_tone
+      : DEFAULT_UI_APPEARANCE_PREFERENCES.workspace_folder_tone,
+  }
+}
+
 export function normalizeAppearancePreferences(
   raw: Partial<UiAppearancePreferencesDto> | null | undefined,
   fallback: UiAppearancePreferencesDto = DEFAULT_UI_APPEARANCE_PREFERENCES,
-): UiAppearancePreferencesDto {
+): NormalizedUiAppearancePreferencesDto {
+  const base = resolveFallbackAppearance(fallback)
   const candidate = raw && typeof raw === 'object' ? raw : {}
-  const rawPanel = candidate.panel_effect as string | undefined
-  const panelEffect: UiPanelEffectPreference =
-    rawPanel === 'opaque'
-      ? 'solid'
-      : isOneOf(UI_PANEL_EFFECTS, rawPanel)
-        ? rawPanel
-        : fallback.panel_effect
+
+  const explicitEffect = normalizeOptionalPanelEffect(candidate.panel_effect)
+  const explicitPreset = isOneOf(UI_PANEL_PRESETS, candidate.panel_preset)
+    ? candidate.panel_preset
+    : undefined
+  const explicitOpacity = normalizeOptionalInt(candidate.panel_opacity, 0, 100)
+  const explicitBlur = normalizeOptionalInt(candidate.panel_blur, 0, 32)
+  const explicitSaturation = normalizeOptionalInt(candidate.panel_saturation, 100, 200)
+
+  let panelEffect: UiPanelEffectPreference
+  let panelPreset: UiPanelPresetPreference
+  let panelOpacity: number
+  let panelBlur: number
+  let panelSaturation: number
+
+  if (explicitPreset && explicitPreset !== 'custom') {
+    const spec = UI_PANEL_PRESET_DEFAULTS[explicitPreset]
+    panelPreset = explicitPreset
+    panelEffect = explicitEffect ?? spec.panel_effect
+    panelOpacity = explicitOpacity ?? spec.panel_opacity
+    panelBlur = explicitBlur ?? spec.panel_blur
+    panelSaturation = explicitSaturation ?? spec.panel_saturation
+  } else if (explicitPreset === 'custom') {
+    panelEffect = explicitEffect ?? base.panel_effect
+    const effectSpec = UI_PANEL_PRESET_DEFAULTS[defaultPanelPresetForEffect(panelEffect)]
+    panelPreset = 'custom'
+    panelOpacity = explicitOpacity ?? effectSpec.panel_opacity
+    panelBlur = explicitBlur ?? effectSpec.panel_blur
+    panelSaturation = explicitSaturation ?? effectSpec.panel_saturation
+  } else if (
+    explicitEffect !== undefined
+    || explicitOpacity !== undefined
+    || explicitBlur !== undefined
+    || explicitSaturation !== undefined
+  ) {
+    panelEffect = explicitEffect ?? base.panel_effect
+    const effectSpec = UI_PANEL_PRESET_DEFAULTS[defaultPanelPresetForEffect(panelEffect)]
+    panelOpacity = explicitOpacity ?? effectSpec.panel_opacity
+    panelBlur = explicitBlur ?? effectSpec.panel_blur
+    panelSaturation = explicitSaturation ?? effectSpec.panel_saturation
+    panelPreset =
+      matchCanonicalPanelPreset(panelEffect, panelOpacity, panelBlur, panelSaturation) ?? 'custom'
+  } else {
+    panelEffect = base.panel_effect
+    panelPreset = base.panel_preset
+    panelOpacity = base.panel_opacity
+    panelBlur = base.panel_blur
+    panelSaturation = base.panel_saturation
+  }
 
   return {
-    theme: isOneOf(UI_THEMES, candidate.theme) ? candidate.theme : fallback.theme,
-    accent: isOneOf(UI_ACCENTS, candidate.accent) ? candidate.accent : fallback.accent,
+    theme: isOneOf(UI_THEMES, candidate.theme) ? candidate.theme : base.theme,
+    accent: isOneOf(UI_ACCENTS, candidate.accent) ? candidate.accent : base.accent,
     custom_accent_hex:
       typeof candidate.custom_accent_hex === 'string' && isValidHexColor(candidate.custom_accent_hex)
         ? candidate.custom_accent_hex.toLowerCase()
-        : fallback.custom_accent_hex,
+        : base.custom_accent_hex,
     panel_effect: panelEffect,
+    panel_preset: panelPreset,
+    panel_opacity: panelOpacity,
+    panel_blur: panelBlur,
+    panel_saturation: panelSaturation,
     workspace_view: isOneOf(UI_WORKSPACE_VIEWS, candidate.workspace_view)
       ? candidate.workspace_view
-      : fallback.workspace_view,
+      : base.workspace_view,
     workspace_folder_tone: isOneOf(UI_WORKSPACE_FOLDER_TONES, candidate.workspace_folder_tone)
       ? candidate.workspace_folder_tone
-      : fallback.workspace_folder_tone,
+      : base.workspace_folder_tone,
+  }
+}
+
+export function mergeAppearancePreferences(
+  current: UiAppearancePreferencesDto,
+  patch: Partial<UiAppearancePreferencesDto> | null | undefined,
+): NormalizedUiAppearancePreferencesDto {
+  const base = resolveFallbackAppearance(current)
+  if (!patch || typeof patch !== 'object') {
+    return base
+  }
+
+  const explicitEffect = normalizeOptionalPanelEffect(patch.panel_effect)
+  const explicitPreset = isOneOf(UI_PANEL_PRESETS, patch.panel_preset) ? patch.panel_preset : undefined
+  const explicitOpacity = normalizeOptionalInt(patch.panel_opacity, 0, 100)
+  const explicitBlur = normalizeOptionalInt(patch.panel_blur, 0, 32)
+  const explicitSaturation = normalizeOptionalInt(patch.panel_saturation, 100, 200)
+
+  let panelEffect = base.panel_effect
+  let panelPreset = base.panel_preset
+  let panelOpacity = base.panel_opacity
+  let panelBlur = base.panel_blur
+  let panelSaturation = base.panel_saturation
+
+  if (explicitPreset && explicitPreset !== 'custom') {
+    const spec = UI_PANEL_PRESET_DEFAULTS[explicitPreset]
+    panelPreset = explicitPreset
+    panelEffect = explicitEffect ?? spec.panel_effect
+    panelOpacity = explicitOpacity ?? spec.panel_opacity
+    panelBlur = explicitBlur ?? spec.panel_blur
+    panelSaturation = explicitSaturation ?? spec.panel_saturation
+  } else if (explicitPreset === 'custom') {
+    panelEffect = explicitEffect ?? base.panel_effect
+    const effectChanged = explicitEffect !== undefined && explicitEffect !== base.panel_effect
+    const effectSpec = UI_PANEL_PRESET_DEFAULTS[defaultPanelPresetForEffect(panelEffect)]
+    panelPreset = 'custom'
+    panelOpacity = explicitOpacity ?? (effectChanged ? effectSpec.panel_opacity : base.panel_opacity)
+    panelBlur = explicitBlur ?? (effectChanged ? effectSpec.panel_blur : base.panel_blur)
+    panelSaturation = explicitSaturation ?? (effectChanged ? effectSpec.panel_saturation : base.panel_saturation)
+  } else if (
+    explicitEffect !== undefined
+    && explicitOpacity === undefined
+    && explicitBlur === undefined
+    && explicitSaturation === undefined
+  ) {
+    const derived = defaultPanelPresetForEffect(explicitEffect)
+    const spec = UI_PANEL_PRESET_DEFAULTS[derived]
+    panelPreset = derived
+    panelEffect = spec.panel_effect
+    panelOpacity = spec.panel_opacity
+    panelBlur = spec.panel_blur
+    panelSaturation = spec.panel_saturation
+  } else if (
+    explicitEffect !== undefined
+    || explicitOpacity !== undefined
+    || explicitBlur !== undefined
+    || explicitSaturation !== undefined
+  ) {
+    panelEffect = explicitEffect ?? base.panel_effect
+    const effectChanged = explicitEffect !== undefined && explicitEffect !== base.panel_effect
+    const effectSpec = UI_PANEL_PRESET_DEFAULTS[defaultPanelPresetForEffect(panelEffect)]
+    panelOpacity = explicitOpacity ?? (effectChanged ? effectSpec.panel_opacity : base.panel_opacity)
+    panelBlur = explicitBlur ?? (effectChanged ? effectSpec.panel_blur : base.panel_blur)
+    panelSaturation = explicitSaturation ?? (effectChanged ? effectSpec.panel_saturation : base.panel_saturation)
+    panelPreset =
+      matchCanonicalPanelPreset(panelEffect, panelOpacity, panelBlur, panelSaturation) ?? 'custom'
+  }
+
+  return {
+    theme: isOneOf(UI_THEMES, patch.theme) ? patch.theme : base.theme,
+    accent: isOneOf(UI_ACCENTS, patch.accent) ? patch.accent : base.accent,
+    custom_accent_hex:
+      typeof patch.custom_accent_hex === 'string' && isValidHexColor(patch.custom_accent_hex)
+        ? patch.custom_accent_hex.toLowerCase()
+        : base.custom_accent_hex,
+    panel_effect: panelEffect,
+    panel_preset: panelPreset,
+    panel_opacity: panelOpacity,
+    panel_blur: panelBlur,
+    panel_saturation: panelSaturation,
+    workspace_view: isOneOf(UI_WORKSPACE_VIEWS, patch.workspace_view)
+      ? patch.workspace_view
+      : base.workspace_view,
+    workspace_folder_tone: isOneOf(UI_WORKSPACE_FOLDER_TONES, patch.workspace_folder_tone)
+      ? patch.workspace_folder_tone
+      : base.workspace_folder_tone,
   }
 }
 
@@ -185,7 +441,7 @@ export function normalizeUiPreferencesDocument(
   raw: unknown,
   fallbackAppearance: UiAppearancePreferencesDto = DEFAULT_UI_APPEARANCE_PREFERENCES,
   fallbackInteraction: UiInteractionPreferencesDto = DEFAULT_UI_INTERACTION_PREFERENCES,
-): UiPreferencesDocumentDto {
+): UiPreferencesDocumentDto & { appearance: NormalizedUiAppearancePreferencesDto } {
   const outer = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const inner =
     outer.preferences && typeof outer.preferences === 'object'
@@ -245,6 +501,84 @@ interface LegacyMigrationSnapshot {
   hasAny: boolean
 }
 
+function parseLegacyPanelStyleForMigration(rawPanel: string): Partial<UiAppearancePreferencesDto> | null {
+  try {
+    const parsed = JSON.parse(rawPanel) as {
+      preset?: unknown
+      effect?: unknown
+      opacity?: unknown
+      blur?: unknown
+      saturation?: unknown
+    }
+    if (!parsed || typeof parsed !== 'object') return null
+
+    const hasEffect = typeof parsed.effect === 'string'
+    const hasPreset = isOneOf(UI_PANEL_PRESETS, parsed.preset)
+    if (!hasEffect && !hasPreset) return null
+
+    const mappedEffect = hasEffect
+      ? panelEffectFromLocal(parsed.effect as string)
+      : parsed.preset && parsed.preset !== 'custom'
+        ? UI_PANEL_PRESET_DEFAULTS[parsed.preset as NamedUiPanelPreset].panel_effect
+        : 'translucent'
+
+    if (hasPreset) {
+      const normalized = normalizeAppearancePreferences({
+        panel_effect: mappedEffect,
+        panel_preset: parsed.preset as UiPanelPresetPreference,
+        panel_opacity: normalizeOptionalInt(parsed.opacity, 0, 100),
+        panel_blur: normalizeOptionalInt(parsed.blur, 0, 32),
+        panel_saturation: normalizeOptionalInt(parsed.saturation, 100, 200),
+      })
+      return {
+        panel_effect: normalized.panel_effect,
+        panel_preset: normalized.panel_preset,
+        panel_opacity: normalized.panel_opacity,
+        panel_blur: normalized.panel_blur,
+        panel_saturation: normalized.panel_saturation,
+      }
+    }
+
+    // Legacy localStorage { effect, opacity, blur } without preset:
+    // In opaque mode, opacity/blur were inactive defaults (80/8) -> canonical 'solid' preset.
+    if (mappedEffect === 'solid') {
+      return {
+        panel_effect: 'solid',
+        panel_preset: 'solid',
+        panel_opacity: 100,
+        panel_blur: 0,
+        panel_saturation: 100,
+      }
+    }
+
+    if (mappedEffect === 'translucent') {
+      const opacity = normalizeOptionalInt(parsed.opacity, 0, 100) ?? 76
+      const preset = opacity === 76 ? 'translucent' : 'custom'
+      return {
+        panel_effect: 'translucent',
+        panel_preset: preset,
+        panel_opacity: opacity,
+        panel_blur: 0,
+        panel_saturation: 100,
+      }
+    }
+
+    const opacity = normalizeOptionalInt(parsed.opacity, 0, 100) ?? 68
+    const blur = normalizeOptionalInt(parsed.blur, 0, 32) ?? 18
+    const saturation = normalizeOptionalInt(parsed.saturation, 100, 200) ?? 160
+    const preset = matchCanonicalPanelPreset('blur', opacity, blur, saturation) ?? 'custom'
+    return {
+      panel_effect: 'blur',
+      panel_preset: preset,
+      panel_opacity: opacity,
+      panel_blur: blur,
+      panel_saturation: saturation,
+    }
+  } catch {
+    return null
+  }
+}
+
 function captureLegacyLocalMigration(): LegacyMigrationSnapshot {
   const appearance: Partial<UiAppearancePreferencesDto> = {}
   const interaction: Partial<UiInteractionPreferencesDto> = {}
@@ -274,14 +608,10 @@ function captureLegacyLocalMigration(): LegacyMigrationSnapshot {
 
     const rawPanel = window.localStorage.getItem(LEGACY_PANEL_STYLE_KEY)
     if (rawPanel) {
-      try {
-        const parsed = JSON.parse(rawPanel) as { effect?: string }
-        if (parsed && typeof parsed.effect === 'string') {
-          appearance.panel_effect = panelEffectFromLocal(parsed.effect)
-          hasAny = true
-        }
-      } catch {
-        // Ignore malformed legacy panel JSON.
+      const migratedPanel = parseLegacyPanelStyleForMigration(rawPanel)
+      if (migratedPanel) {
+        Object.assign(appearance, migratedPanel)
+        hasAny = true
       }
     }
 
@@ -312,9 +642,11 @@ function captureLegacyLocalMigration(): LegacyMigrationSnapshot {
 }
 
 function isDefaultServerPreferences(doc: UiPreferencesDocumentDto): boolean {
-  const a = doc.appearance
+  const a = normalizeAppearancePreferences(doc.appearance)
   const i = doc.interaction
-  const panelIsDefault = a.panel_effect === 'translucent' || a.panel_effect === 'solid'
+  const panelIsDefault =
+    (a.panel_preset === 'translucent' && a.panel_effect === 'translucent')
+    || (a.panel_preset === 'solid' && a.panel_effect === 'solid')
   return (
     a.theme === DEFAULT_UI_APPEARANCE_PREFERENCES.theme
     && a.accent === DEFAULT_UI_APPEARANCE_PREFERENCES.accent
@@ -328,7 +660,33 @@ function isDefaultServerPreferences(doc: UiPreferencesDocumentDto): boolean {
   )
 }
 
-function readCachedDocument(): UiPreferencesDocumentDto | null {
+function appearanceEquals(
+  a: NormalizedUiAppearancePreferencesDto,
+  b: NormalizedUiAppearancePreferencesDto,
+): boolean {
+  return (
+    a.theme === b.theme
+    && a.accent === b.accent
+    && a.custom_accent_hex.toLowerCase() === b.custom_accent_hex.toLowerCase()
+    && a.panel_effect === b.panel_effect
+    && a.panel_preset === b.panel_preset
+    && a.panel_opacity === b.panel_opacity
+    && a.panel_blur === b.panel_blur
+    && a.panel_saturation === b.panel_saturation
+    && a.workspace_view === b.workspace_view
+    && a.workspace_folder_tone === b.workspace_folder_tone
+  )
+}
+
+function interactionEquals(a: UiInteractionPreferencesDto, b: UiInteractionPreferencesDto): boolean {
+  return (
+    a.workspace_drop_action === b.workspace_drop_action
+    && a.spatial_promote_mode === b.spatial_promote_mode
+    && a.reduced_motion === b.reduced_motion
+  )
+}
+
+function readCachedDocument(): (UiPreferencesDocumentDto & { appearance: NormalizedUiAppearancePreferencesDto }) | null {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return null
     const raw = window.localStorage.getItem(UI_PREFERENCES_CACHE_KEY)
@@ -389,7 +747,7 @@ function applyReducedMotionDataset(effective: boolean): void {
 }
 
 export interface UiPreferencesStore {
-  appearance: UiAppearancePreferencesDto
+  appearance: NormalizedUiAppearancePreferencesDto
   interaction: UiInteractionPreferencesDto
   filePath: Ref<string | null>
   contentHash: Ref<string | null>
@@ -434,7 +792,7 @@ export function useUiPreferences(): UiPreferencesStore {
 
   const scope = effectScope(true)
   const created = scope.run(() => {
-    const appearance = reactive<UiAppearancePreferencesDto>({ ...initialAppearance })
+    const appearance = reactive<NormalizedUiAppearancePreferencesDto>({ ...initialAppearance })
     const interaction = reactive<UiInteractionPreferencesDto>({ ...initialInteraction })
     const filePath = ref<string | null>(cached?.file_path ?? null)
     const contentHash = ref<string | null>(cached?.content_hash ?? null)
@@ -475,10 +833,29 @@ export function useUiPreferences(): UiPreferencesStore {
         if (themeCtl.accentColor.value !== appearance.accent) {
           themeCtl.setAccentColor(appearance.accent)
         }
+
         const desiredPanelEffect = panelEffectToLocal(appearance.panel_effect)
-        if (panelCtl.panelStyle.value.effect !== desiredPanelEffect) {
-          panelCtl.setPanelEffect(desiredPanelEffect)
+        const currentPanel = panelCtl.panelStyle.value as BridgeablePanelStyle
+        const hasExtendedFields = 'preset' in currentPanel || 'saturation' in currentPanel
+        const needsPanelSync =
+          currentPanel.effect !== desiredPanelEffect
+          || currentPanel.opacity !== appearance.panel_opacity
+          || currentPanel.blur !== appearance.panel_blur
+          || (hasExtendedFields
+            && (currentPanel.preset !== appearance.panel_preset
+              || currentPanel.saturation !== appearance.panel_saturation))
+
+        if (needsPanelSync) {
+          const nextPanelPatch: Partial<BridgeablePanelStyle> = {
+            preset: appearance.panel_preset,
+            effect: desiredPanelEffect,
+            opacity: appearance.panel_opacity,
+            blur: appearance.panel_blur,
+            saturation: appearance.panel_saturation,
+          }
+          panelCtl.updatePanelStyle(nextPanelPatch as Partial<PanelStyleSettings>)
         }
+
         syncSpatialLocalStorage(interaction.spatial_promote_mode)
         applyReducedMotionDataset(isReducedMotion.value)
       } finally {
@@ -487,10 +864,12 @@ export function useUiPreferences(): UiPreferencesStore {
     }
 
     function applyDocument(doc: UiPreferencesDocumentDto, persistCache = true): UiPreferencesDocumentDto {
+      const normalizedAppearance = normalizeAppearancePreferences(doc.appearance, appearance)
+      const normalizedInteraction = normalizeInteractionPreferences(doc.interaction, interaction)
       syncingInternal = true
       try {
-        Object.assign(appearance, doc.appearance)
-        Object.assign(interaction, doc.interaction)
+        Object.assign(appearance, normalizedAppearance)
+        Object.assign(interaction, normalizedInteraction)
         if (doc.file_path !== undefined) filePath.value = doc.file_path ?? null
         if (doc.content_hash !== undefined) contentHash.value = doc.content_hash ?? null
       } finally {
@@ -536,12 +915,84 @@ export function useUiPreferences(): UiPreferencesStore {
 
     // Bidirectional bridge: direct mutations on usePanelStyles() -> preferences store & backend PATCH
     watch(
-      () => panelCtl.panelStyle.value.effect,
-      (nextLocalEffect) => {
+      () => {
+        const s = panelCtl.panelStyle.value as BridgeablePanelStyle
+        return [s.preset, s.effect, s.opacity, s.blur, s.saturation] as const
+      },
+      ([nextPreset, nextLocalEffect, nextOpacity, nextBlur, nextSaturation]) => {
         if (syncingInternal) return
-        const mapped = panelEffectFromLocal(nextLocalEffect)
-        if (mapped !== appearance.panel_effect) {
-          void patchPreferences({ appearance: { panel_effect: mapped } })
+        const mappedEffect = panelEffectFromLocal(nextLocalEffect)
+        const hasExtended = nextPreset !== undefined || nextSaturation !== undefined
+
+        let desired: Pick<
+          NormalizedUiAppearancePreferencesDto,
+          'panel_effect' | 'panel_preset' | 'panel_opacity' | 'panel_blur' | 'panel_saturation'
+        >
+
+        if (hasExtended) {
+          const normalized = normalizeAppearancePreferences(
+            {
+              ...appearance,
+              panel_effect: mappedEffect,
+              panel_preset: isOneOf(UI_PANEL_PRESETS, nextPreset) ? nextPreset : undefined,
+              panel_opacity: nextOpacity,
+              panel_blur: nextBlur,
+              panel_saturation: nextSaturation,
+            },
+            appearance,
+          )
+          desired = {
+            panel_effect: normalized.panel_effect,
+            panel_preset: normalized.panel_preset,
+            panel_opacity: normalized.panel_opacity,
+            panel_blur: normalized.panel_blur,
+            panel_saturation: normalized.panel_saturation,
+          }
+        } else {
+          // Compatibility when usePanelStyles only exposes { effect, opacity, blur }:
+          const onlyEffectChanged =
+            mappedEffect !== appearance.panel_effect
+            && nextOpacity === appearance.panel_opacity
+            && nextBlur === appearance.panel_blur
+          if (onlyEffectChanged || mappedEffect === 'solid') {
+            const derived = defaultPanelPresetForEffect(mappedEffect)
+            const spec = UI_PANEL_PRESET_DEFAULTS[derived]
+            desired = {
+              panel_effect: spec.panel_effect,
+              panel_preset: derived,
+              panel_opacity: spec.panel_opacity,
+              panel_blur: spec.panel_blur,
+              panel_saturation: spec.panel_saturation,
+            }
+          } else {
+            const opacity = normalizeOptionalInt(nextOpacity, 0, 100) ?? appearance.panel_opacity
+            const blur =
+              mappedEffect === 'translucent'
+                ? 0
+                : normalizeOptionalInt(nextBlur, 0, 32) ?? appearance.panel_blur
+            const saturation = mappedEffect === 'blur' ? 160 : 100
+            const matched = matchCanonicalPanelPreset(mappedEffect, opacity, blur, saturation)
+            desired = {
+              panel_effect: mappedEffect,
+              panel_preset: matched ?? 'custom',
+              panel_opacity: opacity,
+              panel_blur: blur,
+              panel_saturation: saturation,
+            }
+          }
+        }
+
+        const patch: Partial<UiAppearancePreferencesDto> = {}
+        if (desired.panel_effect !== appearance.panel_effect) patch.panel_effect = desired.panel_effect
+        if (desired.panel_preset !== appearance.panel_preset) patch.panel_preset = desired.panel_preset
+        if (desired.panel_opacity !== appearance.panel_opacity) patch.panel_opacity = desired.panel_opacity
+        if (desired.panel_blur !== appearance.panel_blur) patch.panel_blur = desired.panel_blur
+        if (desired.panel_saturation !== appearance.panel_saturation) {
+          patch.panel_saturation = desired.panel_saturation
+        }
+
+        if (Object.keys(patch).length > 0) {
+          void patchPreferences({ appearance: patch })
         }
       },
       { flush: 'sync' },
@@ -627,11 +1078,21 @@ export function useUiPreferences(): UiPreferencesStore {
 
     async function patchPreferences(patch: PatchUiPreferencesInput): Promise<UiPreferencesDocumentDto> {
       const nextAppearance = patch.appearance
-        ? normalizeAppearancePreferences({ ...appearance, ...patch.appearance }, appearance)
+        ? mergeAppearancePreferences(appearance, patch.appearance)
         : { ...appearance }
       const nextInteraction = patch.interaction
         ? normalizeInteractionPreferences({ ...interaction, ...patch.interaction }, interaction)
         : { ...interaction }
+
+      // Coalesce identical back-to-back calls when usePanelStyles + updateAppearance are invoked together.
+      if (
+        saving.value
+        && patch.expected_content_hash == null
+        && appearanceEquals(nextAppearance, appearance)
+        && interactionEquals(nextInteraction, interaction)
+      ) {
+        return currentDocument()
+      }
 
       const optimistic = applyDocument({
         version: 1,

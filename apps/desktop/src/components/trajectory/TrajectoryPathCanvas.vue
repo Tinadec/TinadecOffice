@@ -1414,7 +1414,7 @@ function onPointerUp(): void {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .tpc-topbar {
@@ -1443,7 +1443,7 @@ function onPointerUp(): void {
   padding: 0 8px;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11.5px;
   font-weight: 500;
@@ -1452,7 +1452,7 @@ function onPointerUp(): void {
 
 .tpc-back-btn:hover {
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .tpc-meta-count,
@@ -1482,7 +1482,7 @@ function onPointerUp(): void {
   border: 1px solid var(--border-muted);
   border-radius: 6px;
   padding: 1px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .tpc-view-btn {
@@ -1500,7 +1500,7 @@ function onPointerUp(): void {
 }
 
 .tpc-view-btn.is-active {
-  background: var(--bg-primary);
+  background: var(--surface-active, var(--bg-primary));
   color: var(--text-primary);
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -1620,7 +1620,7 @@ function onPointerUp(): void {
 }
 
 .svg-turn-pill__bg {
-  fill: var(--bg-primary);
+  fill: var(--surface-raised, var(--bg-primary));
   stroke: var(--border-default);
   stroke-width: 1.2;
 }
@@ -1657,7 +1657,7 @@ function onPointerUp(): void {
 
 .svg-branch__dot {
   fill: var(--obs-ctx-assistant, #5b9fe8);
-  stroke: var(--bg-primary);
+  stroke: var(--surface-canvas, var(--bg-primary));
   stroke-width: 1;
 }
 
@@ -1680,7 +1680,7 @@ function onPointerUp(): void {
 }
 
 .svg-gov-shield {
-  fill: color-mix(in srgb, #d49b00 22%, var(--bg-primary));
+  fill: color-mix(in srgb, #d49b00 22%, transparent);
   stroke: #d49b00;
   stroke-width: 1.2;
 }
@@ -1689,7 +1689,7 @@ function onPointerUp(): void {
   font-size: 11px;
   fill: var(--text-primary);
   paint-order: stroke fill;
-  stroke: var(--bg-primary);
+  stroke: var(--surface-canvas, var(--bg-primary));
   stroke-width: 3px;
   stroke-linejoin: round;
 }
@@ -1706,7 +1706,7 @@ function onPointerUp(): void {
 }
 
 .svg-diagnose-hit__bg {
-  fill: var(--bg-secondary);
+  fill: var(--surface-section, var(--bg-secondary));
   stroke: var(--border-muted);
   stroke-width: 1;
 }
@@ -1723,13 +1723,13 @@ function onPointerUp(): void {
 }
 
 .svg-file-pill.is-read .svg-file-pill__bg {
-  fill: color-mix(in srgb, var(--obs-ctx-assistant, #5b9fe8) 12%, var(--bg-primary));
+  fill: color-mix(in srgb, var(--obs-ctx-assistant, #5b9fe8) 14%, transparent);
   stroke: color-mix(in srgb, var(--obs-ctx-assistant, #5b9fe8) 55%, var(--border-default));
   stroke-width: 1;
 }
 
 .svg-file-pill.is-change .svg-file-pill__bg {
-  fill: color-mix(in srgb, #d49b00 12%, var(--bg-primary));
+  fill: color-mix(in srgb, #d49b00 14%, transparent);
   stroke: color-mix(in srgb, #d49b00 55%, var(--border-default));
   stroke-width: 1;
 }
@@ -1769,7 +1769,7 @@ function onPointerUp(): void {
 }
 
 .svg-step-circle {
-  fill: var(--bg-primary);
+  fill: var(--surface-raised, var(--bg-primary));
   stroke: var(--border-default);
   stroke-width: 1.5;
   transition: stroke-width 110ms ease, stroke 110ms ease;
@@ -1826,7 +1826,7 @@ function onPointerUp(): void {
   gap: 10px;
   padding: 7px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   font-size: 11.5px;
 }
 
@@ -1850,7 +1850,7 @@ function onPointerUp(): void {
   padding: 0 8px;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11px;
   cursor: pointer;
@@ -1859,7 +1859,7 @@ function onPointerUp(): void {
 .tpc-popover-anchor {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   display: flex;
   justify-content: center;
 }
@@ -1871,7 +1871,7 @@ function onPointerUp(): void {
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
 }
 
 .tpc-step-detail__meta {
@@ -1937,7 +1937,7 @@ function onPointerUp(): void {
   padding: 0 9px;
   border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11.5px;
   font-weight: 500;
@@ -1946,7 +1946,7 @@ function onPointerUp(): void {
 
 .tpc-diagnose-btn:hover {
   border-color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .tpc-step-nav {
@@ -1968,7 +1968,7 @@ function onPointerUp(): void {
 }
 
 .tpc-nav-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
 }
 
 .tpc-nav-btn:disabled {
@@ -2049,7 +2049,7 @@ function onPointerUp(): void {
   border: 1px solid var(--border-muted);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .tpc-frame__head {
@@ -2116,7 +2116,7 @@ function onPointerUp(): void {
   margin: 0;
   padding: 8px 10px;
   border-top: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.45;
@@ -2190,7 +2190,7 @@ function onPointerUp(): void {
   border: 1px solid var(--border-muted);
   border-radius: 6px;
   padding: 1px;
-  background: var(--bg-primary);
+  background: var(--surface-section, var(--bg-primary));
 }
 
 .tpc-zoom-btn,
@@ -2217,7 +2217,7 @@ function onPointerUp(): void {
 
 .tpc-zoom-btn:hover,
 .tpc-zoom-fit:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .tpc-legend-note {

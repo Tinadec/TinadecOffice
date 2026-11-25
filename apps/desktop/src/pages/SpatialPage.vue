@@ -3933,9 +3933,10 @@ function collaboratorInitial(name: string): string {
 .space-minimap {
   margin: 0 16px 16px 0 !important;
   border-radius: 12px !important;
-  border: 1px solid var(--border-muted) !important;
-  background: color-mix(in srgb, var(--surface-raised) 86%, transparent) !important;
-  backdrop-filter: blur(14px);
+  border: 1px solid var(--material-floating-border, var(--border-muted)) !important;
+  background: var(--material-floating-bg, var(--surface-raised)) !important;
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   overflow: hidden;
   z-index: 9;
@@ -3952,9 +3953,10 @@ function collaboratorInitial(name: string): string {
   min-height: 36px;
   padding: 4px 6px;
   border-radius: 12px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 6px 22px rgba(15, 23, 42, 0.12);
   color: var(--text-primary);
 }
@@ -4145,9 +4147,10 @@ function collaboratorInitial(name: string): string {
   gap: 6px;
   padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   font-size: 11px;
   color: var(--text-secondary);
 }
@@ -4163,9 +4166,10 @@ function collaboratorInitial(name: string): string {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-section) 92%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
   overflow: hidden;
 }
@@ -4360,9 +4364,10 @@ function collaboratorInitial(name: string): string {
   width: 236px;
   padding: 6px;
   border-radius: 12px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
   display: flex;
   flex-direction: column;
@@ -4440,31 +4445,35 @@ function collaboratorInitial(name: string): string {
   top: 94px;
   right: 14px;
   z-index: 15;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   border-radius: 999px;
   padding: 5px 12px;
-  background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
-  backdrop-filter: blur(12px);
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
-/* Left-Center Vertical Figma Tool Dock */
+/* Left-Center Vertical Figma Tool Dock (centered without transform so inner popover backdrop-filter never breaks) */
 .space-tool-dock {
   position: absolute;
   left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  height: fit-content;
   z-index: 15;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px;
   border-radius: 16px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
 }
 
@@ -4512,16 +4521,19 @@ function collaboratorInitial(name: string): string {
 .space-tool-popover {
   position: absolute;
   left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  height: fit-content;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 95%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
   z-index: 20;
   white-space: nowrap;
@@ -4567,17 +4579,20 @@ function collaboratorInitial(name: string): string {
 .space-mode-pill {
   position: absolute;
   top: 96px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
   z-index: 12;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 42%, var(--material-floating-border, var(--border-muted)));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
@@ -4594,8 +4609,9 @@ function collaboratorInitial(name: string): string {
   gap: 10px;
   border-radius: 18px;
   border: 1.5px dashed var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-section));
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--material-floating-bg, var(--surface-raised)));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--accent-primary);
   font-size: 14px;
   font-weight: 600;
@@ -4614,9 +4630,10 @@ function collaboratorInitial(name: string): string {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-section) 94%, transparent);
-  backdrop-filter: blur(20px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
   overflow: hidden;
 }
@@ -4818,12 +4835,13 @@ function collaboratorInitial(name: string): string {
   line-height: 1.5;
 }
 
-/* Resident Collapsible Bottom ComposerBar (ALWAYS docked cleanly at bottom-center!) */
+/* Resident Collapsible Bottom ComposerBar (centered without transform so inner glass surfaces sample cleanly) */
 .space-composer-dock {
   position: absolute;
   bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
   width: min(760px, calc(100% - 148px));
   z-index: 16;
   display: flex;
@@ -4834,7 +4852,7 @@ function collaboratorInitial(name: string): string {
 }
 
 .space-composer-dock.is-collapsed {
-  width: auto;
+  width: fit-content;
 }
 
 .space-composer-frame {
@@ -4860,9 +4878,10 @@ function collaboratorInitial(name: string): string {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-secondary);
   cursor: pointer;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
@@ -4881,9 +4900,10 @@ function collaboratorInitial(name: string): string {
   height: 38px;
   padding: 0 16px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 42%, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 42%, var(--material-floating-border, var(--border-muted)));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 600;
@@ -4914,9 +4934,10 @@ function collaboratorInitial(name: string): string {
   gap: 8px;
   padding: 4px 6px 4px 12px;
   border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
   font-size: 12px;
   color: var(--text-primary);

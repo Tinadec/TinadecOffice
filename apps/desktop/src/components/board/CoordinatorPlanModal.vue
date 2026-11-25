@@ -582,7 +582,6 @@ async function handleApplyPlan() {
   justify-content: center;
   padding: 20px;
   background: rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(2px);
 }
 
 .coordinator-modal-dialog {
@@ -593,8 +592,10 @@ async function handleApplyPlan() {
   gap: 12px;
   padding: 18px 20px;
   border-radius: var(--radius-island, 12px);
-  border: 1px solid var(--border-default, var(--border-muted));
-  background: var(--surface-raised, var(--bg-primary));
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   color: var(--text-primary);
   box-shadow: var(--shadow-elevated, 0 18px 48px rgba(0, 0, 0, 0.28));
   overflow: hidden;

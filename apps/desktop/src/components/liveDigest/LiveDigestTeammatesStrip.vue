@@ -232,7 +232,7 @@ function onPopoverClose(): void {
   padding: 7px 9px;
   border-radius: var(--radius-control-md, 8px);
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -240,7 +240,7 @@ function onPopoverClose(): void {
 
 .ld-teammate-chip:hover,
 .ld-teammate-chip.is-selected {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   border-color: var(--border-default);
 }
 

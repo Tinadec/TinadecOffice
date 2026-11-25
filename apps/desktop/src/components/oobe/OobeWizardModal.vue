@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Check, Minus, Square, X } from '@lucide/vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import { UiButton } from '@/components/ui'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import { usePlatform } from '@/composables/usePlatform'
 import { useHostAccess } from '@/lib/hostAccess'
 import { getNextStep, getPrevStep, useOobe, type OobeStepId } from '@/composables/useOobe'
@@ -15,6 +16,7 @@ import OobeStepWorkspace from './OobeStepWorkspace.vue'
 const { t, te } = useI18n()
 const { isElectron } = useHostAccess()
 const { isMac, isElectronMac, isFullScreen } = usePlatform()
+const { panelStyle, getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const {
   steps,
   open,
@@ -43,6 +45,21 @@ const stepComponents = {
 } as const
 
 const activeStepComponent = computed(() => stepComponents[currentStep.value])
+
+// OOBE stage shell directly reflects the active material preset via computePanelStyle() /
+// --material-floating-*, keeping zero ancestor transform so Chromium backdrop-filter samples cleanly.
+const stageMaterialStyle = computed(() => {
+  const computedStyle = getPanelStyle()
+  if (panelStyle.value.effect === 'opaque') {
+    return {
+      background: 'var(--bg-primary)',
+      backdropFilter: 'none',
+      WebkitBackdropFilter: 'none',
+    }
+  }
+  return computedStyle
+})
+const stageMaterialAttrs = computed(() => getPanelDataAttributes())
 
 async function goNext(): Promise<void> {
   const next = getNextStep(currentStep.value)
@@ -108,183 +125,206 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="open"
-      class="oobe-fullscreen-stage"
-      :class="{ 'is-mac-framed': isElectronMac && !isFullScreen }"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="label('oobe.title', '欢迎使用 TinadecOffice')"
-      data-testid="oobe-wizard-modal"
-    >
-      <div class="oobe-ambient-glow" aria-hidden="true" />
+    <div v-if="open" class="oobe-stage-host">
+      <!-- Ambient backdrop sits behind the glass stage (never inside a transformed ancestor)
+           so switching presets in Step 1 visibly demonstrates solid vs translucent vs frosted/crystal blur
+           even before a custom wallpaper is configured, while letting real wallpapers shine through. -->
+      <div class="oobe-ambient-backdrop" aria-hidden="true" />
 
-      <!-- Minimal Full-Screen Top Bar (respects macOS traffic lights & Windows frameless controls) -->
-      <header class="oobe-topbar">
-        <div class="oobe-topbar__brand">
-          <BrandLogo :size="15" class="oobe-brand-icon" />
-          <TinadecCalligraphy :size="14" class="oobe-brand-wordmark" />
-        </div>
-
-        <nav class="oobe-topbar__steps no-drag" :aria-label="label('oobe.stepsNav', '初始化步骤')">
-          <ol class="oobe-rail">
-            <li
-              v-for="(step, idx) in steps"
-              :key="step"
-              class="oobe-rail__item"
-              :class="{
-                'is-active': step === currentStep,
-                'is-completed': idx < stepIndex,
-              }"
-            >
-              <button
-                type="button"
-                class="oobe-rail__btn"
-                :aria-current="step === currentStep ? 'step' : undefined"
-                :data-testid="`oobe-rail-${step}`"
-                @click="setOobeStep(step)"
-              >
-                <span class="oobe-rail__index">
-                  <Check v-if="idx < stepIndex" :size="11" aria-hidden="true" />
-                  <template v-else>{{ stepMeta[step].num }}</template>
-                </span>
-                <span class="oobe-rail__label">{{ label(stepMeta[step].key, stepMeta[step].fallback) }}</span>
-              </button>
-              <span v-if="idx < steps.length - 1" class="oobe-rail__divider" aria-hidden="true" />
-            </li>
-          </ol>
-        </nav>
-
-        <div class="oobe-topbar__actions no-drag">
-          <button
-            type="button"
-            class="oobe-skip-top"
-            data-testid="oobe-close-btn"
-            @click="skip"
-          >
-            {{ label('oobe.skipForNow', '稍后配置') }}
-          </button>
-
-          <template v-if="isElectron && !isMac">
-            <span class="oobe-win-sep" aria-hidden="true" />
-            <UiButton
-              variant="ghost"
-              size="icon"
-              class="window-btn minimize"
-              :title="label('app.minimize', '最小化')"
-              :aria-label="label('app.minimize', '最小化')"
-              @click="minimizeWindow"
-            >
-              <Minus :size="14" aria-hidden="true" />
-            </UiButton>
-            <UiButton
-              variant="ghost"
-              size="icon"
-              class="window-btn maximize"
-              :title="label('app.maximize', '最大化')"
-              :aria-label="label('app.maximize', '最大化')"
-              @click="maximizeWindow"
-            >
-              <Square :size="12" aria-hidden="true" />
-            </UiButton>
-            <UiButton
-              variant="ghost"
-              size="icon"
-              class="window-btn close"
-              :title="label('app.close', '关闭')"
-              :aria-label="label('app.close', '关闭')"
-              @click="closeWindow"
-            >
-              <X :size="14" aria-hidden="true" />
-            </UiButton>
-          </template>
-        </div>
-      </header>
-
-      <!-- Centered Editorial Stage -->
-      <main class="oobe-stage-scroll">
-        <div class="oobe-stage-column">
-          <div class="oobe-step-viewport">
-            <Transition name="oobe-step-fade" mode="out-in">
-              <component :is="activeStepComponent" :key="currentStep" />
-            </Transition>
+      <div
+        class="oobe-fullscreen-stage"
+        :class="{ 'is-mac-framed': isElectronMac && !isFullScreen }"
+        :style="stageMaterialStyle"
+        v-bind="stageMaterialAttrs"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="label('oobe.title', '欢迎使用 TinadecOffice')"
+        data-testid="oobe-wizard-modal"
+      >
+        <!-- Minimal Full-Screen Top Bar (respects macOS traffic lights & Windows frameless controls) -->
+        <header class="oobe-topbar">
+          <div class="oobe-topbar__brand">
+            <BrandLogo :size="15" class="oobe-brand-icon" />
+            <TinadecCalligraphy :size="14" class="oobe-brand-wordmark" />
           </div>
 
-          <footer class="oobe-stage-footer">
-            <div class="oobe-stage-footer__left">
+          <nav class="oobe-topbar__steps no-drag" :aria-label="label('oobe.stepsNav', '初始化步骤')">
+            <ol class="oobe-rail">
+              <li
+                v-for="(step, idx) in steps"
+                :key="step"
+                class="oobe-rail__item"
+                :class="{
+                  'is-active': step === currentStep,
+                  'is-completed': idx < stepIndex,
+                }"
+              >
+                <button
+                  type="button"
+                  class="oobe-rail__btn"
+                  :aria-current="step === currentStep ? 'step' : undefined"
+                  :data-testid="`oobe-rail-${step}`"
+                  @click="setOobeStep(step)"
+                >
+                  <span class="oobe-rail__index">
+                    <Check v-if="idx < stepIndex" :size="11" aria-hidden="true" />
+                    <template v-else>{{ stepMeta[step].num }}</template>
+                  </span>
+                  <span class="oobe-rail__label">{{ label(stepMeta[step].key, stepMeta[step].fallback) }}</span>
+                </button>
+                <span v-if="idx < steps.length - 1" class="oobe-rail__divider" aria-hidden="true" />
+              </li>
+            </ol>
+          </nav>
+
+          <div class="oobe-topbar__actions no-drag">
+            <button
+              type="button"
+              class="oobe-skip-top"
+              data-testid="oobe-close-btn"
+              @click="skip"
+            >
+              {{ label('oobe.skipForNow', '稍后配置') }}
+            </button>
+
+            <template v-if="isElectron && !isMac">
+              <span class="oobe-win-sep" aria-hidden="true" />
               <UiButton
-                v-if="canGoBack"
                 variant="ghost"
-                size="sm"
-                data-testid="oobe-back-btn"
-                @click="goBack"
+                size="icon"
+                class="window-btn minimize"
+                :title="label('app.minimize', '最小化')"
+                :aria-label="label('app.minimize', '最小化')"
+                @click="minimizeWindow"
               >
-                <ArrowLeft :size="14" />
-                <span>{{ label('oobe.back', '上一步') }}</span>
+                <Minus :size="14" aria-hidden="true" />
               </UiButton>
-              <button
-                v-else
-                type="button"
-                class="oobe-skip-inline"
-                data-testid="oobe-skip-btn"
-                @click="skip"
+              <UiButton
+                variant="ghost"
+                size="icon"
+                class="window-btn maximize"
+                :title="label('app.maximize', '最大化')"
+                :aria-label="label('app.maximize', '最大化')"
+                @click="maximizeWindow"
               >
-                {{ label('oobe.enterDirectly', '先跳过，直接进入工作台') }}
-              </button>
+                <Square :size="12" aria-hidden="true" />
+              </UiButton>
+              <UiButton
+                variant="ghost"
+                size="icon"
+                class="window-btn close"
+                :title="label('app.close', '关闭')"
+                :aria-label="label('app.close', '关闭')"
+                @click="closeWindow"
+              >
+                <X :size="14" aria-hidden="true" />
+              </UiButton>
+            </template>
+          </div>
+        </header>
+
+        <!-- Centered Editorial Stage -->
+        <main class="oobe-stage-scroll">
+          <div class="oobe-stage-column">
+            <div class="oobe-step-viewport">
+              <Transition name="oobe-step-fade" mode="out-in">
+                <component :is="activeStepComponent" :key="currentStep" />
+              </Transition>
             </div>
 
-            <div class="oobe-stage-footer__right">
-              <UiButton
-                v-if="!isLastStep"
-                size="default"
-                data-testid="oobe-next-btn"
-                @click="goNext"
-              >
-                <span>{{ label('oobe.next', '继续') }}</span>
-                <ArrowRight :size="14" />
-              </UiButton>
-              <UiButton
-                v-else
-                size="default"
-                data-testid="oobe-finish-btn"
-                @click="finish"
-              >
-                <span>{{ label('oobe.finish', '进入工作台') }}</span>
-                <ArrowRight :size="14" />
-              </UiButton>
-            </div>
-          </footer>
-        </div>
-      </main>
+            <footer class="oobe-stage-footer">
+              <div class="oobe-stage-footer__left">
+                <UiButton
+                  v-if="canGoBack"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="oobe-back-btn"
+                  @click="goBack"
+                >
+                  <ArrowLeft :size="14" />
+                  <span>{{ label('oobe.back', '上一步') }}</span>
+                </UiButton>
+                <button
+                  v-else
+                  type="button"
+                  class="oobe-skip-inline"
+                  data-testid="oobe-skip-btn"
+                  @click="skip"
+                >
+                  {{ label('oobe.enterDirectly', '先跳过，直接进入工作台') }}
+                </button>
+              </div>
+
+              <div class="oobe-stage-footer__right">
+                <UiButton
+                  v-if="!isLastStep"
+                  size="default"
+                  data-testid="oobe-next-btn"
+                  @click="goNext"
+                >
+                  <span>{{ label('oobe.next', '继续') }}</span>
+                  <ArrowRight :size="14" />
+                </UiButton>
+                <UiButton
+                  v-else
+                  size="default"
+                  data-testid="oobe-finish-btn"
+                  @click="finish"
+                >
+                  <span>{{ label('oobe.finish', '进入工作台') }}</span>
+                  <ArrowRight :size="14" />
+                </UiButton>
+              </div>
+            </footer>
+          </div>
+        </main>
+      </div>
     </div>
   </Teleport>
 </template>
 
 <style scoped>
-.oobe-fullscreen-stage {
+/* Zero transform / zero filter on the host so backdrop-filter on .oobe-fullscreen-stage
+   samples the real window background and ambient backdrop without Chromium compositing bugs. */
+.oobe-stage-host {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  overflow: hidden;
 }
 
-.oobe-ambient-glow {
+.oobe-ambient-backdrop {
   position: absolute;
-  top: -20%;
-  left: 50%;
-  width: min(880px, 120vw);
-  height: 420px;
-  transform: translateX(-50%);
-  background: radial-gradient(
-    ellipse at center,
-    color-mix(in srgb, var(--text-primary) 3.5%, transparent) 0%,
-    transparent 72%
-  );
+  inset: 0;
   pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 560px 280px at 32% 14%,
+      color-mix(in srgb, var(--accent-info, #3b82f6) 13%, transparent) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 520px 260px at 70% 18%,
+      color-mix(in srgb, var(--accent-recovery, #8b5cf6) 11%, transparent) 0%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 680px 340px at 50% 0%,
+      color-mix(in srgb, var(--text-primary) 5%, transparent) 0%,
+      transparent 75%
+    );
+}
+
+.oobe-fullscreen-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--material-floating-bg, var(--surface-canvas, var(--bg-primary)));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
+  color: var(--text-primary);
+  overflow: hidden;
+  transition: background-color 180ms ease;
 }
 
 .oobe-topbar {
@@ -486,32 +526,22 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
 }
 
+/* Opacity-only step transitions so inner surfaces never acquire an ancestor transform. */
 .oobe-step-fade-enter-active,
 .oobe-step-fade-leave-active {
-  transition:
-    opacity 150ms cubic-bezier(0.2, 0, 0, 1),
-    transform 150ms cubic-bezier(0.2, 0, 0, 1);
+  transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.oobe-step-fade-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
+.oobe-step-fade-enter-from,
 .oobe-step-fade-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .oobe-fullscreen-stage,
   .oobe-step-fade-enter-active,
   .oobe-step-fade-leave-active {
     transition: none;
-  }
-
-  .oobe-step-fade-enter-from,
-  .oobe-step-fade-leave-to {
-    transform: none;
   }
 }
 </style>

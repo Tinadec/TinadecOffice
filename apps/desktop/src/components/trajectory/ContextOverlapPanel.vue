@@ -512,7 +512,7 @@ function kindLabel(kind: ContextSourceKind): string {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
@@ -563,7 +563,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 0 7px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10.5px;
 }
@@ -586,7 +586,7 @@ function kindLabel(kind: ContextSourceKind): string {
   justify-content: center;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -630,7 +630,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 0 8px;
   border-radius: 5px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   font-size: 11px;
   cursor: pointer;
@@ -651,7 +651,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 8px;
   border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-input, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 11px;
   resize: vertical;
@@ -706,7 +706,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 1px 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10px;
 }
@@ -735,7 +735,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 0 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 10px;
   font-weight: 500;
@@ -754,7 +754,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 6px 8px;
   border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .overlap-match__head {
@@ -770,7 +770,7 @@ function kindLabel(kind: ContextSourceKind): string {
   padding: 1px 6px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
   color: var(--text-primary);
   font-weight: 500;
 }

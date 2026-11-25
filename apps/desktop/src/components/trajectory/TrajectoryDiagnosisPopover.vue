@@ -368,9 +368,11 @@ async function handleCopyDraft(): Promise<void> {
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--material-floating-border, var(--border-default));
   border-radius: 12px;
-  background: var(--bg-primary);
+  background: var(--material-floating-bg, var(--surface-raised, var(--bg-primary)));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.14);
   width: min(440px, 100%);
   min-width: 0;
@@ -420,7 +422,7 @@ async function handleCopyDraft(): Promise<void> {
 }
 
 .tdp-close:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
@@ -436,7 +438,7 @@ async function handleCopyDraft(): Promise<void> {
   padding: 0 10px;
   border-radius: 6px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-secondary);
   font-size: 11.5px;
   font-weight: 500;
@@ -447,12 +449,12 @@ async function handleCopyDraft(): Promise<void> {
 .tdp-chip:hover {
   border-color: var(--border-default);
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .tdp-chip.is-active {
   border-color: var(--text-primary);
-  background: var(--bg-selected);
+  background: var(--surface-selected, var(--bg-selected));
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -463,7 +465,7 @@ async function handleCopyDraft(): Promise<void> {
   padding: 9px 10px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-input, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 11.5px;
   line-height: 1.5;
@@ -473,7 +475,7 @@ async function handleCopyDraft(): Promise<void> {
 .tdp-textarea:focus {
   outline: none;
   border-color: var(--text-primary);
-  background: var(--bg-primary);
+  background: var(--surface-input, var(--bg-primary));
 }
 
 .tdp-foot {
@@ -512,13 +514,13 @@ async function handleCopyDraft(): Promise<void> {
 
 .tdp-btn--secondary {
   border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
 }
 
 .tdp-btn--secondary:hover {
   border-color: var(--border-default);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .mono {

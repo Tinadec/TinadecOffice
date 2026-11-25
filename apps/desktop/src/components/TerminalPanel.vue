@@ -518,7 +518,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   overflow: hidden;
 }
 
@@ -530,7 +530,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   padding: 0 4px;
   height: 34px;
   min-height: 34px;
-  background: var(--bg-secondary);
+  background: var(--surface-chrome, var(--bg-secondary));
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
@@ -569,13 +569,13 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-tab:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
 .terminal-tab.active {
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: var(--surface-active, var(--bg-primary));
   border-bottom: 2px solid var(--accent-primary);
 }
 
@@ -623,7 +623,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--accent-primary);
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   border-radius: 3px;
   line-height: 14px;
 }
@@ -657,7 +657,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-tab-restart:hover {
-  background: var(--bg-tertiary);
+  background: var(--surface-hover, var(--bg-tertiary));
   color: var(--accent-primary);
 }
 
@@ -690,7 +690,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-new-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
@@ -701,8 +701,10 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   right: 4px;
   margin-top: 4px;
   min-width: 180px;
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-default);
+  background: var(--material-floating-bg, var(--surface-raised, var(--bg-overlay)));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
+  border: 1px solid var(--material-floating-border, var(--border-default));
   border-radius: 8px;
   box-shadow: var(--shadow-panel);
   z-index: 100;
@@ -738,7 +740,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-shell-option:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
 }
 
 .terminal-shell-divider {
@@ -786,7 +788,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   padding: 7px 14px;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-button);
+  background: var(--surface-button, var(--bg-button));
   border: 1px solid var(--border-default);
   border-radius: 7px;
   cursor: pointer;
@@ -794,7 +796,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-empty-btn:hover {
-  background: var(--bg-button-hover);
+  background: var(--surface-button-hover, var(--bg-button-hover));
 }
 
 /* ---- Unavailable state ---- */
@@ -830,7 +832,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   padding: 2px 8px;
   height: 22px;
   min-height: 22px;
-  background: var(--bg-secondary);
+  background: var(--surface-chrome, var(--bg-secondary));
   border-top: 1px solid var(--border-default);
   font-size: 10.5px;
   color: var(--text-muted);

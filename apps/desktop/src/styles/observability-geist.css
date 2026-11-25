@@ -3,7 +3,7 @@
  *
  * Borderless Vercel Geist visual language calibrated for TinadecOffice
  * monochrome Light & Dark themes:
- * - Pure open canvas (`--bg-primary`) + `1px solid var(--border-muted)` hairlines
+ * - Pure open canvas (`--surface-canvas`) + `1px solid var(--border-muted)` hairlines
  * - Zero 3-layer card border nesting
  * - Strict monochrome chrome (`--text-on-primary`), 3 semantic status colors,
  *   and 7 canonical context category colors
@@ -13,9 +13,9 @@
 
 :root {
   /* Borderless Geist surfaces & monochrome shell */
-  --obs-surface: var(--bg-primary);
-  --obs-surface-subtle: var(--bg-secondary);
-  --obs-surface-hover: var(--bg-hover);
+  --obs-surface: var(--surface-canvas, var(--bg-primary));
+  --obs-surface-subtle: var(--surface-section, var(--bg-secondary));
+  --obs-surface-hover: var(--surface-hover, var(--bg-hover));
   --obs-hairline: var(--border-muted);
   --obs-border-strong: var(--border-default);
   --obs-ink: var(--text-primary);
@@ -42,13 +42,13 @@
   --obs-ctx-tool-output: #3ab4a4;
 
   /* Soft surface tints for Treemap & subtle badges */
-  --obs-ctx-system-soft: color-mix(in srgb, var(--obs-ctx-system) 14%, var(--bg-primary));
-  --obs-ctx-tools-soft: color-mix(in srgb, var(--obs-ctx-tools) 14%, var(--bg-primary));
-  --obs-ctx-user-soft: color-mix(in srgb, var(--obs-ctx-user) 14%, var(--bg-primary));
-  --obs-ctx-inject-soft: color-mix(in srgb, var(--obs-ctx-inject) 14%, var(--bg-primary));
-  --obs-ctx-skill-soft: color-mix(in srgb, var(--obs-ctx-skill) 14%, var(--bg-primary));
-  --obs-ctx-assistant-soft: color-mix(in srgb, var(--obs-ctx-assistant) 14%, var(--bg-primary));
-  --obs-ctx-tool-output-soft: color-mix(in srgb, var(--obs-ctx-tool-output) 14%, var(--bg-primary));
+  --obs-ctx-system-soft: color-mix(in srgb, var(--obs-ctx-system) 14%, transparent);
+  --obs-ctx-tools-soft: color-mix(in srgb, var(--obs-ctx-tools) 14%, transparent);
+  --obs-ctx-user-soft: color-mix(in srgb, var(--obs-ctx-user) 14%, transparent);
+  --obs-ctx-inject-soft: color-mix(in srgb, var(--obs-ctx-inject) 14%, transparent);
+  --obs-ctx-skill-soft: color-mix(in srgb, var(--obs-ctx-skill) 14%, transparent);
+  --obs-ctx-assistant-soft: color-mix(in srgb, var(--obs-ctx-assistant) 14%, transparent);
+  --obs-ctx-tool-output-soft: color-mix(in srgb, var(--obs-ctx-tool-output) 14%, transparent);
 
   /* Trajectory trunk, timing bars & file lane tokens (adapted from trajectory-tree/geist.css) */
   --obs-trunk: #204965;
@@ -56,9 +56,9 @@
   --obs-model-time: #2684ff;
   --obs-tool-time: #c38a30;
   --obs-file-read: #0069c2;
-  --obs-file-read-soft: color-mix(in srgb, #0069c2 10%, var(--bg-primary));
+  --obs-file-read-soft: color-mix(in srgb, #0069c2 10%, transparent);
   --obs-file-change: #ae5a09;
-  --obs-file-change-soft: color-mix(in srgb, #ae5a09 11%, var(--bg-primary));
+  --obs-file-change-soft: color-mix(in srgb, #ae5a09 11%, transparent);
 }
 
 :root[data-theme="dark"],
@@ -72,9 +72,9 @@
   --obs-model-time: #60a5fa;
   --obs-tool-time: #eab308;
   --obs-file-read: #6bb8ff;
-  --obs-file-read-soft: color-mix(in srgb, #6bb8ff 14%, var(--bg-primary));
+  --obs-file-read-soft: color-mix(in srgb, #6bb8ff 14%, transparent);
   --obs-file-change: #f5ad66;
-  --obs-file-change-soft: color-mix(in srgb, #f5ad66 15%, var(--bg-primary));
+  --obs-file-change-soft: color-mix(in srgb, #f5ad66 15%, transparent);
 }
 
 /* Numeric & typographic discipline */

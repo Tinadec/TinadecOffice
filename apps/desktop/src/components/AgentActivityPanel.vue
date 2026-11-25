@@ -622,7 +622,7 @@ const viewMemberTrajectoryTitle = computed(() =>
   height: 100%;
   min-height: 0;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
   overflow: hidden;
   font-variant-numeric: tabular-nums;
@@ -700,7 +700,7 @@ const viewMemberTrajectoryTitle = computed(() =>
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
 }
 
@@ -745,7 +745,7 @@ const viewMemberTrajectoryTitle = computed(() =>
   padding: 0 7px;
   border: 0;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-button, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
@@ -754,7 +754,7 @@ const viewMemberTrajectoryTitle = computed(() =>
 }
 
 .roster-header-link:hover {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 
@@ -788,7 +788,7 @@ const viewMemberTrajectoryTitle = computed(() =>
 }
 
 .roster-section__head:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -836,7 +836,7 @@ const viewMemberTrajectoryTitle = computed(() =>
 }
 
 .roster-member:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .roster-member__top {
@@ -925,7 +925,7 @@ const viewMemberTrajectoryTitle = computed(() =>
 }
 
 .roster-icon-action:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
   color: var(--text-primary);
 }
 

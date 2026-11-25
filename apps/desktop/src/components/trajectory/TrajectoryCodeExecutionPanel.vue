@@ -546,7 +546,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
 }
 
@@ -597,7 +597,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   padding: 0 10px;
   border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: var(--bg-primary);
+  background: var(--surface-input, var(--bg-primary));
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
@@ -705,11 +705,11 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 }
 
 .tce-group-item:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .tce-group-item.is-active {
-  background: var(--bg-selected, var(--bg-secondary));
+  background: var(--surface-selected, var(--bg-selected, var(--bg-secondary)));
 }
 
 .tce-group-item__top {
@@ -818,7 +818,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 }
 
 .tce-link-btn:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   text-decoration: underline;
 }
 
@@ -859,11 +859,11 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 }
 
 .tce-call-row:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .tce-call-row.is-selected {
-  background: var(--obs-file-read-soft, var(--bg-selected, var(--bg-secondary)));
+  background: var(--obs-file-read-soft, var(--surface-selected, var(--bg-secondary)));
 }
 
 .tce-call-row.is-selected td:first-child,
@@ -933,7 +933,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   flex-direction: column;
   border-top: 1px solid var(--border-muted);
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   overflow-x: auto;
 }
 
@@ -1025,7 +1025,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   padding: 10px 12px;
   border: 0;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -1033,7 +1033,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 }
 
 .tce-remediation-card:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .tce-remediation-card__head {
@@ -1093,7 +1093,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   padding: 10px 12px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-size: 11.5px;
   line-height: 1.5;
@@ -1125,7 +1125,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
   justify-content: space-between;
   padding: 9px 14px;
   border: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
@@ -1133,7 +1133,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 }
 
 .tce-drawer-toggle:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -1146,7 +1146,7 @@ function handleAnalyzeGroup(group: CodeSignalGroup): void {
 .tce-clean-banner {
   padding: 8px 14px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11.5px;
 }

@@ -3293,8 +3293,15 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
 
             foreach (var prop in appEl.EnumerateObject())
             {
-                if (prop.Value.ValueKind != JsonValueKind.String)
+                if (prop.Name is "panel_opacity" or "panel_blur" or "panel_saturation")
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.Number || !prop.Value.TryGetInt32(out _))
+                        return Fail(wire, "invalid_request", $"appearance.{prop.Name} must be an integer.");
+                }
+                else if (prop.Value.ValueKind != JsonValueKind.String)
+                {
                     return Fail(wire, "invalid_request", $"appearance.{prop.Name} must be a non-null string.");
+                }
             }
 
             try
@@ -3334,6 +3341,10 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
             || appearancePatch.Accent is not null
             || appearancePatch.CustomAccentHex is not null
             || appearancePatch.PanelEffect is not null
+            || appearancePatch.PanelPreset is not null
+            || appearancePatch.PanelOpacity is not null
+            || appearancePatch.PanelBlur is not null
+            || appearancePatch.PanelSaturation is not null
             || appearancePatch.WorkspaceView is not null
             || appearancePatch.WorkspaceFolderTone is not null);
 
@@ -3352,6 +3363,8 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
             {
                 var baseApp = UiPreferencesAppearanceDto.CreateDefaults();
                 var baseInt = UiPreferencesInteractionDto.CreateDefaults();
+                var resetPanelEffect = appearancePatch?.PanelEffect
+                    ?? (appearancePatch?.PanelPreset is not null ? string.Empty : baseApp.PanelEffect);
                 updated = await _uiPreferences.PutAsync(new UiPreferencesPutRequestDto
                 {
                     ExpectedContentHash = expectedHash,
@@ -3361,7 +3374,11 @@ public sealed class TinadecConfigToolGateway : ITinadecConfigToolGateway, IConte
                         Theme = appearancePatch?.Theme ?? baseApp.Theme,
                         Accent = appearancePatch?.Accent ?? baseApp.Accent,
                         CustomAccentHex = appearancePatch?.CustomAccentHex ?? baseApp.CustomAccentHex,
-                        PanelEffect = appearancePatch?.PanelEffect ?? baseApp.PanelEffect,
+                        PanelEffect = resetPanelEffect,
+                        PanelPreset = appearancePatch?.PanelPreset,
+                        PanelOpacity = appearancePatch?.PanelOpacity,
+                        PanelBlur = appearancePatch?.PanelBlur,
+                        PanelSaturation = appearancePatch?.PanelSaturation,
                         WorkspaceView = appearancePatch?.WorkspaceView ?? baseApp.WorkspaceView,
                         WorkspaceFolderTone = appearancePatch?.WorkspaceFolderTone ?? baseApp.WorkspaceFolderTone,
                     },

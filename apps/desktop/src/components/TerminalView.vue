@@ -17,6 +17,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useTerminal } from '@/composables/useTerminal'
 import { codeFont, codeFontStack } from '@/lib/codeFont'
 
@@ -37,17 +38,41 @@ const {
   getTerminal,
 } = useTerminal()
 
+const { panelStyle } = usePanelStyles()
 const containerRef = ref<HTMLElement | null>(null)
 let term: Terminal | null = null
+let themeSyncObserver: MutationObserver | null = null
 // xterm measures glyphs itself, so the code font reaches it as an option, not through CSS.
 watch(codeFont, (id) => { if (term) term.options.fontFamily = codeFontStack(id) })
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 
+function syncTerminalSurface(): void {
+  if (!term) return
+  const isTransparent = panelStyle.value.effect !== 'opaque'
+  const root = typeof document !== 'undefined' ? document.documentElement : null
+  const opaqueBg = root
+    ? getComputedStyle(root).getPropertyValue('--bg-primary').trim() || (root.getAttribute('data-theme') === 'dark' ? '#09090b' : '#ffffff')
+    : '#09090b'
+  const nextBg = isTransparent ? 'rgba(0, 0, 0, 0)' : opaqueBg
+  const currentTheme = term.options.theme ?? {}
+  if (currentTheme.background !== nextBg) {
+    term.options.theme = {
+      ...currentTheme,
+      background: nextBg,
+    }
+  }
+}
+
+watch(() => panelStyle.value.effect, () => {
+  syncTerminalSurface()
+})
+
 // ---- xterm.js options ----
 
 function createTerminal(): Terminal {
   return new Terminal({
+    allowTransparency: true,
     cursorBlink: true,
     cursorStyle: 'bar',
     fontFamily: codeFontStack(codeFont.value),
@@ -77,6 +102,17 @@ onMounted(() => {
 
   // Attach to the terminal backend
   attachTerminal(props.terminalId, containerRef.value, term, fitAddon)
+  syncTerminalSurface()
+
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+    themeSyncObserver = new MutationObserver(() => {
+      queueMicrotask(syncTerminalSurface)
+    })
+    themeSyncObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'data-global-panel-effect', 'style'],
+    })
+  }
 
   // Set up ResizeObserver for auto-fitting. Goes through `fitTerminal` so the
   // zero-size guard applies: this host is `display:none` whenever its card is not
@@ -91,6 +127,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (themeSyncObserver) {
+    themeSyncObserver.disconnect()
+    themeSyncObserver = null
+  }
+
   // Clean up ResizeObserver
   if (resizeObserver) {
     resizeObserver.disconnect()
@@ -137,7 +178,7 @@ defineExpose({
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   padding: 4px 6px;
   box-sizing: border-box;
 }
@@ -148,18 +189,18 @@ defineExpose({
   overflow: hidden;
 }
 
-/* Override xterm.js default styles to match the app theme */
+/* Override xterm.js default styles to match the app theme & panel material */
 .terminal-view :deep(.xterm) {
   padding: 0;
 }
 
 .terminal-view :deep(.xterm-viewport) {
-  background-color: var(--bg-primary) !important;
+  background-color: transparent !important;
   overflow-y: auto !important;
 }
 
 .terminal-view :deep(.xterm-screen) {
-  background-color: var(--bg-primary) !important;
+  background-color: transparent !important;
 }
 
 .terminal-view :deep(.xterm-rows) {

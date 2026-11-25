@@ -796,7 +796,7 @@ defineExpose({
   height: 100%;
   min-height: 0;
   min-width: 0;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   color: var(--text-primary);
   overflow: hidden;
   font-variant-numeric: tabular-nums;
@@ -865,7 +865,7 @@ defineExpose({
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -927,7 +927,7 @@ defineExpose({
   max-width: 140px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-muted);
   font-size: 10.5px;
   font-family: var(--font-mono);
@@ -955,7 +955,7 @@ defineExpose({
 }
 
 .ld-icon-btn:hover:not(:disabled) {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -990,7 +990,7 @@ defineExpose({
 }
 
 .ld-waterline.is-interactive:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .ld-waterline.is-interactive:focus-visible {
@@ -1022,7 +1022,7 @@ defineExpose({
   gap: 3px;
   padding: 0 5px;
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10.5px;
   font-family: var(--font-mono);
@@ -1060,7 +1060,7 @@ defineExpose({
   position: relative;
   height: 5px;
   border-radius: 999px;
-  background: var(--bg-tertiary, var(--bg-secondary));
+  background: var(--surface-raised, var(--bg-tertiary, var(--bg-secondary)));
 }
 
 .ld-waterline-fill {
@@ -1085,7 +1085,7 @@ defineExpose({
   height: 9px;
   padding: 0;
   border-radius: 999px;
-  border: 1.5px solid var(--bg-primary);
+  border: 1.5px solid var(--surface-canvas, var(--bg-primary));
   background: var(--obs-status-warn, var(--accent-warning));
   transform: translate(-50%, -50%);
   cursor: pointer;
@@ -1103,7 +1103,7 @@ defineExpose({
   gap: 8px;
   padding: 4px 6px;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   font-size: 11px;
   color: var(--text-secondary);
   cursor: default;
@@ -1143,7 +1143,7 @@ defineExpose({
   padding: 2px 7px;
   border-radius: 999px;
   border: 0;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
@@ -1176,7 +1176,7 @@ defineExpose({
   margin: 0;
   padding: 5px 8px;
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1227,11 +1227,11 @@ defineExpose({
   gap: 6px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 11%, var(--bg-secondary)));
+  background: var(--obs-status-warn-soft, color-mix(in srgb, var(--accent-warning) 11%, transparent));
 }
 
 .ld-sentinel-item.is-critical {
-  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 11%, var(--bg-secondary)));
+  background: var(--obs-status-danger-soft, color-mix(in srgb, var(--accent-danger) 11%, transparent));
 }
 
 .ld-sentinel-head {
@@ -1264,7 +1264,7 @@ defineExpose({
   color: var(--text-secondary);
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--bg-primary);
+  background: var(--surface-raised, var(--bg-primary));
   flex-shrink: 0;
 }
 
@@ -1325,7 +1325,7 @@ defineExpose({
 .ld-chapters-waiting {
   padding: 16px 12px;
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
@@ -1377,7 +1377,7 @@ defineExpose({
 }
 
 .ld-files-item:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
 }
 
 .ld-files-path {

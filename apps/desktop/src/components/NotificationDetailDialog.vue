@@ -396,20 +396,18 @@ onBeforeUnmount(() => {
   width: min(calc(100vw - 32px), 460px);
   margin: auto;
   padding: 20px;
-  border: 1px solid color-mix(in srgb, var(--dialog-level, var(--accent-primary, #d2bdf5)) 24%, var(--border-default, #28242c));
+  border: 1px solid var(--material-floating-border, var(--border-muted));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary, #15121a) 92%, transparent);
+  background: var(--material-floating-bg, var(--surface-raised));
   color: var(--text-primary, #eadef7);
   box-shadow: 0 24px 80px rgb(0 0 0 / 52%);
-  backdrop-filter: blur(22px) saturate(120%);
-  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   -webkit-app-region: no-drag;
 }
 
 .detail-dialog::backdrop {
   background: rgb(3 6 10 / 52%);
-  backdrop-filter: blur(10px) saturate(80%);
-  -webkit-backdrop-filter: blur(10px) saturate(80%);
 }
 
 /* ── level theming ── */

@@ -14083,6 +14083,22 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "type": "string"
           },
+          "panel_blur": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "maximum": 32,
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "maximum": 32,
+            "minimum": 0
+          },
           "panel_effect": {
             "enum": [
               "solid",
@@ -14090,6 +14106,49 @@
               "blur"
             ],
             "type": "string"
+          },
+          "panel_opacity": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "maximum": 100,
+            "minimum": 0
+          },
+          "panel_preset": {
+            "enum": [
+              "solid",
+              "frosted",
+              "crystal",
+              "mica",
+              "translucent",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "panel_saturation": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "maximum": 200,
+                "minimum": 100,
+                "type": "integer"
+              }
+            ],
+            "maximum": 200,
+            "minimum": 100
           },
           "theme": {
             "enum": [
@@ -14151,6 +14210,12 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "type": "string"
           },
+          "panel_blur": {
+            "maximum": 32,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "panel_effect": {
             "enum": [
               "solid",
@@ -14159,6 +14224,30 @@
               "opaque"
             ],
             "type": "string"
+          },
+          "panel_opacity": {
+            "maximum": 100,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "panel_preset": {
+            "enum": [
+              "solid",
+              "frosted",
+              "crystal",
+              "mica",
+              "translucent",
+              "custom"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "panel_saturation": {
+            "maximum": 200,
+            "minimum": 100,
+            "nullable": true,
+            "type": "integer"
           },
           "theme": {
             "enum": [
@@ -14222,6 +14311,12 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "type": "string"
           },
+          "panel_blur": {
+            "maximum": 32,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "panel_effect": {
             "enum": [
               "solid",
@@ -14231,6 +14326,30 @@
             ],
             "nullable": true,
             "type": "string"
+          },
+          "panel_opacity": {
+            "maximum": 100,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "panel_preset": {
+            "enum": [
+              "solid",
+              "frosted",
+              "crystal",
+              "mica",
+              "translucent",
+              "custom"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "panel_saturation": {
+            "maximum": 200,
+            "minimum": 100,
+            "nullable": true,
+            "type": "integer"
           },
           "theme": {
             "enum": [

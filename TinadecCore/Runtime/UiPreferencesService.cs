@@ -45,6 +45,23 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
         "solid", "translucent", "blur",
     };
 
+    private static readonly HashSet<string> AllowedPanelPresets = new(StringComparer.Ordinal)
+    {
+        "solid", "frosted", "crystal", "mica", "translucent", "custom",
+    };
+
+    private readonly record struct PanelPresetSpec(string Preset, string Effect, int Opacity, int Blur, int Saturation);
+
+    private static readonly IReadOnlyDictionary<string, PanelPresetSpec> NamedPanelPresets =
+        new Dictionary<string, PanelPresetSpec>(StringComparer.Ordinal)
+        {
+            ["solid"] = new("solid", "solid", 100, 0, 100),
+            ["frosted"] = new("frosted", "blur", 68, 18, 160),
+            ["crystal"] = new("crystal", "blur", 48, 24, 180),
+            ["mica"] = new("mica", "blur", 82, 14, 130),
+            ["translucent"] = new("translucent", "translucent", 76, 0, 100),
+        };
+
     private static readonly HashSet<string> AllowedWorkspaceViews = new(StringComparer.Ordinal)
     {
         "grid", "list",
@@ -77,7 +94,9 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
 
     private static readonly HashSet<string> AllowedAppearanceTomlKeys = new(StringComparer.Ordinal)
     {
-        "theme", "accent", "custom_accent_hex", "panel_effect", "workspace_view", "workspace_folder_tone",
+        "theme", "accent", "custom_accent_hex",
+        "panel_effect", "panel_preset", "panel_opacity", "panel_blur", "panel_saturation",
+        "workspace_view", "workspace_folder_tone",
     };
 
     private static readonly HashSet<string> AllowedInteractionTomlKeys = new(StringComparer.Ordinal)
@@ -199,12 +218,17 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
             var current = await ReadCurrentUnderLockAsync(ct).ConfigureAwait(false);
             AssertExpectedHashMatches(request.ExpectedContentHash, current.ContentHash);
 
+            var mergedPanel = MergePatchedPanelAppearance(current.Appearance, validatedAppearancePatch);
             var mergedAppearance = new UiPreferencesAppearanceDto
             {
                 Theme = validatedAppearancePatch?.Theme ?? current.Appearance.Theme,
                 Accent = validatedAppearancePatch?.Accent ?? current.Appearance.Accent,
                 CustomAccentHex = validatedAppearancePatch?.CustomAccentHex ?? current.Appearance.CustomAccentHex,
-                PanelEffect = validatedAppearancePatch?.PanelEffect ?? current.Appearance.PanelEffect,
+                PanelEffect = mergedPanel.Effect,
+                PanelPreset = mergedPanel.Preset,
+                PanelOpacity = mergedPanel.Opacity,
+                PanelBlur = mergedPanel.Blur,
+                PanelSaturation = mergedPanel.Saturation,
                 WorkspaceView = validatedAppearancePatch?.WorkspaceView ?? current.Appearance.WorkspaceView,
                 WorkspaceFolderTone = validatedAppearancePatch?.WorkspaceFolderTone ?? current.Appearance.WorkspaceFolderTone,
             };
@@ -261,6 +285,14 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
 
     public static string SerializeToml(UiPreferencesAppearanceDto appearance, UiPreferencesInteractionDto interaction)
     {
+        var panel = ResolveFullPanelAppearance(
+            string.IsNullOrWhiteSpace(appearance.PanelEffect) ? null : appearance.PanelEffect,
+            appearance.PanelPreset,
+            appearance.PanelOpacity,
+            appearance.PanelBlur,
+            appearance.PanelSaturation,
+            defaultEffectWhenMissing: "translucent");
+
         var table = new TomlTable
         {
             ["version"] = (long)CurrentVersion,
@@ -269,7 +301,11 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
                 ["theme"] = appearance.Theme,
                 ["accent"] = appearance.Accent,
                 ["custom_accent_hex"] = appearance.CustomAccentHex,
-                ["panel_effect"] = appearance.PanelEffect,
+                ["panel_effect"] = panel.Effect,
+                ["panel_preset"] = panel.Preset,
+                ["panel_opacity"] = (long)panel.Opacity,
+                ["panel_blur"] = (long)panel.Blur,
+                ["panel_saturation"] = (long)panel.Saturation,
                 ["workspace_view"] = appearance.WorkspaceView,
                 ["workspace_folder_tone"] = appearance.WorkspaceFolderTone,
             },
@@ -744,7 +780,11 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
         var theme = defaultsApp.Theme;
         var accent = defaultsApp.Accent;
         var customHex = defaultsApp.CustomAccentHex;
-        var panelEffect = defaultsApp.PanelEffect;
+        string? rawPanelEffect = null;
+        string? rawPanelPreset = null;
+        int? rawPanelOpacity = null;
+        int? rawPanelBlur = null;
+        int? rawPanelSaturation = null;
         var workspaceView = defaultsApp.WorkspaceView;
         var folderTone = defaultsApp.WorkspaceFolderTone;
 
@@ -774,7 +814,15 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
                 if (appTable.TryGetValue("custom_accent_hex", out var vHex))
                     customHex = ValidateCustomAccentHex(RequireTomlString(vHex, "appearance.custom_accent_hex"));
                 if (appTable.TryGetValue("panel_effect", out var vPanel))
-                    panelEffect = ValidatePanelEffect(RequireTomlString(vPanel, "appearance.panel_effect"));
+                    rawPanelEffect = ValidatePanelEffect(RequireTomlString(vPanel, "appearance.panel_effect"));
+                if (appTable.TryGetValue("panel_preset", out var vPreset))
+                    rawPanelPreset = ValidatePanelPreset(RequireTomlString(vPreset, "appearance.panel_preset"));
+                if (appTable.TryGetValue("panel_opacity", out var vOpacity))
+                    rawPanelOpacity = ValidatePanelOpacity(RequireTomlInt(vOpacity, "appearance.panel_opacity"));
+                if (appTable.TryGetValue("panel_blur", out var vBlur))
+                    rawPanelBlur = ValidatePanelBlur(RequireTomlInt(vBlur, "appearance.panel_blur"));
+                if (appTable.TryGetValue("panel_saturation", out var vSaturation))
+                    rawPanelSaturation = ValidatePanelSaturation(RequireTomlInt(vSaturation, "appearance.panel_saturation"));
                 if (appTable.TryGetValue("workspace_view", out var vView))
                     workspaceView = ValidateWorkspaceView(RequireTomlString(vView, "appearance.workspace_view"));
                 if (appTable.TryGetValue("workspace_folder_tone", out var vTone))
@@ -786,6 +834,14 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
                 return false;
             }
         }
+
+        var resolvedPanel = ResolveFullPanelAppearance(
+            rawPanelEffect,
+            rawPanelPreset,
+            rawPanelOpacity,
+            rawPanelBlur,
+            rawPanelSaturation,
+            defaultEffectWhenMissing: defaultsApp.PanelEffect);
 
         var defaultsInt = UiPreferencesInteractionDto.CreateDefaults();
         var dropAction = defaultsInt.WorkspaceDropAction;
@@ -830,7 +886,11 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
             Theme = theme,
             Accent = accent,
             CustomAccentHex = customHex,
-            PanelEffect = panelEffect,
+            PanelEffect = resolvedPanel.Effect,
+            PanelPreset = resolvedPanel.Preset,
+            PanelOpacity = resolvedPanel.Opacity,
+            PanelBlur = resolvedPanel.Blur,
+            PanelSaturation = resolvedPanel.Saturation,
             WorkspaceView = workspaceView,
             WorkspaceFolderTone = folderTone,
         };
@@ -848,15 +908,56 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
     private static string RequireTomlString(object? value, string field) =>
         value is string text ? text : throw InvalidPreferences("invalid_type", $"'{field}' must be a string.");
 
-    private static UiPreferencesAppearanceDto ValidateFullAppearance(UiPreferencesAppearanceDto input) => new()
+    private static int RequireTomlInt(object? value, string field) => value switch
     {
-        Theme = ValidateTheme(input.Theme),
-        Accent = ValidateAccent(input.Accent),
-        CustomAccentHex = ValidateCustomAccentHex(input.CustomAccentHex),
-        PanelEffect = ValidatePanelEffect(input.PanelEffect),
-        WorkspaceView = ValidateWorkspaceView(input.WorkspaceView),
-        WorkspaceFolderTone = ValidateWorkspaceFolderTone(input.WorkspaceFolderTone),
+        int i => i,
+        long l when l >= int.MinValue && l <= int.MaxValue => (int)l,
+        _ => throw InvalidPreferences("invalid_type", $"'{field}' must be an integer."),
     };
+
+    private static UiPreferencesAppearanceDto ValidateFullAppearance(UiPreferencesAppearanceDto input)
+    {
+        var validatedPreset = input.PanelPreset is null ? null : ValidatePanelPreset(input.PanelPreset);
+        string? validatedEffect;
+        if (!string.IsNullOrEmpty(input.PanelEffect))
+        {
+            validatedEffect = ValidatePanelEffect(input.PanelEffect);
+        }
+        else if (validatedPreset is not null && NamedPanelPresets.TryGetValue(validatedPreset, out var presetSpec))
+        {
+            validatedEffect = presetSpec.Effect;
+        }
+        else
+        {
+            validatedEffect = ValidatePanelEffect(input.PanelEffect);
+        }
+
+        var validatedOpacity = input.PanelOpacity is null ? (int?)null : ValidatePanelOpacity(input.PanelOpacity.Value);
+        var validatedBlur = input.PanelBlur is null ? (int?)null : ValidatePanelBlur(input.PanelBlur.Value);
+        var validatedSaturation = input.PanelSaturation is null ? (int?)null : ValidatePanelSaturation(input.PanelSaturation.Value);
+
+        var resolvedPanel = ResolveFullPanelAppearance(
+            validatedEffect,
+            validatedPreset,
+            validatedOpacity,
+            validatedBlur,
+            validatedSaturation,
+            defaultEffectWhenMissing: "translucent");
+
+        return new UiPreferencesAppearanceDto
+        {
+            Theme = ValidateTheme(input.Theme),
+            Accent = ValidateAccent(input.Accent),
+            CustomAccentHex = ValidateCustomAccentHex(input.CustomAccentHex),
+            PanelEffect = resolvedPanel.Effect,
+            PanelPreset = resolvedPanel.Preset,
+            PanelOpacity = resolvedPanel.Opacity,
+            PanelBlur = resolvedPanel.Blur,
+            PanelSaturation = resolvedPanel.Saturation,
+            WorkspaceView = ValidateWorkspaceView(input.WorkspaceView),
+            WorkspaceFolderTone = ValidateWorkspaceFolderTone(input.WorkspaceFolderTone),
+        };
+    }
 
     private static UiPreferencesInteractionDto ValidateFullInteraction(UiPreferencesInteractionDto input) => new()
     {
@@ -876,9 +977,138 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
             Accent = patch.Accent is null ? null : ValidateAccent(patch.Accent),
             CustomAccentHex = patch.CustomAccentHex is null ? null : ValidateCustomAccentHex(patch.CustomAccentHex),
             PanelEffect = patch.PanelEffect is null ? null : ValidatePanelEffect(patch.PanelEffect),
+            PanelPreset = patch.PanelPreset is null ? null : ValidatePanelPreset(patch.PanelPreset),
+            PanelOpacity = patch.PanelOpacity is null ? null : ValidatePanelOpacity(patch.PanelOpacity.Value),
+            PanelBlur = patch.PanelBlur is null ? null : ValidatePanelBlur(patch.PanelBlur.Value),
+            PanelSaturation = patch.PanelSaturation is null ? null : ValidatePanelSaturation(patch.PanelSaturation.Value),
             WorkspaceView = patch.WorkspaceView is null ? null : ValidateWorkspaceView(patch.WorkspaceView),
             WorkspaceFolderTone = patch.WorkspaceFolderTone is null ? null : ValidateWorkspaceFolderTone(patch.WorkspaceFolderTone),
         };
+    }
+
+    private static PanelPresetSpec DefaultPresetForEffect(string effect) => effect switch
+    {
+        "solid" => NamedPanelPresets["solid"],
+        "blur" => NamedPanelPresets["frosted"],
+        _ => NamedPanelPresets["translucent"],
+    };
+
+    private static string? MatchCanonicalPreset(string effect, int opacity, int blur, int saturation)
+    {
+        foreach (var spec in NamedPanelPresets.Values)
+        {
+            if (string.Equals(spec.Effect, effect, StringComparison.Ordinal)
+                && spec.Opacity == opacity
+                && spec.Blur == blur
+                && spec.Saturation == saturation)
+            {
+                return spec.Preset;
+            }
+        }
+        return null;
+    }
+
+    private static PanelPresetSpec ResolveFullPanelAppearance(
+        string? validatedEffect,
+        string? validatedPreset,
+        int? validatedOpacity,
+        int? validatedBlur,
+        int? validatedSaturation,
+        string defaultEffectWhenMissing)
+    {
+        var normalizedEffect = validatedEffect is null
+            ? null
+            : string.Equals(validatedEffect, "opaque", StringComparison.Ordinal) ? "solid" : validatedEffect;
+
+        if (validatedPreset is not null && NamedPanelPresets.TryGetValue(validatedPreset, out var namedSpec))
+        {
+            var effect = normalizedEffect ?? namedSpec.Effect;
+            var opacity = validatedOpacity ?? namedSpec.Opacity;
+            var blur = validatedBlur ?? namedSpec.Blur;
+            var saturation = validatedSaturation ?? namedSpec.Saturation;
+            return new PanelPresetSpec(validatedPreset, effect, opacity, blur, saturation);
+        }
+
+        if (string.Equals(validatedPreset, "custom", StringComparison.Ordinal))
+        {
+            var effect = normalizedEffect ?? (validatedBlur is > 0 ? "blur" : defaultEffectWhenMissing);
+            var fallback = DefaultPresetForEffect(effect);
+            var opacity = validatedOpacity ?? fallback.Opacity;
+            var blur = validatedBlur ?? fallback.Blur;
+            var saturation = validatedSaturation ?? fallback.Saturation;
+            return new PanelPresetSpec("custom", effect, opacity, blur, saturation);
+        }
+
+        var effectiveEffect = normalizedEffect ?? (validatedBlur is > 0 ? "blur" : defaultEffectWhenMissing);
+        var defaultSpec = DefaultPresetForEffect(effectiveEffect);
+        var resolvedOpacity = validatedOpacity ?? defaultSpec.Opacity;
+        var resolvedBlur = validatedBlur ?? defaultSpec.Blur;
+        var resolvedSaturation = validatedSaturation ?? defaultSpec.Saturation;
+        var derivedPreset = MatchCanonicalPreset(effectiveEffect, resolvedOpacity, resolvedBlur, resolvedSaturation) ?? "custom";
+        return new PanelPresetSpec(derivedPreset, effectiveEffect, resolvedOpacity, resolvedBlur, resolvedSaturation);
+    }
+
+    private static PanelPresetSpec MergePatchedPanelAppearance(
+        UiPreferencesAppearanceDto current,
+        UiPreferencesAppearancePatchDto? patch)
+    {
+        var basePanel = ResolveFullPanelAppearance(
+            current.PanelEffect,
+            current.PanelPreset,
+            current.PanelOpacity,
+            current.PanelBlur,
+            current.PanelSaturation,
+            defaultEffectWhenMissing: "translucent");
+
+        if (patch is null
+            || (patch.PanelEffect is null
+                && patch.PanelPreset is null
+                && patch.PanelOpacity is null
+                && patch.PanelBlur is null
+                && patch.PanelSaturation is null))
+        {
+            return basePanel;
+        }
+
+        if (patch.PanelPreset is not null && NamedPanelPresets.TryGetValue(patch.PanelPreset, out var namedSpec))
+        {
+            return new PanelPresetSpec(
+                patch.PanelPreset,
+                patch.PanelEffect ?? namedSpec.Effect,
+                patch.PanelOpacity ?? namedSpec.Opacity,
+                patch.PanelBlur ?? namedSpec.Blur,
+                patch.PanelSaturation ?? namedSpec.Saturation);
+        }
+
+        if (string.Equals(patch.PanelPreset, "custom", StringComparison.Ordinal))
+        {
+            var effect = patch.PanelEffect ?? basePanel.Effect;
+            var effectChanged = patch.PanelEffect is not null && !string.Equals(patch.PanelEffect, basePanel.Effect, StringComparison.Ordinal);
+            var fallback = DefaultPresetForEffect(effect);
+            return new PanelPresetSpec(
+                "custom",
+                effect,
+                patch.PanelOpacity ?? (effectChanged ? fallback.Opacity : basePanel.Opacity),
+                patch.PanelBlur ?? (effectChanged ? fallback.Blur : basePanel.Blur),
+                patch.PanelSaturation ?? (effectChanged ? fallback.Saturation : basePanel.Saturation));
+        }
+
+        if (patch.PanelEffect is not null
+            && patch.PanelOpacity is null
+            && patch.PanelBlur is null
+            && patch.PanelSaturation is null)
+        {
+            return DefaultPresetForEffect(patch.PanelEffect);
+        }
+
+        var nextEffect = patch.PanelEffect ?? basePanel.Effect;
+        var changedEffect = patch.PanelEffect is not null && !string.Equals(patch.PanelEffect, basePanel.Effect, StringComparison.Ordinal);
+        var nextFallback = DefaultPresetForEffect(nextEffect);
+        var nextOpacity = patch.PanelOpacity ?? (changedEffect ? nextFallback.Opacity : basePanel.Opacity);
+        var nextBlur = patch.PanelBlur ?? (changedEffect ? nextFallback.Blur : basePanel.Blur);
+        var nextSaturation = patch.PanelSaturation ?? (changedEffect ? nextFallback.Saturation : basePanel.Saturation);
+        var matchedPreset = MatchCanonicalPreset(nextEffect, nextOpacity, nextBlur, nextSaturation) ?? "custom";
+        return new PanelPresetSpec(matchedPreset, nextEffect, nextOpacity, nextBlur, nextSaturation);
     }
 
     private static UiPreferencesInteractionPatchDto? ValidateInteractionPatch(UiPreferencesInteractionPatchDto? patch)
@@ -924,6 +1154,36 @@ public sealed class UiPreferencesService : IUiPreferencesService, IDisposable, I
         if (value is not null && AllowedPanelEffects.Contains(value))
             return value;
         throw InvalidPreferences("invalid_panel_effect", $"appearance.panel_effect must be one of: solid, translucent, blur (or alias opaque) (got '{value}').");
+    }
+
+    private static string ValidatePanelPreset(string? value)
+    {
+        if (value is not null && AllowedPanelPresets.Contains(value))
+            return value;
+        throw InvalidPreferences(
+            "invalid_panel_preset",
+            $"appearance.panel_preset must be one of: solid, frosted, crystal, mica, translucent, custom (got '{value}').");
+    }
+
+    private static int ValidatePanelOpacity(int value)
+    {
+        if (value >= 0 && value <= 100)
+            return value;
+        throw InvalidPreferences("invalid_panel_opacity", $"appearance.panel_opacity must be an integer between 0 and 100 (got '{value}').");
+    }
+
+    private static int ValidatePanelBlur(int value)
+    {
+        if (value >= 0 && value <= 32)
+            return value;
+        throw InvalidPreferences("invalid_panel_blur", $"appearance.panel_blur must be an integer between 0 and 32 (got '{value}').");
+    }
+
+    private static int ValidatePanelSaturation(int value)
+    {
+        if (value >= 100 && value <= 200)
+            return value;
+        throw InvalidPreferences("invalid_panel_saturation", $"appearance.panel_saturation must be an integer between 100 and 200 (got '{value}').");
     }
 
     private static string ValidateWorkspaceView(string? value)

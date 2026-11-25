@@ -50,6 +50,7 @@ import {
   type CompanionWorkSessionPendingApproval,
 } from '@/lib/companionWorkSession'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useHostAccess } from '@/lib/hostAccess'
 
 /**
@@ -79,6 +80,8 @@ function companionHost(): CompanionHostBridge | undefined {
 const { t, locale } = useI18n()
 const { canAccessBackend } = useHostAccess()
 const { notify, dismissByKey } = useNotifications()
+const { getPanelDataAttributes } = usePanelStyles()
+const materialAttributes = computed(() => getPanelDataAttributes())
 
 const COMPANION_LOAD_KEY = 'companion-load'
 const COMPANION_CHAT_LOAD_KEY = 'companion-chat-load'
@@ -1131,6 +1134,7 @@ onBeforeUnmount(() => {
       'companion--side-left': side === 'left',
       'companion--side-right': side === 'right',
     }"
+    v-bind="materialAttributes"
   >
     <button
       v-if="mode === 'capsule'"
@@ -1575,30 +1579,32 @@ onBeforeUnmount(() => {
 
 .companion-capsule-pill {
   position: relative;
+  left: 0;
   display: grid;
   place-items: center;
   width: 56px;
   height: 56px;
   border-radius: 20px;
-  border: 1px solid var(--border-subtle, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 86%, transparent);
-  backdrop-filter: blur(20px) saturate(1.18);
-  -webkit-backdrop-filter: blur(20px) saturate(1.18);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 8px 22px rgb(0 0 0 / 22%), 0 2px 6px rgb(0 0 0 / 10%);
-  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), box-shadow 160ms ease, border-color 160ms ease;
+  transition: left 160ms cubic-bezier(0.2, 0, 0, 1), transform 160ms cubic-bezier(0.2, 0, 0, 1), box-shadow 160ms ease, border-color 160ms ease;
 }
 
 .companion-capsule--right .companion-capsule-pill {
-  transform: translateX(3px);
+  left: 3px;
 }
 
 .companion-capsule--left .companion-capsule-pill {
-  transform: translateX(-3px);
+  left: -3px;
 }
 
 .companion-capsule:hover .companion-capsule-pill {
-  transform: translateX(0) scale(1.04);
-  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-subtle, var(--border-muted)));
+  left: 0;
+  transform: scale(1.04);
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--material-floating-border, var(--border-muted)));
   box-shadow: 0 10px 26px rgb(0 0 0 / 26%), 0 2px 8px rgb(0 0 0 / 12%);
 }
 
@@ -1678,10 +1684,10 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow: hidden;
   border-radius: 16px;
-  border: 1px solid var(--border-subtle, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 86%, transparent);
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 14px 36px rgb(0 0 0 / 24%), 0 2px 8px rgb(0 0 0 / 12%);
   user-select: text;
   -webkit-user-select: text;
@@ -1829,10 +1835,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   border-radius: 12px;
-  border: 1px solid var(--border-subtle, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 96%, transparent);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 12px 30px rgb(0 0 0 / 26%), 0 2px 8px rgb(0 0 0 / 12%);
 }
 
@@ -2277,9 +2283,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid var(--border-subtle, var(--border-muted));
-  background: color-mix(in srgb, var(--surface-section, var(--bg-secondary)) 96%, transparent);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--material-floating-border, var(--border-muted));
+  background: var(--material-floating-bg, var(--surface-raised));
+  backdrop-filter: var(--material-floating-filter, none);
+  -webkit-backdrop-filter: var(--material-floating-filter, none);
   box-shadow: 0 12px 28px rgb(0 0 0 / 24%);
   overflow-y: auto;
 }

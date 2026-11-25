@@ -569,6 +569,14 @@ export const UI_PREFERENCES_ACCENTS = [
 ] as const;
 export const UI_PREFERENCES_PANEL_EFFECTS = ['solid', 'translucent', 'blur'] as const;
 export const UI_PREFERENCES_PANEL_EFFECT_INPUTS = ['solid', 'translucent', 'blur', 'opaque'] as const;
+export const UI_PREFERENCES_PANEL_PRESETS = [
+  'solid',
+  'frosted',
+  'crystal',
+  'mica',
+  'translucent',
+  'custom',
+] as const;
 export const UI_PREFERENCES_WORKSPACE_VIEWS = ['grid', 'list'] as const;
 export const UI_PREFERENCES_WORKSPACE_FOLDER_TONES = ['amber', 'teal', 'sky', 'coral', 'frost'] as const;
 export const UI_PREFERENCES_WORKSPACE_DROP_ACTIONS = ['link', 'copy', 'ask'] as const;
@@ -588,6 +596,10 @@ const uiAppearancePreferencesDto = t.Object({
   accent: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS] }),
   custom_accent_hex: t.String({ pattern: '^#[0-9a-fA-F]{6}$' }),
   panel_effect: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECTS] }),
+  panel_preset: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_PRESETS] })),
+  panel_opacity: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+  panel_blur: t.Optional(t.Integer({ minimum: 0, maximum: 32 })),
+  panel_saturation: t.Optional(t.Integer({ minimum: 100, maximum: 200 })),
   workspace_view: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS] }),
   workspace_folder_tone: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES] }),
 }, { additionalProperties: false });
@@ -612,6 +624,10 @@ const uiAppearancePreferencesInputDto = t.Object({
   accent: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS] }),
   custom_accent_hex: t.String({ pattern: '^#[0-9a-fA-F]{6}$' }),
   panel_effect: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECT_INPUTS] }),
+  panel_preset: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_PRESETS], nullable: true })),
+  panel_opacity: t.Optional(t.Unsafe({ type: 'integer', minimum: 0, maximum: 100, nullable: true })),
+  panel_blur: t.Optional(t.Unsafe({ type: 'integer', minimum: 0, maximum: 32, nullable: true })),
+  panel_saturation: t.Optional(t.Unsafe({ type: 'integer', minimum: 100, maximum: 200, nullable: true })),
   workspace_view: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS] }),
   workspace_folder_tone: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES] }),
 }, { additionalProperties: false });
@@ -634,6 +650,10 @@ const uiAppearancePreferencesPatchDto = t.Object({
   accent: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS], nullable: true })),
   custom_accent_hex: t.Optional(t.Unsafe({ type: 'string', pattern: '^#[0-9a-fA-F]{6}$', nullable: true })),
   panel_effect: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECT_INPUTS], nullable: true })),
+  panel_preset: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_PRESETS], nullable: true })),
+  panel_opacity: t.Optional(t.Unsafe({ type: 'integer', minimum: 0, maximum: 100, nullable: true })),
+  panel_blur: t.Optional(t.Unsafe({ type: 'integer', minimum: 0, maximum: 32, nullable: true })),
+  panel_saturation: t.Optional(t.Unsafe({ type: 'integer', minimum: 100, maximum: 200, nullable: true })),
   workspace_view: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS], nullable: true })),
   workspace_folder_tone: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES], nullable: true })),
 }, { additionalProperties: false });

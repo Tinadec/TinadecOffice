@@ -361,7 +361,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   flex-direction: column;
   gap: 8px;
   padding: 10px 14px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   border-bottom: 1px solid var(--border-muted);
   min-width: 0;
 }
@@ -398,7 +398,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 0 7px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10.5px;
   white-space: nowrap;
@@ -416,7 +416,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 
 .traj-filter-btn.active {
   border-color: var(--text-primary);
-  background: var(--bg-selected);
+  background: var(--surface-selected, var(--bg-selected));
   color: var(--text-primary);
 }
 
@@ -451,7 +451,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 
 .traj-signal-chip.active {
   border-color: var(--text-primary);
-  background: var(--bg-selected);
+  background: var(--surface-selected, var(--bg-selected));
 }
 
 .traj-signal-count {
@@ -491,11 +491,11 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-row:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
 }
 
 .traj-row.is-selected {
-  background: var(--bg-selected);
+  background: var(--surface-selected, var(--bg-selected));
 }
 
 .traj-row.is-error:not(.is-selected) {
@@ -558,7 +558,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 0 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10px;
 }
@@ -585,7 +585,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   width: 38px;
   height: 4px;
   border-radius: 2px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised, var(--bg-tertiary));
   overflow: hidden;
   display: inline-flex;
 }
@@ -657,7 +657,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 }
 
 .traj-gov-badge.sev-neutral {
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
 }
 
@@ -689,7 +689,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 1px 5px;
   border-radius: 4px;
   border: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-secondary);
   font-size: 10px;
   text-transform: uppercase;
@@ -703,7 +703,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   padding: 0 9px;
   border-radius: 6px;
   border: 1px solid var(--border-default);
-  background: var(--bg-primary);
+  background: var(--surface-button, var(--bg-primary));
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
@@ -712,7 +712,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
 
 .traj-diagnose-btn:hover {
   border-color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-button-hover, var(--bg-secondary));
 }
 
 .traj-detail-meta {
@@ -735,7 +735,7 @@ function kindIcon(kind: TrajectoryNode['kind']) {
   border: 1px solid var(--border-muted);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
 }
 
 .traj-code-frame__head {

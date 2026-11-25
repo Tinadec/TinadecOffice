@@ -216,7 +216,7 @@ function stepBy(delta: -1 | 1): void {
   gap: 8px;
   min-height: 36px;
   padding: 5px 12px;
-  background: var(--bg-primary);
+  background: var(--surface-canvas, var(--bg-primary));
   border-bottom: 1px solid var(--border-muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -262,7 +262,7 @@ function stepBy(delta: -1 | 1): void {
 }
 
 .obs-turn-pill:hover {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -310,7 +310,7 @@ function stepBy(delta: -1 | 1): void {
 }
 
 .obs-turn-step-btn:hover:not(:disabled) {
-  background: var(--bg-secondary);
+  background: var(--surface-hover, var(--bg-secondary));
   color: var(--text-primary);
 }
 
@@ -331,7 +331,7 @@ function stepBy(delta: -1 | 1): void {
   padding: 0 20px 0 8px;
   border: 1px solid var(--border-muted);
   border-radius: 5px;
-  background: var(--bg-secondary);
+  background: var(--surface-input, var(--bg-secondary));
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -372,7 +372,7 @@ function stepBy(delta: -1 | 1): void {
   padding: 0 7px;
   border: 1px solid var(--border-muted);
   border-radius: 999px;
-  background: var(--bg-secondary);
+  background: var(--surface-section, var(--bg-secondary));
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -380,7 +380,7 @@ function stepBy(delta: -1 | 1): void {
 }
 
 .obs-turn-filter-chip:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover, var(--bg-hover));
 }
 
 .obs-turn-filter-chip__text {
