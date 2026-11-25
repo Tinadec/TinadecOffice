@@ -222,13 +222,18 @@ public static class AgentConfigurationEndpoints
         var definitions = await db.AgentDefinitions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct);
         var modes = await db.AgentModes.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToDictionaryAsync(x => x.Id, ct);
         var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct);
-        var latestModeVersions = (await db.ModeVersions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published").ToListAsync(ct))
-            .GroupBy(x => x.AgentModeId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First());
-        var latestAgentVersions = (await db.AgentVersions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published").ToListAsync(ct))
-            .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First());
-        await using var lifecycle = await lifecycleFactory.CreateDbContextAsync(ct);
-        var recentInvocations = (await lifecycle.ModelInvocations.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "succeeded").ToListAsync(ct))
-            .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.CompletedAt).First());
+        var latestModeVersionIds = (await db.ModeVersions.AsNoTracking()
+                .Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published")
+                .Select(x => new { x.AgentModeId, x.Id, x.Version })
+                .ToListAsync(ct))
+            .GroupBy(x => x.AgentModeId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First().Id);
+        var latestAgentVersionIds = (await db.AgentVersions.AsNoTracking()
+                .Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published")
+                .Select(x => new { x.AgentDefinitionId, x.Id, x.Version })
+                .ToListAsync(ct))
+            .GroupBy(x => x.AgentDefinitionId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First().Id);
         var bindings = (await db.AgentRuntimeBindings.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct))
             .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.UpdatedAt).First());
         var ownership = await LoadPackOwnershipAsync(db, t, w, ct);
@@ -239,12 +244,37 @@ public static class AgentConfigurationEndpoints
             && (string.IsNullOrWhiteSpace(layer) || string.Equals(definition.Layer, layer, StringComparison.OrdinalIgnoreCase))
             && (!ownership.TryGetValue(definition.Id, out var owner) || string.Equals(owner.Status, "active", StringComparison.Ordinal))).ToArray();
         var visibleIds = visibleDefinitions.Select(x => x.Id).ToHashSet();
-        var previewRequests = nodes.Where(node => visibleIds.Contains(node.AgentDefinitionId) && latestModeVersions.ContainsKey(node.ModeId))
+
+        Dictionary<Guid, ModelInvocationRecord> recentInvocations;
+        if (visibleIds.Count == 0)
+        {
+            recentInvocations = new Dictionary<Guid, ModelInvocationRecord>();
+        }
+        else
+        {
+            await using var lifecycle = await lifecycleFactory.CreateDbContextAsync(ct);
+            var recentMeta = await lifecycle.ModelInvocations.AsNoTracking()
+                .Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "succeeded" && visibleIds.Contains(x.AgentDefinitionId))
+                .Select(x => new { x.Id, x.AgentDefinitionId, x.CompletedAt })
+                .ToListAsync(ct);
+            var latestInvocationIds = recentMeta
+                .GroupBy(x => x.AgentDefinitionId)
+                .Select(g => g.OrderByDescending(v => v.CompletedAt).First().Id)
+                .ToArray();
+            recentInvocations = latestInvocationIds.Length == 0
+                ? new Dictionary<Guid, ModelInvocationRecord>()
+                : await lifecycle.ModelInvocations.AsNoTracking()
+                    .Where(x => latestInvocationIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.AgentDefinitionId, ct);
+        }
+
+        var nodesByAgent = nodes.GroupBy(x => x.AgentDefinitionId).ToDictionary(g => g.Key, g => g.ToArray());
+        var previewRequests = nodes.Where(node => visibleIds.Contains(node.AgentDefinitionId) && latestModeVersionIds.ContainsKey(node.ModeId))
             .Select(node => new ModelResolutionPreviewRequestDto
             {
                 AgentDefinitionId = node.AgentDefinitionId,
-                AgentVersionId = latestAgentVersions.GetValueOrDefault(node.AgentDefinitionId)?.Id,
-                ModeVersionId = latestModeVersions[node.ModeId].Id,
+                AgentVersionId = latestAgentVersionIds.TryGetValue(node.AgentDefinitionId, out var avId) ? avId : (Guid?)null,
+                ModeVersionId = latestModeVersionIds[node.ModeId],
                 NodeKey = node.NodeKey
             }).DistinctBy(request => (request.AgentDefinitionId, request.ModeVersionId, request.NodeKey)).ToArray();
         var previewResults = await modelResolver.PreviewBatchAsync(previewRequests, ct).ConfigureAwait(false);
@@ -256,15 +286,16 @@ public static class AgentConfigurationEndpoints
         {
             // A disabled pack's rows stay in the store (re-enabling is lossless)
             // but leave the selectable directory.
-            latestAgentVersions.TryGetValue(definition.Id, out var agentVersion);
+            var hasAgentVersion = latestAgentVersionIds.TryGetValue(definition.Id, out var agentVersionId);
             recentInvocations.TryGetValue(definition.Id, out var invocation);
-            var usages = nodes.Where(x => x.AgentDefinitionId == definition.Id).Select(node =>
+            var agentNodes = nodesByAgent.GetValueOrDefault(definition.Id) ?? Array.Empty<ModeNodeRecord>();
+            var usages = agentNodes.Select(node =>
             {
                 modes.TryGetValue(node.ModeId, out var mode);
-                latestModeVersions.TryGetValue(node.ModeId, out var modeVersion);
+                var hasModeVersion = latestModeVersionIds.TryGetValue(node.ModeId, out var modeVersionId);
                 return new AgentModeUsageDto
                 {
-                    ModeId = node.ModeId, ModeVersionId = modeVersion?.Id, ModeSlug = mode?.Slug ?? "missing-mode",
+                    ModeId = node.ModeId, ModeVersionId = hasModeVersion ? modeVersionId : (Guid?)null, ModeSlug = mode?.Slug ?? "missing-mode",
                     NodeKey = node.NodeKey,
                     ModelStrategyOverride = string.IsNullOrWhiteSpace(node.ModelStrategyOverrideJson) ? null : ModelStrategyJson.Parse(node.ModelStrategyOverrideJson)
                 };
@@ -288,7 +319,7 @@ public static class AgentConfigurationEndpoints
                 Provenance = i18nElement(definition.ProvenanceJson),
                 Managed = definition.Managed, Writable = !definition.Managed && definition.Status != "archived",
                 Enabled = definition.Enabled, Status = definition.Status, Revision = definition.Revision, Version = definition.Version,
-                CurrentVersionId = agentVersion?.Id, ConfiguredStrategy = configuredStrategy,
+                CurrentVersionId = hasAgentVersion ? agentVersionId : (Guid?)null, ConfiguredStrategy = configuredStrategy,
                 ModeUsages = usages, EffectivePreviews = previews,
                 RecentInvocation = invocation is null ? null : ToInvocationDto(invocation), UpdatedAt = definition.UpdatedAt,
                 PackId = packOwner.PackId,

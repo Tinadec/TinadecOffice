@@ -338,6 +338,59 @@ public sealed class ProjectBoardCoordinator
         return dtos;
     }
 
+    public async Task<IReadOnlyList<ProjectBoardTaskDto>> ListTasksForProjectsAsync(
+        IReadOnlyDictionary<Guid, string> projectNamesById,
+        TaskQueryFilter? filter = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (projectNamesById.Count == 0)
+            return [];
+
+        await EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var projectIds = projectNamesById.Count <= 100 ? projectNamesById.Keys.ToArray() : null;
+        var taskRows = projectIds is not null
+            ? await db.BoardTasks.AsNoTracking()
+                .Where(x => !x.Deleted && projectIds.Contains(x.ProjectId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false)
+            : (await db.BoardTasks.AsNoTracking()
+                    .Where(x => !x.Deleted)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false))
+                .Where(x => projectNamesById.ContainsKey(x.ProjectId))
+                .ToList();
+
+        if (taskRows.Count == 0)
+            return [];
+
+        var syncMap = projectIds is not null
+            ? await db.BoardSyncStates.AsNoTracking()
+                .Where(x => projectIds.Contains(x.ProjectId))
+                .ToDictionaryAsync(x => x.TaskId, cancellationToken)
+                .ConfigureAwait(false)
+            : await db.BoardSyncStates.AsNoTracking()
+                .ToDictionaryAsync(x => x.TaskId, cancellationToken)
+                .ConfigureAwait(false);
+
+        var dtos = new List<ProjectBoardTaskDto>(taskRows.Count);
+        foreach (var row in taskRows
+                     .OrderBy(r => r.SortKey, StringComparer.Ordinal)
+                     .ThenBy(r => r.CreatedAtUnixMs)
+                     .ThenBy(r => r.TaskKey, StringComparer.Ordinal))
+        {
+            if (!projectNamesById.TryGetValue(row.ProjectId, out var projectName))
+                continue;
+            syncMap.TryGetValue(row.TaskId, out var syncRow);
+            var dto = ToTaskDto(row, projectName, syncRow);
+            if (MatchesFilter(dto, filter))
+                dtos.Add(dto);
+        }
+
+        return dtos;
+    }
+
     public async Task<ProjectBoardTaskDto?> GetTaskAsync(
         Guid projectId,
         Guid taskId,

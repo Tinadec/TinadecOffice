@@ -73,6 +73,8 @@ public sealed class ReadinessService
     private readonly ILogger<ReadinessService>? _logger;
     private readonly object _toolGate = new();
     private (DateTimeOffset ExpiresAt, ReadinessItem ToolProvider, ReadinessItem ManifestHash)? _toolCache;
+    private readonly object _inFlightGate = new();
+    private readonly Dictionary<(Guid TenantId, Guid? WorkspaceId), Task<ReadinessReceipt>> _inFlightReceipts = new();
 
     public ReadinessService(
         IDatabaseReadiness database,
@@ -102,16 +104,58 @@ public sealed class ReadinessService
         _logger = logger;
     }
 
-    public async Task<ReadinessReceipt> GetReceiptAsync(CancellationToken cancellationToken = default)
+    public Task<ReadinessReceipt> GetReceiptAsync(CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<ReadinessReceipt>(cancellationToken);
+
+        var tenant = _tenant.Current;
+        var key = (tenant.TenantId, tenant.WorkspaceId);
+        Task<ReadinessReceipt> shared;
+        lock (_inFlightGate)
+        {
+            if (!_inFlightReceipts.TryGetValue(key, out shared!))
+            {
+                shared = ComputeAndClearAsync(key);
+                _inFlightReceipts[key] = shared;
+            }
+        }
+        return shared.WaitAsync(cancellationToken);
+
+        async Task<ReadinessReceipt> ComputeAndClearAsync((Guid TenantId, Guid? WorkspaceId) flightKey)
+        {
+            try
+            {
+                return await ComputeReceiptAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_inFlightGate)
+                {
+                    _inFlightReceipts.Remove(flightKey);
+                }
+            }
+        }
+    }
+
+    private async Task<ReadinessReceipt> ComputeReceiptAsync(CancellationToken cancellationToken)
     {
         var checkedAt = DateTimeOffset.UtcNow;
+        var databaseTask = CheckDatabaseAsync(cancellationToken);
+        var coreStorageTask = CheckCoreStorageAsync(checkedAt, cancellationToken);
+        var agentPackTask = CheckAgentPackAndDefaultModeAsync(checkedAt, cancellationToken);
+        var modelLayersTask = CheckModelLayersAsync(checkedAt, cancellationToken);
+        var toolProviderTask = CheckToolProviderAsync(checkedAt, cancellationToken);
+
+        await Task.WhenAll(databaseTask, coreStorageTask, agentPackTask, modelLayersTask, toolProviderTask).ConfigureAwait(false);
+
         var items = new List<ReadinessItem>(10)
         {
-            await CheckDatabaseAsync(cancellationToken).ConfigureAwait(false),
-            await CheckCoreStorageAsync(checkedAt, cancellationToken).ConfigureAwait(false),
+            await databaseTask.ConfigureAwait(false),
+            await coreStorageTask.ConfigureAwait(false),
         };
-        items.AddRange(await CheckAgentPackAndDefaultModeAsync(checkedAt, cancellationToken).ConfigureAwait(false));
-        items.AddRange(await CheckModelLayersAsync(checkedAt, cancellationToken).ConfigureAwait(false));
+        items.AddRange(await agentPackTask.ConfigureAwait(false));
+        items.AddRange(await modelLayersTask.ConfigureAwait(false));
         items.Add(_modelProbe.Peek() ?? new ReadinessItem
         {
             Id = ModelProbeItemId,
@@ -121,7 +165,7 @@ public sealed class ReadinessService
             Action = "POST /api/v1/model-probe?force=true sends one real 1-token request.",
             CheckedAt = checkedAt
         });
-        items.AddRange(await CheckToolProviderAsync(checkedAt, cancellationToken).ConfigureAwait(false));
+        items.AddRange(await toolProviderTask.ConfigureAwait(false));
 
         var overall = items.Any(item => item.Status == "blocked") ? "blocked"
             : items.Any(item => item.Status is "degraded" or "unavailable"
@@ -500,7 +544,7 @@ public sealed class ReadinessService
                 Id = "tool_provider",
                 Status = "unavailable",
                 ReasonCode = "tools_not_built",
-                Reason = "The TinadecTools executable was not found (nothing under TinadecTools/bin/{Debug|Release}/net10.0/).",
+                Reason = "The TinadecTools executable was not found (nothing under TinadecTools/bin/{Debug|Release}/{net11.0,net10.0}/).",
                 Action = action,
                 CheckedAt = checkedAt
             };
@@ -595,6 +639,7 @@ public sealed class ReadinessService
             {
                 foreach (var build in new[] { "Debug", "Release" })
                 {
+                    candidates.Add(Path.Combine(toolsDirectory, "bin", build, "net11.0", executableName));
                     candidates.Add(Path.Combine(toolsDirectory, "bin", build, "net10.0", executableName));
                 }
             }

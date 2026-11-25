@@ -133,16 +133,34 @@ public static class StorageEndpoints
                 return Results.BadRequest(new { code = "INVALID_LIFECYCLE_STATUS", message = "lifecycle_status must be active, archived, or trashed." });
             if (http.RequestServices.GetService<IStorageScopeRegistry>() is { } registry && !http.Request.Headers.ContainsKey(StorageScopeHttpExtensions.StorageHeader))
             {
+                var selectedProjectId = selected is null ? (Guid?)null : Guid.Parse(selected);
+                var scopes = registry.List().Where(x => selectedProjectId is null || x.ProjectId == selectedProjectId).ToArray();
+                var perScope = new List<object>[scopes.Length];
+                await Parallel.ForEachAsync(
+                    Enumerable.Range(0, scopes.Length),
+                    new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
+                    async (index, token) =>
+                    {
+                        var scope = scopes[index];
+                        try
+                        {
+                            await using var lease = await registry.AcquireAsync(scope.StorageId, token).ConfigureAwait(false);
+                            var records = await lease.Services.GetRequiredService<ProjectSessionStore>().ListSessionsAsync(selectedProjectId, status, token).ConfigureAwait(false);
+                            var defaults = await LoadSessionModeDefaultsAsync(records,
+                                lease.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>(),
+                                lease.Services.GetRequiredService<GlobalAgentConfiguration>(), token).ConfigureAwait(false);
+                            var list = new List<object>(records.Count);
+                            foreach (var record in records) list.Add(ToSessionEnriched(record, scope.StorageId, defaults));
+                            perScope[index] = list;
+                        }
+                        catch (Exception ex) when (selectedProjectId is null && scope.ScopeKind != "user" && !token.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                        {
+                            // Keep aggregate session roster responsive when a non-user project scope is temporarily locked or unavailable.
+                        }
+                    }).ConfigureAwait(false);
                 var aggregate = new List<object>();
-                foreach (var scope in registry.List().Where(x => selected is null || x.ProjectId == Guid.Parse(selected)))
-                {
-                    await using var lease = await registry.AcquireAsync(scope.StorageId, ct).ConfigureAwait(false);
-                    var records = await lease.Services.GetRequiredService<ProjectSessionStore>().ListSessionsAsync(selected is null ? null : Guid.Parse(selected), status, ct).ConfigureAwait(false);
-                    var defaults = await LoadSessionModeDefaultsAsync(records,
-                        lease.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>(),
-                        lease.Services.GetRequiredService<GlobalAgentConfiguration>(), ct).ConfigureAwait(false);
-                    foreach (var record in records) aggregate.Add(ToSessionEnriched(record, scope.StorageId, defaults));
-                }
+                foreach (var list in perScope)
+                    if (list is not null) aggregate.AddRange(list);
                 return Results.Ok(aggregate);
             }
             var sessions = await store.ListSessionsAsync(selected is null ? null : Guid.Parse(selected), status, ct).ConfigureAwait(false);

@@ -166,7 +166,7 @@ public sealed class StorageScopeInitializer
             else
             {
                 Directory.CreateDirectory(destination);
-                await using var input = File.OpenRead(entry);
+                await using var input = new FileStream(entry, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 await input.CopyToAsync(output, ct).ConfigureAwait(false);
             }

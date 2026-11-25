@@ -147,9 +147,32 @@ public sealed class ControlPlaneService
     }
 
     public async Task<IResult> ListProviders(CancellationToken ct)
-    { await using var db = await _models.CreateDbContextAsync(ct); var rows = await db.Providers.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null).ToListAsync(ct); return Results.Ok(await Task.WhenAll(rows.Select(ToProvider))); }
+    {
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var rows = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null)
+            .ToListAsync(ct);
+        var versionIds = rows.Select(x => x.CurrentVersionId).Distinct().ToArray();
+        var versions = versionIds.Length == 0
+            ? new Dictionary<Guid, ModelProviderVersionRecord>()
+            : await db.ProviderVersions.AsNoTracking()
+                .Where(x => versionIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
+        return Results.Ok(await Task.WhenAll(rows.Select(row => ToProvider(row, versions.GetValueOrDefault(row.CurrentVersionId), ct))));
+    }
+
     private async Task<object> ToProvider(ModelProviderRecord row)
-    { await using var db = await _models.CreateDbContextAsync(); var version = await db.ProviderVersions.SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId); Dictionary<string, JsonElement>? cfg = null; if (version != null) cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, default));
+    {
+        await using var db = await _models.CreateDbContextAsync();
+        var version = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId);
+        return await ToProvider(row, version, CancellationToken.None);
+    }
+
+    private async Task<object> ToProvider(ModelProviderRecord row, ModelProviderVersionRecord? version, CancellationToken ct)
+    {
+        Dictionary<string, JsonElement>? cfg = null;
+        if (version != null) cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, ct));
+        var hasApiKey = row.SecretReference != null && await _secrets.ExistsAsync(row.SecretReference, ct);
         JsonElement Value(string key) => cfg != null && cfg.TryGetValue(key, out var v) ? v : default;
         string? String(string key) => Value(key).ValueKind == JsonValueKind.String ? Value(key).GetString() : null;
         string[] Models() => Value("models").ValueKind == JsonValueKind.Array ? Value("models").EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray() : Array.Empty<string>();
@@ -161,7 +184,8 @@ public sealed class ControlPlaneService
         var imageOverrides = Value("image_input").ValueKind == JsonValueKind.Object
             && Value("image_input").TryGetProperty("model_overrides", out var overrides)
             && overrides.ValueKind == JsonValueKind.Object ? overrides.Clone() : (JsonElement?)null;
-        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), model_profiles = SafeReadModelProfiles(Value("model_profiles")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, acp_capabilities = ReadAcpCapabilities(Value("_capabilities")), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = String("_probe_diagnostic") ?? "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+        return new { id = row.Id, driver = row.Driver, protocol, channel = String("channel"), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), model_parameters = ModelParameters.ReadMap(Value("model_parameters")), model_profiles = SafeReadModelProfiles(Value("model_profiles")), image_input = new { enabled = imageInput.Enabled, max_image_bytes = imageInput.MaxImageBytes, max_images_per_turn = imageInput.MaxImagesPerTurn, base_enabled = imageBase.Enabled, base_max_image_bytes = imageBase.MaxImageBytes, base_max_images_per_turn = imageBase.MaxImagesPerTurn, editable = !acpSnapshot && protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages, source = acpSnapshot ? "acp_snapshot" : protocol is ChatProtocols.OpenAiChat or ChatProtocols.OpenAiResponses or ChatProtocols.AnthropicMessages ? "config" : "protocol_unsupported", model_overrides = imageOverrides }, acp_capabilities = ReadAcpCapabilities(Value("_capabilities")), has_api_key = hasApiKey, binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = String("_probe_diagnostic") ?? "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt };
+    }
 
     private static object? ReadAcpCapabilities(JsonElement value)
     {
@@ -208,7 +232,7 @@ public sealed class ControlPlaneService
         var baseUrl = cfg != null && cfg.TryGetValue("base_url", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
         if (string.IsNullOrWhiteSpace(baseUrl)) return Results.BadRequest(new { code = "MODEL_DISCOVERY_INVALID", message = "Provider has no base_url configured; model discovery requires an HTTP model endpoint." });
         var protocol = HarnessCatalog.ResolveProtocol(cfg != null && cfg.TryGetValue("protocol", out var proto) && proto.ValueKind == JsonValueKind.String ? proto.GetString() : null, row.Driver, null);
-        string? apiKey = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult() ? await _secrets.GetAsync(row.SecretReference, ct) : null;
+        string? apiKey = row.SecretReference != null && await _secrets.ExistsAsync(row.SecretReference, ct) ? await _secrets.GetAsync(row.SecretReference, ct) : null;
         try
         {
             using var client = TinadecBranding.CreateClient();

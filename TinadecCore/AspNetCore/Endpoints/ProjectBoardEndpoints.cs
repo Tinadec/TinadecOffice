@@ -780,55 +780,108 @@ public static class ProjectBoardEndpoints
         ProjectBoardCoordinator.TaskQueryFilter? filter,
         CancellationToken ct)
     {
-        var seenProjects = new HashSet<Guid>();
-        var activeProjects = new List<(Guid ProjectId, string ProjectName)>();
-        var allTasks = new List<ProjectBoardTaskDto>();
-
-        async Task CollectFromProviderAsync(IServiceProvider sp)
+        async Task<(List<(Guid ProjectId, string ProjectName)> Projects, List<ProjectBoardTaskDto> Tasks)> CollectFromProviderAsync(IServiceProvider sp, CancellationToken token)
         {
             var store = sp.GetRequiredService<ProjectSessionStore>();
             var coordinator = sp.GetRequiredService<ProjectBoardCoordinator>();
             var execution = sp.GetRequiredService<ProjectTaskExecutionService>();
-            var projects = await store.ListProjectsAsync(LifecycleStatuses.Active, ct).ConfigureAwait(false);
+            var projects = await store.ListProjectsAsync(LifecycleStatuses.Active, token).ConfigureAwait(false);
+            var scopeProjects = new List<(Guid ProjectId, string ProjectName)>(projects.Count);
+            var targetProjects = new Dictionary<Guid, string>();
 
             foreach (var proj in projects)
             {
-                if (!seenProjects.Add(proj.Id)) continue;
-                activeProjects.Add((proj.Id, proj.Name));
-
+                scopeProjects.Add((proj.Id, proj.Name));
                 if (filter?.ProjectIds is { Count: > 0 } && !filter.ProjectIds.Contains(proj.Id))
                     continue;
-
-                var projTasks = await coordinator.ListProjectTasksAsync(proj.Id, filter: null, ct).ConfigureAwait(false);
-                projTasks = await execution.RefreshTasksRunStateAsync(proj.Id, projTasks, ct).ConfigureAwait(false);
-                if (filter is not null)
-                    projTasks = projTasks.Where(t => ProjectBoardCoordinator.MatchesFilter(t, filter)).ToList();
-
-                allTasks.AddRange(projTasks);
+                targetProjects.TryAdd(proj.Id, proj.Name);
             }
+
+            if (targetProjects.Count == 0)
+                return (scopeProjects, new List<ProjectBoardTaskDto>());
+
+            var batchTasks = await coordinator.ListTasksForProjectsAsync(targetProjects, filter: null, token).ConfigureAwait(false);
+            List<ProjectBoardTaskDto> finalTasks;
+            if (batchTasks.Any(t => t.ActiveRunId.HasValue))
+            {
+                var refreshedByTaskId = new Dictionary<Guid, ProjectBoardTaskDto>();
+                foreach (var group in batchTasks.Where(t => t.ActiveRunId.HasValue).GroupBy(t => t.ProjectId))
+                {
+                    var refreshed = await execution.RefreshTasksRunStateAsync(group.Key, group.ToArray(), token).ConfigureAwait(false);
+                    foreach (var task in refreshed)
+                        refreshedByTaskId[task.TaskId] = task;
+                }
+                finalTasks = batchTasks.Select(t => refreshedByTaskId.GetValueOrDefault(t.TaskId, t)).ToList();
+            }
+            else
+            {
+                finalTasks = batchTasks as List<ProjectBoardTaskDto> ?? batchTasks.ToList();
+            }
+
+            if (filter is not null)
+                finalTasks = finalTasks.Where(t => ProjectBoardCoordinator.MatchesFilter(t, filter)).ToList();
+
+            return (scopeProjects, finalTasks);
         }
+
+        var seenProjects = new HashSet<Guid>();
+        var activeProjects = new List<(Guid ProjectId, string ProjectName)>();
+        var allTasks = new List<ProjectBoardTaskDto>();
 
         if (http.RequestServices.GetService<IStorageScopeRegistry>() is { } registry)
         {
-            foreach (var scope in registry.List().Where(s => s.ScopeKind == "project"))
+            var scopeIds = registry.List()
+                .Where(s => s.ScopeKind == "project")
+                .Select(s => s.StorageId)
+                .Append("user")
+                .ToArray();
+            var perScope = new (List<(Guid ProjectId, string ProjectName)> Projects, List<ProjectBoardTaskDto> Tasks)?[scopeIds.Length];
+
+            await Parallel.ForEachAsync(
+                Enumerable.Range(0, scopeIds.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
+                async (index, token) =>
+                {
+                    var storageId = scopeIds[index];
+                    try
+                    {
+                        await using var lease = await registry.AcquireAsync(storageId, token).ConfigureAwait(false);
+                        perScope[index] = await CollectFromProviderAsync(lease.Services, token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (storageId != "user" && !token.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                    {
+                        // Skip unavailable project scopes so global board stays responsive.
+                    }
+                }).ConfigureAwait(false);
+
+            foreach (var entry in perScope)
             {
-                try
+                if (entry is not { } collected) continue;
+                var scopeAccepted = new HashSet<Guid>();
+                foreach (var proj in collected.Projects)
                 {
-                    await using var lease = await registry.AcquireAsync(scope.StorageId, ct).ConfigureAwait(false);
-                    await CollectFromProviderAsync(lease.Services).ConfigureAwait(false);
+                    if (seenProjects.Add(proj.ProjectId))
+                    {
+                        activeProjects.Add(proj);
+                        scopeAccepted.Add(proj.ProjectId);
+                    }
                 }
-                catch (Exception ex) when (!ct.IsCancellationRequested && StorageScopeRowError.CanRepresent(ex))
+                foreach (var task in collected.Tasks)
                 {
-                    // Skip unavailable scopes so global board stays responsive.
+                    if (scopeAccepted.Contains(task.ProjectId))
+                        allTasks.Add(task);
                 }
             }
-
-            await using var userLease = await registry.AcquireAsync("user", ct).ConfigureAwait(false);
-            await CollectFromProviderAsync(userLease.Services).ConfigureAwait(false);
         }
         else
         {
-            await CollectFromProviderAsync(http.RequestServices).ConfigureAwait(false);
+            var collected = await CollectFromProviderAsync(http.RequestServices, ct).ConfigureAwait(false);
+            foreach (var proj in collected.Projects)
+            {
+                if (seenProjects.Add(proj.ProjectId))
+                    activeProjects.Add(proj);
+            }
+            allTasks.AddRange(collected.Tasks);
         }
 
         var orderedTasks = allTasks

@@ -122,13 +122,15 @@ public static class UiPreferencesEndpoints
 
         using var linkedAbort = CancellationTokenSource.CreateLinkedTokenSource(ct, http.RequestAborted);
         var token = linkedAbort.Token;
+        using var enumeratorCts = CancellationTokenSource.CreateLinkedTokenSource(token);
 
+        var enumerator = preferences.Subscribe(enumeratorCts.Token).GetAsyncEnumerator(enumeratorCts.Token);
+        Task<bool>? pendingMoveNext = null;
         try
         {
-            await using var enumerator = preferences.Subscribe(token).GetAsyncEnumerator(token);
             // Start MoveNextAsync before reading initial snapshot so the subscriber channel is
             // registered synchronously and cannot miss a concurrent write during GetAsync.
-            var pendingMoveNext = enumerator.MoveNextAsync().AsTask();
+            pendingMoveNext = enumerator.MoveNextAsync().AsTask();
 
             var initial = await preferences.GetAsync(token).ConfigureAwait(false);
             var lastSentHash = initial.ContentHash;
@@ -143,7 +145,9 @@ public static class UiPreferencesEndpoints
                 var completed = await Task.WhenAny(pendingMoveNext, delayTask).ConfigureAwait(false);
                 if (completed == pendingMoveNext)
                 {
-                    if (!await pendingMoveNext.ConfigureAwait(false))
+                    var hasNext = await pendingMoveNext.ConfigureAwait(false);
+                    pendingMoveNext = null;
+                    if (!hasNext)
                         break;
 
                     var nextDoc = enumerator.Current;
@@ -165,6 +169,18 @@ public static class UiPreferencesEndpoints
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             // Normal SSE client disconnect.
+        }
+        finally
+        {
+            // An async iterator's DisposeAsync() throws NotSupportedException if MoveNextAsync()
+            // is still running; cancel and settle the pending wait before disposing.
+            enumeratorCts.Cancel();
+            if (pendingMoveNext is not null)
+            {
+                try { await pendingMoveNext.ConfigureAwait(false); }
+                catch { /* Expected when cancelled or shutting down. */ }
+            }
+            await enumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
 

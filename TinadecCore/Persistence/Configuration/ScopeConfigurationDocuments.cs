@@ -29,18 +29,45 @@ public sealed class ScopeConfigurationDocuments(
     internal Task<ScopeConfigurationDocument> ReadForProjectionAsync(string id, ScopeConfigurationDocument? applied,
         CancellationToken cancellationToken) => ReadCoreAsync(id, applied, cancellationToken);
 
+    internal async Task<bool> IsProjectionUnchangedAsync(string id, ScopeConfigurationDocument applied, CancellationToken cancellationToken)
+    {
+        if (applied.Id != id || applied.ContentHash.Length == 0 || applied.Diagnostics.Any(d => d.Severity == "error"))
+            return false;
+        var path = ResolvePath(id);
+        if (applied.Path != path || !File.Exists(path))
+            return false;
+        var streamHash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
+        return streamHash == applied.ContentHash;
+    }
+
+    private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+        return Convert.ToHexStringLower(digest);
+    }
+
     private async Task<ScopeConfigurationDocument> ReadCoreAsync(string id, ScopeConfigurationDocument? applied, CancellationToken cancellationToken)
     {
         var path = ResolvePath(id);
-        var exists = File.Exists(path);
-        var text = exists ? await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false) : "";
-        cancellationToken.ThrowIfCancellationRequested();
-        var hash = exists ? Hash(text) : "";
-        if (exists && applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash)
-            return applied;
-        var diagnostics = exists ? await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false)
-            : File.Exists(EstablishedPath(id)) || ScopeConfigurationInitialization.IsPublishedProject(LocationsFor(id))
+        if (!File.Exists(path))
+        {
+            var missingDiagnostics = File.Exists(EstablishedPath(id)) || ScopeConfigurationInitialization.IsPublishedProject(LocationsFor(id))
                 ? new ConfigurationDiagnostic[] { new("configuration_missing", "An established configuration file is missing. Restore it or save a valid replacement.") } : [];
+            return new(id, path, "", "", missingDiagnostics, 1);
+        }
+        if (applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash.Length > 0)
+        {
+            var streamHash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
+            if (streamHash == applied.ContentHash)
+                return applied;
+        }
+        var text = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var hash = Hash(text);
+        if (applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash)
+            return applied;
+        var diagnostics = await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false);
         return new(id, path, text, hash, diagnostics, DocumentVersion(text));
     }
 

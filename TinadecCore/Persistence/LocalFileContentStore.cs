@@ -18,6 +18,21 @@ internal sealed class LocalFileContentStore : IContentStore
         if (string.IsNullOrWhiteSpace(request.Kind)) throw new ArgumentException("Content kind is required.", nameof(request));
         using var lease = _leases.Acquire();
 
+        if (request.Content.GetType() == typeof(MemoryStream)
+            && request.Content is MemoryStream memoryStream
+            && memoryStream.TryGetBuffer(out var bufferSegment))
+        {
+            var remaining = bufferSegment.AsSpan((int)memoryStream.Position);
+            var quickHash = Convert.ToHexStringLower(SHA256.HashData(remaining));
+            var quickReference = _paths.ContentReference(request.TenantId, request.WorkspaceId, request.Kind, quickHash);
+            var quickDestination = _paths.ResolveContentReference(quickReference);
+            if (File.Exists(quickDestination))
+            {
+                memoryStream.Position = memoryStream.Length;
+                return new ContentReference(quickReference, quickHash, remaining.Length, request.MediaType);
+            }
+        }
+
         var temporary = _paths.ContentTemporary(request.TenantId, request.WorkspaceId, request.Kind);
         try
         {

@@ -442,7 +442,22 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
-        services.AddSingleton<ILoggerFactory>(_ => LoggerFactory.Create(builder => builder.AddProvider(new ScopeDiagnosticLoggerProvider(scope))));
+        services.AddSingleton<ILoggerFactory>(_ => LoggerFactory.Create(builder =>
+        {
+            builder.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+            builder.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+            foreach (var pair in _configuration.GetSection("Logging:LogLevel").GetChildren())
+            {
+                if (Enum.TryParse<LogLevel>(pair.Value, ignoreCase: true, out var level))
+                {
+                    if (string.Equals(pair.Key, "Default", StringComparison.OrdinalIgnoreCase))
+                        builder.SetMinimumLevel(level);
+                    else
+                        builder.AddFilter(pair.Key, level);
+                }
+            }
+            builder.AddProvider(new ScopeDiagnosticLoggerProvider(scope));
+        }));
         if (_host.GetService<IHostEnvironment>() is { } environment) services.AddSingleton(environment);
         if (_host.GetService<IHostApplicationLifetime>() is { } lifetime) services.AddSingleton(lifetime);
         services.AddSingleton<IScopeStorageLocations>(scope);

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
@@ -22,11 +23,12 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     private readonly IEnumerable<IConfigurationProjectionSource> _sources;
     private readonly ITenantContextAccessor _tenant;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, ScopeConfigurationDocument> _projectedDocuments = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ScopeConfigurationDocument> _projectedDocuments = new(StringComparer.Ordinal);
     // A scope's migrations cannot become pending again inside one process lifetime
     // (the migration assembly is fixed at build time), so the history read is paid
     // once per context type instead of once per attached context.
     private readonly HashSet<Type> _migrationsSettled = new();
+    private readonly ConcurrentDictionary<Type, string[]> _schemaSettled = new();
     private static readonly MethodInfo QueryMethod = typeof(ConfigurationProjectionCoordinator).GetMethod(nameof(QueryRows), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -55,7 +57,8 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
         var models = new Dictionary<string, TomlTable>(StringComparer.Ordinal);
         foreach (var id in _documents.DocumentIds)
         {
-            var document = await _documents.ReadAsync(id, cancellationToken).ConfigureAwait(false);
+            _projectedDocuments.TryGetValue(id, out var projected);
+            var document = await _documents.ReadForProjectionAsync(id, projected, cancellationToken).ConfigureAwait(false);
             ThrowDiagnostics(document);
             if (document.ContentHash.Length == 0 && (id is "storage" or "logging"
                 || id == "runtime" && _documents.RequiresRuntimeDocument))
@@ -78,7 +81,8 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             throw new ConfigurationDocumentException("configuration_scope_mismatch", "The configuration snapshot belongs to a different storage scope.");
         foreach (var pair in snapshot.Documents)
         {
-            var current = await _documents.ReadAsync(pair.Key, cancellationToken).ConfigureAwait(false);
+            _projectedDocuments.TryGetValue(pair.Key, out var projected);
+            var current = await _documents.ReadForProjectionAsync(pair.Key, projected, cancellationToken).ConfigureAwait(false);
             ThrowDiagnostics(current);
             VerifyActiveStorage(current);
             if (current.ContentHash != pair.Value)
@@ -102,30 +106,56 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
 
     internal async Task AttachAsync(ConfigurationProjectionDbContext db, CancellationToken cancellationToken)
     {
+        var dbType = db.GetType();
+        if (_schemaSettled.TryGetValue(dbType, out var settledDocIds))
+        {
+            var allUnchanged = true;
+            foreach (var docId in settledDocIds)
+            {
+                if (!_projectedDocuments.TryGetValue(docId, out var applied)
+                    || !await _documents.IsProjectionUnchangedAsync(docId, applied, cancellationToken).ConfigureAwait(false))
+                {
+                    allUnchanged = false;
+                    break;
+                }
+                db.ConfigurationDocumentHashes[docId] = applied.ContentHash;
+            }
+            if (allUnchanged)
+            {
+                db.ConfigurationCoordinator = this;
+                return;
+            }
+            db.ConfigurationDocumentHashes.Clear();
+        }
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Migrations own the schema of any context that has them. This read runs
-            // before the coordinated migrations, so reconciling columns from the
-            // current model here adds a column that a pending migration is about to
-            // add — the column lands, the history row never does, and every later
-            // mount dies on "duplicate column name". Apply the pending migrations
-            // first; bootstrap-owned contexts without migrations fall through to the
-            // additive reconciliation, which then only fills what no migration covers.
-            if (!_migrationsSettled.Contains(db.GetType()))
-            {
-                if (db.Database.GetPendingMigrations().Any())
-                {
-                    await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
-                    await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
-                }
-                _migrationsSettled.Add(db.GetType());
-            }
-            // Projection reads use the current EF model, so an older existing table
-            // may still need columns that no migration declares before LoadRowsAsync.
-            await DbContextSchemaBootstrapper.EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
             var entities = SelectedEntities(db).ToArray();
-            if (!await TablesExistAsync(db, entities, cancellationToken).ConfigureAwait(false)) return;
+            if (!_schemaSettled.ContainsKey(dbType))
+            {
+                // Migrations own the schema of any context that has them. This read runs
+                // before the coordinated migrations, so reconciling columns from the
+                // current model here adds a column that a pending migration is about to
+                // add — the column lands, the history row never does, and every later
+                // mount dies on "duplicate column name". Apply the pending migrations
+                // first; bootstrap-owned contexts without migrations fall through to the
+                // additive reconciliation, which then only fills what no migration covers.
+                if (!_migrationsSettled.Contains(dbType))
+                {
+                    if (db.Database.GetPendingMigrations().Any())
+                    {
+                        await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
+                        await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    _migrationsSettled.Add(dbType);
+                }
+                // Projection reads use the current EF model, so an older existing table
+                // may still need columns that no migration declares before LoadRowsAsync.
+                await DbContextSchemaBootstrapper.EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+                if (!await TablesExistAsync(db, entities, cancellationToken).ConfigureAwait(false)) return;
+                _schemaSettled.TryAdd(dbType, entities.Select(e => DocumentId(db, e)).Distinct(StringComparer.Ordinal).ToArray());
+            }
             Dictionary<Type, List<object>>? existing = null;
             foreach (var group in entities.GroupBy(e => DocumentId(db, e)))
             {
@@ -201,7 +231,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 db.ConfigurationDocumentHashes[id] = updated.ContentHash;
                 // The file is durable even if the following SQL projection update fails.
                 // A later read always repairs that projection from these authoritative bytes.
-                _projectedDocuments.Remove(id);
+                _projectedDocuments.TryRemove(id, out _);
             }
         }
         finally { _gate.Release(); }
@@ -318,6 +348,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             Guid? workspace = Get<Guid?>(row, "WorkspaceId") ?? _tenant.Current.WorkspaceId;
             var kind = entity.GetTableName() switch { "model_provider_versions" => "model-config", "prompt_fragment_versions" => "prompt-fragment", _ => "configuration" };
             var original = property.PropertyInfo!.GetValue(row) as string;
+            var expectedHash = string.Empty;
             if (!string.IsNullOrEmpty(original))
             {
                 var segments = original.Split('/');
@@ -325,11 +356,21 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                     || !Guid.TryParse(segments[2], out tenant) || (segments[3] != "tenant" && !Guid.TryParse(segments[3], out _)))
                     throw Invalid(entity.GetTableName()!, "Embedded content has an invalid immutable reference.");
                 workspace = segments[3] == "tenant" ? null : Guid.Parse(segments[3]); kind = segments[4];
-                if (ScopeConfigurationDocuments.Hash(text) != segments[5])
+                expectedHash = segments[5];
+                if (ScopeConfigurationDocuments.Hash(text) != expectedHash)
                     throw Invalid(entity.GetTableName()!, "Embedded content does not match its immutable reference hash.");
             }
-            await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(text));
-            var reference = await _content.PutAsync(new(tenant, workspace, kind, "application/json", stream), cancellationToken).ConfigureAwait(false);
+            ContentReference reference;
+            if (!string.IsNullOrEmpty(original)
+                && await _content.ExistsAsync(new(original, expectedHash, 0, "application/json"), cancellationToken).ConfigureAwait(false))
+            {
+                reference = new(original, expectedHash, Encoding.UTF8.GetByteCount(text), "application/json");
+            }
+            else
+            {
+                await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(text));
+                reference = await _content.PutAsync(new(tenant, workspace, kind, "application/json", stream), cancellationToken).ConfigureAwait(false);
+            }
             property.PropertyInfo!.SetValue(row, reference.Value);
             if (!string.IsNullOrEmpty(original) && reference.Value != original)
                 throw Invalid(entity.GetTableName()!, "Embedded content changed its immutable reference.");

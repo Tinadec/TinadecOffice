@@ -41,6 +41,14 @@ internal sealed class ConfigurationProjectionDocumentValidator(string id, IEnume
                     var unique = entity.GetIndexes().Where(index => index.IsUnique)
                         .Select(index => (Index: index, Applies: UniqueIndexPredicate(entity, index),
                             Values: new HashSet<string>(StringComparer.Ordinal))).ToArray();
+                    Dictionary<string, object>? previousByKey = null;
+                    if (ConfigurationProjectionCoordinator.IsHistorical(entity) && old.TryGetValue(entity.ClrType, out var previous))
+                    {
+                        previousByKey = new Dictionary<string, object>(previous.Count, StringComparer.Ordinal);
+                        foreach (var r in previous)
+                            previousByKey.TryAdd(ConfigurationProjectionCoordinator.EntityKey(entity, r), r);
+                    }
+                    var isNpgsql = db.Database.IsNpgsql();
                     foreach (var table in rows)
                     {
                         var row = ConfigurationProjectionCoordinator.DecodeRow(entity, table);
@@ -81,17 +89,13 @@ internal sealed class ConfigurationProjectionDocumentValidator(string id, IEnume
                                 if (id is "models" or "mcp" && ContainsPlainCredential(content.RootElement))
                                     return [new("configuration_secret_literal", "Credentials must use the user SecretStore reference; credential literals are not accepted in configuration files.")];
                             }
-                        if (ConfigurationProjectionCoordinator.IsHistorical(entity) && old.TryGetValue(entity.ClrType, out var previous))
+                        if (previousByKey is not null && previousByKey.TryGetValue(key, out var existing))
                         {
-                            var existing = previous.FirstOrDefault(r => ConfigurationProjectionCoordinator.EntityKey(entity, r) == key);
                             // Embedded content is materialized after validation; compare its immutable source metadata separately.
-                            if (existing is not null)
-                            {
-                                foreach (var reference in new[] { "ContentReference", "ConfigReference", "ManifestReference", "ManifestContentReference" })
-                                    if (entity.ClrType.GetProperty(reference) is { } p && string.IsNullOrEmpty(p.GetValue(row) as string)) p.SetValue(row, p.GetValue(existing));
-                                if (!ConfigurationProjectionCoordinator.Same(entity, existing, row, db.Database.IsNpgsql()))
-                                    return [new("configuration_version_immutable", name + ": published version ids are immutable; use a new version identity.")];
-                            }
+                            foreach (var reference in new[] { "ContentReference", "ConfigReference", "ManifestReference", "ManifestContentReference" })
+                                if (entity.ClrType.GetProperty(reference) is { } p && string.IsNullOrEmpty(p.GetValue(row) as string)) p.SetValue(row, p.GetValue(existing));
+                            if (!ConfigurationProjectionCoordinator.Same(entity, existing, row, isNpgsql))
+                                return [new("configuration_version_immutable", name + ": published version ids are immutable; use a new version identity.")];
                         }
                     }
                 }

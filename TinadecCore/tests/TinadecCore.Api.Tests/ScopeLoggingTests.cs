@@ -28,4 +28,35 @@ public sealed class ScopeLoggingTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [Fact]
+    public void DisposedProviderDoesNotReopenLogFileOnLateWrite()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tinadec-log-dispose", Guid.NewGuid().ToString("N"));
+        var scope = new StorageScopeDescriptor("test", "project", root);
+        Directory.CreateDirectory(scope.Config);
+        Directory.CreateDirectory(scope.Logs);
+        try
+        {
+            File.WriteAllText(Path.Combine(scope.Config, "logging.toml"), "version = 1\n[logging]\nrotation_bytes = 4096\ntotal_bytes = 8192\n");
+            var provider = new ScopeDiagnosticLoggerProvider(scope);
+            var logger = provider.CreateLogger("DisposeTest");
+            logger.LogInformation("before dispose");
+            provider.Dispose();
+            logger.LogInformation("after dispose should be ignored");
+
+            var logPath = Path.Combine(scope.Logs, "core.log");
+            var contents = File.ReadAllText(logPath);
+            Assert.Contains("before dispose", contents);
+            Assert.DoesNotContain("after dispose should be ignored", contents);
+
+            // File handle must remain completely released on Windows after Dispose().
+            using var exclusive = new FileStream(logPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            Assert.True(exclusive.CanRead);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
 }
