@@ -770,6 +770,190 @@ overflow: hidden;
   color: var(--text-secondary);
 }
 
+/* Workspace Visuals & Interaction Section cards */
+.workspace-visuals-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+}
+
+.workspace-visuals-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.workspace-visual-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.folder-tone-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.folder-tone-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-card);
+  background: var(--surface-button);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.folder-tone-chip:hover {
+  background: var(--surface-button-hover);
+  color: var(--text-primary);
+}
+
+.folder-tone-chip.active {
+  border-color: var(--tone-swatch);
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--tone-ring);
+}
+
+.folder-tone-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--tone-swatch);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.14);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.folder-tone-check {
+  color: #0f172a;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.75));
+}
+
+.workspace-visuals-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+}
+
+.workspace-visuals-preview-caption {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pref-choice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pref-choice-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.pref-choice-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-card);
+  background: var(--surface-button);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.pref-choice-card:hover {
+  background: var(--surface-button-hover);
+}
+
+.pref-choice-card.active {
+  border-color: var(--accent-primary);
+  background: var(--surface-selected);
+}
+
+.pref-choice-card--compact {
+  align-items: flex-start;
+}
+
+.pref-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pref-choice-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pref-choice-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.pref-choice-check {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.pref-toml-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+}
+
+.pref-toml-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.pref-toml-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .workspace-visuals-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .code-font-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .code-font-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px; border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-raised); color: var(--text-primary); text-align: left; cursor: pointer; }
 .code-font-option:hover { background: var(--surface-hover); }

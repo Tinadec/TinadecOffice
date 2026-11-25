@@ -11,8 +11,26 @@
  */
 import { ref, watch, type Ref } from 'vue'
 
+export type SettingsSectionKey =
+  | 'personal'
+  | 'general'
+  | 'storage'
+  | 'model'
+  | 'agentCenter'
+  | 'memoryContext'
+  | 'companions'
+  | 'tools'
+  | 'tinachat'
+  | 'archive'
+  | 'appearance'
+  | 'interaction'
+  | 'companionAvatar'
+  | 'webAccess'
+  | 'apiDocs'
+  | 'about'
+
 export const pendingConversationId = ref<string | null>(null)
-export const pendingSettingsSection = ref<string | null>(null)
+export const pendingSettingsSection = ref<SettingsSectionKey | string | null>(null)
 export const pendingModelProviderId = ref<string | null>(null)
 export const pendingProjectId = ref<string | null>(null)
 export interface WorkspaceFileRequest { path: string; projectId?: string }
@@ -31,7 +49,7 @@ export function requestConversation(sessionId: string): void {
   pendingConversationId.value = sessionId
 }
 
-export function requestSettingsSection(section: string): void {
+export function requestSettingsSection(section: SettingsSectionKey | string): void {
   pendingSettingsSection.value = section
 }
 

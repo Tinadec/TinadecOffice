@@ -300,6 +300,8 @@ declare global {
       selectCompanionAvatarDirectory: (title?: string) => Promise<string | null>;
       /** Copies dropped files into a workspace source folder; never overwrites an existing file. */
       importWorkspaceFiles: (input: { destDir: string; files: string[] }) => Promise<{ imported: ImportedWorkspaceFile[]; skipped: SkippedWorkspaceFile[] }>;
+      /** Reveal a file in the host file manager, or open its parent directory if absent. */
+      revealInFolder: (targetPath: string) => Promise<boolean>;
       /** The absolute path behind a dropped `File`; empty when the host cannot resolve one. */
       pathForFile: (file: File) => string;
       setStorageWritePolicy: (storageId: string, allow: boolean) => Promise<{ storage_id: string; allow_storage_write: boolean }>;

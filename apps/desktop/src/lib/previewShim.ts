@@ -88,6 +88,7 @@ export function installPreviewShimIfNeeded(): void {
     // uses, which is what a host without a main process means.
     pathForFile: () => '',
     importWorkspaceFiles: () => rejectNotAvailable(hostStatus.error.message),
+    revealInFolder: () => Promise.resolve(false),
     minimizeWindow: noop,
     maximizeWindow: noop,
     closeWindow: noop,

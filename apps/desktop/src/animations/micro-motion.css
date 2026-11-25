@@ -297,3 +297,32 @@ dialog.ui-pop[open]::backdrop {
     animation: none !important;
   }
 }
+
+:root[data-reduced-motion='true'] {
+  --duration-tap: 0ms;
+  --duration-pop: 0ms;
+  --duration-panel: 0ms;
+}
+
+:root[data-reduced-motion='true'] .ui-pop-enter-active,
+:root[data-reduced-motion='true'] .ui-pop-leave-active,
+:root[data-reduced-motion='true'] .ui-pop-move,
+:root[data-reduced-motion='true'] .ui-fade-enter-active,
+:root[data-reduced-motion='true'] .ui-fade-leave-active,
+:root[data-reduced-motion='true'] .ui-fade-move,
+:root[data-reduced-motion='true'] .ui-collapse,
+:root[data-reduced-motion='true'] .ui-collapse-enter-active,
+:root[data-reduced-motion='true'] .ui-collapse-leave-active,
+:root[data-reduced-motion='true'] .ui-pressable,
+:root[data-reduced-motion='true'] dialog.ui-pop,
+:root[data-reduced-motion='true'] dialog.ui-pop[open],
+:root[data-reduced-motion='true'] dialog.ui-pop::backdrop,
+:root[data-reduced-motion='true'] dialog.ui-pop[open]::backdrop {
+  transition: none !important;
+  animation: none !important;
+}
+
+:root[data-reduced-motion='true'] .ui-shimmer-bar::after {
+  display: none !important;
+  animation: none !important;
+}

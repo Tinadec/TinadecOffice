@@ -3,6 +3,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { computed, watch, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useBackground } from '@/composables/useBackground'
+import { useUiPreferences } from '@/composables/useUiPreferences'
 import {
   useConnection,
   retryConnection,
@@ -62,6 +63,9 @@ function hashRoutePath(hash: string): string {
 }
 const isCompanionWindow = hashRoutePath(window.location.hash) === '#/companion'
 const isStandaloneWindow = isPetWindow || isCompanionWindow
+if (!isStandaloneWindow) {
+  useUiPreferences()
+}
 const { t } = useI18n()
 setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))
 const {

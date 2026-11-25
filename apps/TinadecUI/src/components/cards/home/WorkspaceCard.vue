@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronRight, Eye, GitBranch, Trash2 } from '@lucide/vue'
 import i18n from '@/i18n'
@@ -37,7 +37,21 @@ const { groups: worktreeGroups, isolatedGroups } = useSessionWorktrees({
   resolveAgentName,
 })
 
-const expanded = ref(true)
+const expanded = ref(false)
+
+watch(
+  activeDockFocus,
+  (focus) => {
+    if (
+      focus
+      && focus.card === 'workspace'
+      && (focus.worktreePath || focus.taskId || focus.workerHandle)
+    ) {
+      expanded.value = true
+    }
+  },
+  { immediate: true },
+)
 
 function inspectWorktree(group: WorkerWorktreeGroup): void {
   focusDockCard({
@@ -83,6 +97,10 @@ function isFocusedGroup(group: WorkerWorktreeGroup): boolean {
     data-dock-card="workspace"
     :data-dock-highlighted="highlightedDockCard === 'workspace' ? 'true' : undefined"
   >
+    <div class="ws-card-roots-body">
+      <WorkspaceRootsPanel />
+    </div>
+
     <section
       v-if="projectPath && worktreeGroups.length > 0"
       class="ws-worktrees-box"
@@ -165,10 +183,6 @@ function isFocusedGroup(group: WorkerWorktreeGroup): boolean {
         </article>
       </div>
     </section>
-
-    <div class="ws-card-roots-body">
-      <WorkspaceRootsPanel />
-    </div>
   </div>
 </template>
 
@@ -184,8 +198,8 @@ function isFocusedGroup(group: WorkerWorktreeGroup): boolean {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 10px 12px 0;
-  padding: 8px;
+  margin: 0 12px 10px;
+  padding: 7px 9px;
   border: 1px solid var(--border-card);
   border-radius: 10px;
   background: var(--surface-section);

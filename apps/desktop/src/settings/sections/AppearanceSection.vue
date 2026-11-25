@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Moon, Monitor, Pipette, Plus, Sun } from '@lucide/vue'
+import { Check, LayoutGrid, List, Moon, Monitor, Pipette, Plus, Sun } from '@lucide/vue'
 import { UiButton, UiSelectField } from '@/components/ui'
 import ColorField from '@/components/ui/color-field.vue'
 import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
+import LivingWorkspaceFolder from '@/components/workspace/LivingWorkspaceFolder.vue'
+import { FOLDER_TONE_PALETTES } from '@/components/workspace/workspaceVisuals'
+import {
+  UI_WORKSPACE_FOLDER_TONES,
+  useUiPreferences,
+  type UiWorkspaceFolderTone,
+  type UiWorkspaceViewPreference,
+} from '@/composables/useUiPreferences'
 import { CUSTOM_ACCENT_KEY, DYNAMIC_ACCENT_KEY, useTheme, type AccentColor } from '@/composables/useTheme'
 import { getDynamicPaletteRef } from '@/composables/useDynamicPalette'
 import {
@@ -61,6 +69,28 @@ const {
   panelStyle,
   updatePanelStyle,
 } = usePanelStyles()
+
+const {
+  appearance: uiAppearance,
+  updateAppearance,
+} = useUiPreferences()
+
+const folderToneOptions = computed(() =>
+  UI_WORKSPACE_FOLDER_TONES.map((tone) => ({
+    tone,
+    swatch: FOLDER_TONE_PALETTES[tone].swatch,
+    ring: FOLDER_TONE_PALETTES[tone].swatchRing,
+    label: t(`uiPreferences.folderTone.${tone}`),
+  })),
+)
+
+function changeWorkspaceView(view: UiWorkspaceViewPreference): void {
+  void updateAppearance({ workspace_view: view })
+}
+
+function changeWorkspaceFolderTone(tone: UiWorkspaceFolderTone): void {
+  void updateAppearance({ workspace_folder_tone: tone })
+}
 
 // Monet "follow background" accent: palette is extracted by the global
 // watcher armed at startup; this section only renders its current state.
@@ -428,6 +458,76 @@ function resetBackgroundToDefault(): void {
         :settings="panelStyle"
         @update="updatePanelStyle($event)"
       />
+    </section>
+
+    <!-- ── 3.5 Workspace Visuals ────────────────────────────────────── -->
+    <section class="appearance-group" data-testid="appearance-workspace-visuals">
+      <div class="appearance-group-head">
+        <h3>{{ t('uiPreferences.workspaceVisualsTitle') }}</h3>
+        <p>{{ t('uiPreferences.workspaceVisualsHint') }}</p>
+      </div>
+
+      <div class="workspace-visuals-grid">
+        <div class="workspace-visuals-controls">
+          <div class="workspace-visual-block">
+            <span class="appearance-label">{{ t('uiPreferences.workspaceViewLabel') }}</span>
+            <div class="theme-options" role="radiogroup" :aria-label="t('uiPreferences.workspaceViewLabel')">
+              <button
+                type="button"
+                role="radio"
+                :aria-checked="uiAppearance.workspace_view === 'grid'"
+                :class="['theme-option', { active: uiAppearance.workspace_view === 'grid' }]"
+                data-testid="workspace-view-grid"
+                @click="changeWorkspaceView('grid')"
+              >
+                <LayoutGrid :size="15" />
+                <span>{{ t('uiPreferences.workspaceViewGrid') }}</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                :aria-checked="uiAppearance.workspace_view === 'list'"
+                :class="['theme-option', { active: uiAppearance.workspace_view === 'list' }]"
+                data-testid="workspace-view-list"
+                @click="changeWorkspaceView('list')"
+              >
+                <List :size="15" />
+                <span>{{ t('uiPreferences.workspaceViewList') }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="workspace-visual-block">
+            <span class="appearance-label">{{ t('uiPreferences.folderToneLabel') }}</span>
+            <div class="folder-tone-swatches" role="radiogroup" :aria-label="t('uiPreferences.folderToneLabel')">
+              <button
+                v-for="item in folderToneOptions"
+                :key="item.tone"
+                type="button"
+                role="radio"
+                :aria-checked="uiAppearance.workspace_folder_tone === item.tone"
+                class="folder-tone-chip"
+                :class="{ active: uiAppearance.workspace_folder_tone === item.tone }"
+                :style="{ '--tone-swatch': item.swatch, '--tone-ring': item.ring }"
+                :title="item.label"
+                :aria-label="item.label"
+                :data-testid="`folder-tone-${item.tone}`"
+                @click="changeWorkspaceFolderTone(item.tone)"
+              >
+                <span class="folder-tone-dot">
+                  <Check v-if="uiAppearance.workspace_folder_tone === item.tone" :size="12" class="folder-tone-check" />
+                </span>
+                <span class="folder-tone-name">{{ item.label }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="workspace-visuals-preview" data-testid="appearance-folder-mini-preview">
+          <LivingWorkspaceFolder compact :tone="uiAppearance.workspace_folder_tone" />
+          <span class="workspace-visuals-preview-caption">{{ t('uiPreferences.folderPreviewCaption') }}</span>
+        </div>
+      </div>
     </section>
 
     <!-- ── 4. Background ────────────────────────────────────────────── -->

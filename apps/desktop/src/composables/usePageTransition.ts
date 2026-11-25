@@ -51,6 +51,11 @@ export interface PageTransitionState {
  * is unavailable (headless SSR / minimal test environments), bypassing timed waits.
  */
 export function prefersReducedMotion(): boolean {
+  if (typeof document !== 'undefined') {
+    const explicit = document.documentElement?.dataset?.reducedMotion
+    if (explicit === 'true') return true
+    if (explicit === 'false') return false
+  }
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
     return true
   }

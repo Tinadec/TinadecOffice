@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -83,6 +83,22 @@ const showPromoteSplit = computed(() => {
 
 const promoteMenuOpen = ref(false)
 const promotePref = ref<SpatialPromotionPreference>(readSpatialPromotionPreference())
+
+function onUiPreferencesSpatialSync() {
+  promotePref.value = readSpatialPromotionPreference()
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('tinadec:ui-preferences-spatial-changed', onUiPreferencesSpatialSync)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('tinadec:ui-preferences-spatial-changed', onUiPreferencesSpatialSync)
+  }
+})
 
 watch(
   () => props.selectedIds.join(','),

@@ -218,6 +218,64 @@ export interface BatchApprovalDecisionResultDto {
   results: BatchApprovalDecisionItemResultDto[];
 }
 
+export type UiThemePreference = 'dark' | 'light' | 'system';
+export type UiAccentPreference =
+  | 'monochrome'
+  | 'warm'
+  | 'dynamic'
+  | 'custom'
+  | 'blue'
+  | 'green'
+  | 'orange'
+  | 'purple'
+  | 'pink'
+  | 'red'
+  | 'cyan'
+  | 'yellow';
+export type UiPanelEffectPreference = 'solid' | 'translucent' | 'blur';
+export type UiWorkspaceViewPreference = 'grid' | 'list';
+export type UiWorkspaceFolderTone = 'amber' | 'teal' | 'sky' | 'coral' | 'frost';
+export type UiWorkspaceDropAction = 'link' | 'copy' | 'ask';
+export type UiSpatialPromoteMode = 'merge' | 'split' | 'parent_children';
+export type UiReducedMotionPreference = 'system' | 'on' | 'off';
+
+export interface UiAppearancePreferencesDto {
+  theme: UiThemePreference;
+  accent: UiAccentPreference;
+  custom_accent_hex: string;
+  panel_effect: UiPanelEffectPreference;
+  workspace_view: UiWorkspaceViewPreference;
+  workspace_folder_tone: UiWorkspaceFolderTone;
+}
+
+export interface UiInteractionPreferencesDto {
+  workspace_drop_action: UiWorkspaceDropAction;
+  spatial_promote_mode: UiSpatialPromoteMode;
+  reduced_motion: UiReducedMotionPreference;
+}
+
+export interface UiPreferencesDocumentDto {
+  version: number;
+  appearance: UiAppearancePreferencesDto;
+  interaction: UiInteractionPreferencesDto;
+  file_path?: string | null;
+  content_hash?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PutUiPreferencesInput {
+  expected_content_hash?: string | null;
+  reset_defaults?: boolean;
+  appearance?: UiAppearancePreferencesDto;
+  interaction?: UiInteractionPreferencesDto;
+}
+
+export interface PatchUiPreferencesInput {
+  expected_content_hash?: string | null;
+  appearance?: Partial<UiAppearancePreferencesDto>;
+  interaction?: Partial<UiInteractionPreferencesDto>;
+}
+
 export interface PreAuthorizationDto {
   id: string;
   run_id: string;
@@ -3773,6 +3831,48 @@ export const api = {
   getConfigurationDocument: (storageId: string, documentId: string) => request<ConfigurationDocumentDto>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}`, { storageId }),
   validateConfigurationDocument: (storageId: string, documentId: string, text: string) => request<{ valid: boolean; diagnostics: Array<Record<string, unknown>> }>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}/validate`, { method: 'POST', storageId, body: JSON.stringify({ text }) }),
   saveConfigurationDocument: (storageId: string, documentId: string, text: string, hash: string) => request<ConfigurationDocumentDto>(`/api/v1/configuration/documents/${encodeURIComponent(documentId)}`, { method: 'PUT', storageId, headers: { 'if-match': `"${hash}"` }, body: JSON.stringify({ text }) }),
+  getUiPreferences: (options?: { signal?: AbortSignal }) =>
+    request<UiPreferencesDocumentDto>('/api/v1/preferences', {
+      storageId: 'user',
+      signal: options?.signal,
+      cache: 'no-store',
+    }),
+  putUiPreferences: (
+    input: PutUiPreferencesInput,
+    options?: { expectedHash?: string | null; signal?: AbortSignal },
+  ) =>
+    request<UiPreferencesDocumentDto>('/api/v1/preferences', {
+      method: 'PUT',
+      storageId: 'user',
+      signal: options?.signal,
+      ...(options?.expectedHash
+        ? { headers: { 'If-Match': `"${options.expectedHash.replace(/^"|"$/g, '')}"` } }
+        : {}),
+      body: JSON.stringify({
+        ...(input.expected_content_hash != null ? { expected_content_hash: input.expected_content_hash } : {}),
+        ...(typeof input.reset_defaults === 'boolean' ? { reset_defaults: input.reset_defaults } : {}),
+        ...(input.appearance ? { appearance: input.appearance } : {}),
+        ...(input.interaction ? { interaction: input.interaction } : {}),
+      }),
+    }),
+  patchUiPreferences: (
+    input: PatchUiPreferencesInput,
+    options?: { expectedHash?: string | null; signal?: AbortSignal },
+  ) =>
+    request<UiPreferencesDocumentDto>('/api/v1/preferences', {
+      method: 'PATCH',
+      storageId: 'user',
+      signal: options?.signal,
+      ...(options?.expectedHash
+        ? { headers: { 'If-Match': `"${options.expectedHash.replace(/^"|"$/g, '')}"` } }
+        : {}),
+      body: JSON.stringify({
+        ...(input.expected_content_hash != null ? { expected_content_hash: input.expected_content_hash } : {}),
+        ...(input.appearance ? { appearance: input.appearance } : {}),
+        ...(input.interaction ? { interaction: input.interaction } : {}),
+      }),
+    }),
+  uiPreferencesEventsUrl: () => `${gatewayUrl}/api/v1/preferences/events`,
   getToolSettingsSchema: () => request<ToolSettingsSchema>('/api/v1/tools/settings/schema'),
   getToolSettingsDefaults: () => request<ToolSettingsDocument>('/api/v1/tools/settings/defaults'),
   saveToolSettingsDefaults: (settings: Record<string, unknown>, revision: number, projectId?: string) => request<ToolSettingsDocument>(`/api/v1/tools/settings/defaults${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { method: 'PUT', headers: { 'if-match': `"${revision}"` }, body: JSON.stringify({ settings }) }),
@@ -6758,4 +6858,8 @@ export const planCoordinatorTasks = api.planCoordinatorTasks;
 export const applyCoordinatorPlan = api.applyCoordinatorPlan;
 export const getProjectAutopilot = api.getProjectAutopilot;
 export const updateProjectAutopilot = api.updateProjectAutopilot;
+export const getUiPreferences = api.getUiPreferences;
+export const putUiPreferences = api.putUiPreferences;
+export const patchUiPreferences = api.patchUiPreferences;
+export const uiPreferencesEventsUrl = api.uiPreferencesEventsUrl;
 

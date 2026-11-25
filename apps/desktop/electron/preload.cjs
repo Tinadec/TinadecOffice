@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   selectWorkspaceFolders: (title) => ipcRenderer.invoke('tinadec:select-workspace-folders', title),
   selectCompanionAvatarDirectory: (title) => ipcRenderer.invoke('tinadec:select-companion-avatar-directory', title),
   importWorkspaceFiles: (input) => ipcRenderer.invoke('tinadec:import-workspace-files', input),
+  revealInFolder: (targetPath) => ipcRenderer.invoke('tinadec:reveal-in-folder', targetPath),
   // Synchronous by necessity: the absolute path of a dropped file is only reachable during the
   // drop handler, and a Promise could not be awaited before the browser clears the FileList.
   // Empty when Electron gives no path (a synthetic File, a detached window without the bridge).

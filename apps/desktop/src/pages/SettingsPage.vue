@@ -14,6 +14,7 @@ import {
   Palette,
   PawPrint,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Terminal,
@@ -31,6 +32,7 @@ import StorageSection from '@/settings/sections/StorageSection.vue'
 import ModelCenterSection from '@/settings/sections/ModelCenterSection.vue'
 import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
 import AppearanceSection from '@/settings/sections/AppearanceSection.vue'
+import InteractionSection from '@/settings/sections/InteractionSection.vue'
 import PersonalSection from '@/settings/sections/PersonalSection.vue'
 import PetsSection from '@/settings/sections/PetsSection.vue'
 import ToolCenterSection from '@/settings/sections/ToolCenterSection.vue'
@@ -88,7 +90,7 @@ import { patchAgentCenterUi, readCenterUiState } from '@/settings/drafts/uiState
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
-type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'memoryContext' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'companionAvatar' | 'webAccess' | 'apiDocs' | 'about'
+type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'memoryContext' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'interaction' | 'companionAvatar' | 'webAccess' | 'apiDocs' | 'about'
 
 type AgentCenterTab = AgentCenterTabKey
 
@@ -228,7 +230,7 @@ let companionRequestSeq = 0
  * that should use the full available width.
  */
 const CENTERED_SECTIONS: ReadonlySet<SettingsSection> = new Set([
-  'personal', 'general', 'archive', 'appearance', 'about',
+  'personal', 'general', 'archive', 'appearance', 'interaction', 'about',
 ])
 const isCenteredSection = computed(() => CENTERED_SECTIONS.has(activeSection.value))
 
@@ -328,6 +330,7 @@ const navItems = computed(() => [
   { key: 'tinachat' as const, icon: MessagesSquare, label: t('tinaChat.manage') },
   { key: 'archive' as const, icon: Archive, label: t('settings.archiveTrash') },
   { key: 'appearance' as const, icon: Palette, label: t('settings.appearance') },
+  { key: 'interaction' as const, icon: SlidersHorizontal, label: t('settings.interaction') },
   { key: 'companionAvatar' as const, icon: PawPrint, label: t('settings.pets') },
   { key: 'webAccess' as const, icon: Globe, label: t('settings.webAccess') },
   { key: 'apiDocs' as const, icon: FileText, label: t('settings.apiDocs') },
@@ -820,6 +823,10 @@ import '../settings/settings.css'
 
         <template v-if="activeSection === 'appearance'">
           <AppearanceSection />
+        </template>
+
+        <template v-if="activeSection === 'interaction'">
+          <InteractionSection />
         </template>
 
         <template v-if="activeSection === 'companionAvatar'">

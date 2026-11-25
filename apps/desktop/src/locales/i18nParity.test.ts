@@ -83,6 +83,7 @@ const panelSources = import.meta.glob(
     './../settings/sections/GeneralSection.vue',
     './../settings/sections/MemoryContextSection.vue',
     './../settings/sections/AppearanceSection.vue',
+    './../settings/sections/InteractionSection.vue',
     './../settings/sections/ArchiveTrashSection.vue',
     './../settings/sections/PetsSection.vue',
     './../settings/sections/AboutSection.vue',
@@ -153,8 +154,7 @@ const panelSources = import.meta.glob(
     './../composables/useAgentActivity.ts',
     './../composables/useConnection.ts',
     './../components/WorkspaceEditorDialog.vue',
-    // The workspace card's body: its refusal sentences, drop outcomes and access block all speak,
-    // and nothing else would notice a dead key there (the card shell translates nothing).
+    './../components/workspace/LivingWorkspaceFolder.vue',
     './../components/WorkspaceRootsPanel.vue',
     './../components/AppSidebar.vue',
     './../components/chat/TerminalCallBlock.vue',

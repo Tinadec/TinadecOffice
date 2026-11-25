@@ -199,6 +199,9 @@ export function saveSpatialPromotionPreference(pref: SpatialPromotionPreference)
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem(SPATIAL_PROMOTION_PREF_STORAGE_KEY, JSON.stringify(normalized))
+      window.dispatchEvent(
+        new CustomEvent('tinadec:spatial-promotion-pref-changed', { detail: normalized }),
+      )
     }
   } catch {
     // Ignore storage quota errors in restricted webviews.

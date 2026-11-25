@@ -348,6 +348,26 @@ ipcMain.handle('tinadec:select-companion-avatar-directory', async (event, title)
 ipcMain.handle('tinadec:import-workspace-files', async (event, input) => {
   return require('./workspaceImport.cjs').importWorkspaceFiles(event, { mainWindow: getMainWindow(), trusted: isTrustedHostSender }, input);
 });
+ipcMain.handle('tinadec:reveal-in-folder', async (event, targetPath) => {
+  if (!isTrustedHostSender(event) || typeof targetPath !== 'string' || !targetPath.trim()) {
+    return false;
+  }
+  try {
+    const fs = require('node:fs');
+    const resolved = path.resolve(targetPath.trim());
+    let stat = null;
+    try { stat = fs.statSync(resolved); } catch { stat = null; }
+    if (stat && stat.isFile()) {
+      shell.showItemInFolder(resolved);
+      return true;
+    }
+    const dir = stat && stat.isDirectory() ? resolved : path.dirname(resolved);
+    const err = await shell.openPath(dir);
+    return !err;
+  } catch {
+    return false;
+  }
+});
 
 function appConfigSnapshot() {
   return { ...readDesktopConfig(), storage: {
