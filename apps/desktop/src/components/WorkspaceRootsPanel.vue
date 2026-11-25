@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
@@ -29,6 +29,13 @@ import LivingWorkspaceFolder, {
   type DroppedWorkspaceEntry,
   type WorkspaceDropBatchPayload,
 } from '@/components/workspace/LivingWorkspaceFolder.vue'
+import {
+  loadWorkspaceItemOrder,
+  mergeReorderedVisibleKeys,
+  reconcileWorkspaceItemOrder,
+  saveWorkspaceItemOrder,
+  type WorkspaceUnifiedItem,
+} from '@/components/workspace/workspaceCardOrder'
 import { buildWorkspaceMediaThumbUrl } from '@/components/workspace/workspaceVisuals'
 
 const WORKSPACE_ROOTS_KEY = 'workspace-roots'
@@ -48,11 +55,79 @@ const { notify, dismissByKey } = useNotifications()
 const uiPreferences = useUiPreferences()
 const c = homeController
 
+const panelRootRef = ref<HTMLElement | null>(null)
+
 const project = computed(() => c.currentProject.value)
 const roots = computed<WorkspaceRoot[]>(() => project.value?.roots ?? [])
 const files = computed<WorkspaceFileGrant[]>(() => project.value?.files ?? [])
 const primaryId = computed(() => project.value?.primary_root_id ?? roots.value[0]?.id ?? null)
 const busy = computed(() => Boolean(c.busy?.value))
+
+const savedOrderKeys = ref<string[]>([])
+const highlightedItemKey = ref<string | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+let activeOrderProjectId: string | null = null
+
+function clearHighlightTimer(): void {
+  if (highlightTimer !== null) {
+    clearTimeout(highlightTimer)
+    highlightTimer = null
+  }
+}
+
+watch(
+  () => project.value?.id ?? null,
+  (projectId) => {
+    activeOrderProjectId = projectId
+    savedOrderKeys.value = loadWorkspaceItemOrder(projectId)
+    clearHighlightTimer()
+    highlightedItemKey.value = null
+  },
+  { immediate: true, flush: 'sync' },
+)
+
+const unifiedItems = computed<WorkspaceUnifiedItem[]>(() =>
+  reconcileWorkspaceItemOrder(roots.value, files.value, savedOrderKeys.value),
+)
+
+watch(unifiedItems, (items) => {
+  const projectId = project.value?.id ?? null
+  if (!projectId || projectId !== activeOrderProjectId) return
+  if (savedOrderKeys.value.length === 0) return
+  const nextKeys = items.map((item) => item.key)
+  const unchangedOrder =
+    nextKeys.length === savedOrderKeys.value.length &&
+    nextKeys.every((key, idx) => key === savedOrderKeys.value[idx])
+  if (!unchangedOrder) {
+    savedOrderKeys.value = nextKeys
+    saveWorkspaceItemOrder(projectId, nextKeys)
+  }
+})
+
+function handleCardReorder(reorderedVisibleKeys: string[]): void {
+  const currentKeys = unifiedItems.value.map((item) => item.key)
+  const nextOrder = mergeReorderedVisibleKeys(currentKeys, reorderedVisibleKeys)
+  savedOrderKeys.value = nextOrder
+  saveWorkspaceItemOrder(project.value?.id, nextOrder)
+}
+
+function handleSelectCard(item: WorkspaceUnifiedItem): void {
+  clearHighlightTimer()
+  highlightedItemKey.value = item.key
+  highlightTimer = setTimeout(() => {
+    highlightedItemKey.value = null
+    highlightTimer = null
+  }, 1400)
+
+  void nextTick(() => {
+    const rootEl = panelRootRef.value
+    if (!rootEl) return
+    const target = Array.from(
+      rootEl.querySelectorAll<HTMLElement>('[data-workspace-item-key]'),
+    ).find((el) => el.dataset.workspaceItemKey === item.key)
+    target?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+  })
+}
 
 const picking = ref(false)
 const result = ref<{
@@ -411,6 +486,7 @@ watch(canAccessBackend, (ready, wasReady) => {
 })
 
 onBeforeUnmount(() => {
+  clearHighlightTimer()
   ++exposureRead
   dismissByKey(WORKSPACE_ROOTS_KEY)
 })
@@ -477,7 +553,7 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
 </script>
 
 <template>
-  <div class="ws-root">
+  <div ref="panelRootRef" class="ws-root">
     <header class="ws-header">
       <h2 class="ws-title">{{ t('workspaceRoots.title') }}</h2>
       <button
@@ -507,11 +583,14 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
         <LivingWorkspaceFolder
           :roots="roots"
           :files="files"
+          :ordered-items="unifiedItems"
           :primary-root-id="primaryId"
           :tone="uiPreferences.appearance.workspace_folder_tone"
           :drop-action="uiPreferences.interaction.workspace_drop_action"
           :disabled="busy"
           @drop-batch="handleFolderDropBatch"
+          @select-card="handleSelectCard"
+          @reorder-cards="handleCardReorder"
         />
 
         <div class="ws-pill-actions">
@@ -605,8 +684,8 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
         </div>
       </section>
 
-      <!-- Zone 2: Middle Content View (auto-switched strictly by appearance.workspace_view) -->
-      <section v-if="roots.length > 0 || files.length > 0" class="ws-items-zone">
+      <!-- Zone 2: Middle Content View (auto-switched strictly by appearance.workspace_view, unified item order) -->
+      <section v-if="unifiedItems.length > 0" class="ws-items-zone">
         <!-- GRID VIEW (default) -->
         <div
           v-if="uiPreferences.appearance.workspace_view === 'grid'"
@@ -614,167 +693,166 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
           data-testid="workspace-items-grid"
         >
           <article
-            v-for="root in roots"
-            :key="`root-${root.id}`"
+            v-for="item in unifiedItems"
+            :key="item.key"
             class="ws-grid-card"
-            :class="{ 'is-primary': root.id === primaryId }"
+            :class="{
+              'is-primary': item.kind === 'root' && item.root.id === primaryId,
+              'is-highlighted': highlightedItemKey === item.key,
+            }"
             data-testid="workspace-grid-card"
-            :title="root.path"
+            :data-workspace-item-key="item.key"
+            :title="item.kind === 'root' ? item.root.path : item.file.path"
           >
-            <div class="ws-grid-card-actions">
-              <button
-                v-if="root.id !== primaryId"
-                type="button"
-                class="ws-mini-action"
-                :disabled="busy"
-                :title="t('workspaceRoots.setPrimary')"
-                :aria-label="t('workspaceRoots.setPrimary')"
-                @click="setPrimary(root)"
-              >
-                <Star :size="12" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="ws-mini-action is-danger"
-                :disabled="busy || !!removeBlockedReason(root)"
-                :title="removeBlockedReason(root) ?? t('workspaceRoots.remove', { name: folderName(root) })"
-                :aria-label="
-                  removeBlockedReason(root)
-                    ? `${t('workspaceRoots.remove', { name: folderName(root) })} — ${removeBlockedReason(root)}`
-                    : t('workspaceRoots.remove', { name: folderName(root) })
-                "
-                @click="remove(root)"
-              >
-                <Trash2 :size="12" aria-hidden="true" />
-              </button>
-            </div>
+            <template v-if="item.kind === 'root'">
+              <div class="ws-grid-card-actions">
+                <button
+                  v-if="item.root.id !== primaryId"
+                  type="button"
+                  class="ws-mini-action"
+                  :disabled="busy"
+                  :title="t('workspaceRoots.setPrimary')"
+                  :aria-label="t('workspaceRoots.setPrimary')"
+                  @click="setPrimary(item.root)"
+                >
+                  <Star :size="12" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="ws-mini-action is-danger"
+                  :disabled="busy || !!removeBlockedReason(item.root)"
+                  :title="removeBlockedReason(item.root) ?? t('workspaceRoots.remove', { name: folderName(item.root) })"
+                  :aria-label="
+                    removeBlockedReason(item.root)
+                      ? `${t('workspaceRoots.remove', { name: folderName(item.root) })} — ${removeBlockedReason(item.root)}`
+                      : t('workspaceRoots.remove', { name: folderName(item.root) })
+                  "
+                  @click="remove(item.root)"
+                >
+                  <Trash2 :size="12" aria-hidden="true" />
+                </button>
+              </div>
 
-            <FileTypeVisualIcon
-              kind="folder"
-              :path="root.path"
-              :is-primary="root.id === primaryId"
-              :tone="uiPreferences.appearance.workspace_folder_tone"
-              :size="46"
-            />
-            <span class="ws-grid-card-name">{{ folderName(root) }}</span>
-            <span v-if="root.id === primaryId" class="ws-grid-card-tag">
-              {{ t('workspaceRoots.primary') }}
-            </span>
-          </article>
+              <FileTypeVisualIcon
+                kind="folder"
+                :path="item.root.path"
+                :is-primary="item.root.id === primaryId"
+                :tone="uiPreferences.appearance.workspace_folder_tone"
+                :size="46"
+              />
+              <span class="ws-grid-card-name">{{ folderName(item.root) }}</span>
+              <span v-if="item.root.id === primaryId" class="ws-grid-card-tag">
+                {{ t('workspaceRoots.primary') }}
+              </span>
+            </template>
 
-          <article
-            v-for="file in files"
-            :key="`file-${file.id}`"
-            class="ws-grid-card"
-            data-testid="workspace-grid-card"
-            :title="file.path"
-          >
-            <div class="ws-grid-card-actions">
-              <button
-                type="button"
-                class="ws-mini-action"
-                :disabled="busy"
-                :title="t('workspaceRoots.attachFile')"
-                :aria-label="t('workspaceRoots.attachFile')"
-                @click="attachBoundFile(file)"
-              >
-                <Paperclip :size="12" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="ws-mini-action is-danger"
-                :disabled="busy"
-                :title="t('workspaceRoots.removeFile', { name: basenameFromPath(file.path) })"
-                :aria-label="t('workspaceRoots.removeFile', { name: basenameFromPath(file.path) })"
-                @click="removeFile(file)"
-              >
-                <Trash2 :size="12" aria-hidden="true" />
-              </button>
-            </div>
+            <template v-else>
+              <div class="ws-grid-card-actions">
+                <button
+                  type="button"
+                  class="ws-mini-action"
+                  :disabled="busy"
+                  :title="t('workspaceRoots.attachFile')"
+                  :aria-label="t('workspaceRoots.attachFile')"
+                  @click="attachBoundFile(item.file)"
+                >
+                  <Paperclip :size="12" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="ws-mini-action is-danger"
+                  :disabled="busy"
+                  :title="t('workspaceRoots.removeFile', { name: basenameFromPath(item.file.path) })"
+                  :aria-label="t('workspaceRoots.removeFile', { name: basenameFromPath(item.file.path) })"
+                  @click="removeFile(item.file)"
+                >
+                  <Trash2 :size="12" aria-hidden="true" />
+                </button>
+              </div>
 
-            <FileTypeVisualIcon kind="file" :path="file.path" :size="46" />
-            <span class="ws-grid-card-name">{{ basenameFromPath(file.path) }}</span>
+              <FileTypeVisualIcon kind="file" :path="item.file.path" :size="46" />
+              <span class="ws-grid-card-name">{{ basenameFromPath(item.file.path) }}</span>
+            </template>
           </article>
         </div>
 
         <!-- LIST VIEW -->
         <ul v-else class="ws-items-list" data-testid="workspace-items-list">
           <li
-            v-for="root in roots"
-            :key="`list-root-${root.id}`"
+            v-for="item in unifiedItems"
+            :key="`list-${item.key}`"
             class="ws-list-row"
+            :class="{ 'is-highlighted': highlightedItemKey === item.key }"
             data-testid="workspace-list-row"
+            :data-workspace-item-key="item.key"
           >
-            <FileTypeVisualIcon
-              kind="folder"
-              :path="root.path"
-              :is-primary="root.id === primaryId"
-              :tone="uiPreferences.appearance.workspace_folder_tone"
-              :size="32"
-            />
-            <span class="ws-root-text">
-              <span class="ws-root-name">{{ folderName(root) }}</span>
-              <span class="ws-root-path" :title="root.path">{{ root.path }}</span>
-            </span>
-            <span v-if="root.id === primaryId" class="ws-primary-badge">
-              <Star :size="11" aria-hidden="true" />{{ t('workspaceRoots.primary') }}
-            </span>
-            <button
-              v-else
-              type="button"
-              class="ws-row-action"
-              :disabled="busy"
-              @click="setPrimary(root)"
-            >
-              {{ t('workspaceRoots.setPrimary') }}
-            </button>
-            <button
-              type="button"
-              class="ws-row-remove"
-              :disabled="busy || !!removeBlockedReason(root)"
-              :title="removeBlockedReason(root) ?? t('workspaceRoots.remove', { name: folderName(root) })"
-              :aria-label="
-                removeBlockedReason(root)
-                  ? `${t('workspaceRoots.remove', { name: folderName(root) })} — ${removeBlockedReason(root)}`
-                  : t('workspaceRoots.remove', { name: folderName(root) })
-              "
-              @click="remove(root)"
-            >
-              <Trash2 :size="14" aria-hidden="true" />
-            </button>
-          </li>
+            <template v-if="item.kind === 'root'">
+              <FileTypeVisualIcon
+                kind="folder"
+                :path="item.root.path"
+                :is-primary="item.root.id === primaryId"
+                :tone="uiPreferences.appearance.workspace_folder_tone"
+                :size="32"
+              />
+              <span class="ws-root-text">
+                <span class="ws-root-name">{{ folderName(item.root) }}</span>
+                <span class="ws-root-path" :title="item.root.path">{{ item.root.path }}</span>
+              </span>
+              <span v-if="item.root.id === primaryId" class="ws-primary-badge">
+                <Star :size="11" aria-hidden="true" />{{ t('workspaceRoots.primary') }}
+              </span>
+              <button
+                v-else
+                type="button"
+                class="ws-row-action"
+                :disabled="busy"
+                @click="setPrimary(item.root)"
+              >
+                {{ t('workspaceRoots.setPrimary') }}
+              </button>
+              <button
+                type="button"
+                class="ws-row-remove"
+                :disabled="busy || !!removeBlockedReason(item.root)"
+                :title="removeBlockedReason(item.root) ?? t('workspaceRoots.remove', { name: folderName(item.root) })"
+                :aria-label="
+                  removeBlockedReason(item.root)
+                    ? `${t('workspaceRoots.remove', { name: folderName(item.root) })} — ${removeBlockedReason(item.root)}`
+                    : t('workspaceRoots.remove', { name: folderName(item.root) })
+                "
+                @click="remove(item.root)"
+              >
+                <Trash2 :size="14" aria-hidden="true" />
+              </button>
+            </template>
 
-          <li
-            v-for="file in files"
-            :key="`list-file-${file.id}`"
-            class="ws-list-row"
-            data-testid="workspace-list-row"
-          >
-            <FileTypeVisualIcon kind="file" :path="file.path" :size="32" />
-            <span class="ws-root-text">
-              <span class="ws-root-name">{{ basenameFromPath(file.path) }}</span>
-              <span class="ws-root-path" :title="file.path">{{ file.path }}</span>
-            </span>
-            <button
-              type="button"
-              class="ws-row-remove"
-              :disabled="busy"
-              :title="t('workspaceRoots.attachFile')"
-              :aria-label="t('workspaceRoots.attachFile')"
-              @click="attachBoundFile(file)"
-            >
-              <Paperclip :size="13" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              class="ws-row-remove"
-              :disabled="busy"
-              :title="t('workspaceRoots.removeFile', { name: basenameFromPath(file.path) })"
-              :aria-label="t('workspaceRoots.removeFile', { name: basenameFromPath(file.path) })"
-              @click="removeFile(file)"
-            >
-              <Trash2 :size="14" aria-hidden="true" />
-            </button>
+            <template v-else>
+              <FileTypeVisualIcon kind="file" :path="item.file.path" :size="32" />
+              <span class="ws-root-text">
+                <span class="ws-root-name">{{ basenameFromPath(item.file.path) }}</span>
+                <span class="ws-root-path" :title="item.file.path">{{ item.file.path }}</span>
+              </span>
+              <button
+                type="button"
+                class="ws-row-remove"
+                :disabled="busy"
+                :title="t('workspaceRoots.attachFile')"
+                :aria-label="t('workspaceRoots.attachFile')"
+                @click="attachBoundFile(item.file)"
+              >
+                <Paperclip :size="13" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="ws-row-remove"
+                :disabled="busy"
+                :title="t('workspaceRoots.removeFile', { name: basenameFromPath(item.file.path) })"
+                :aria-label="t('workspaceRoots.removeFile', { name: basenameFromPath(item.file.path) })"
+                @click="removeFile(item.file)"
+              >
+                <Trash2 :size="14" aria-hidden="true" />
+              </button>
+            </template>
           </li>
         </ul>
       </section>
@@ -1065,7 +1143,7 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
   border: 1px solid transparent;
   background: var(--surface-section);
   text-align: center;
-  transition: background-color 140ms ease, border-color 140ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 220ms ease;
 }
 
 .ws-grid-card:hover,
@@ -1076,6 +1154,31 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
 
 .ws-grid-card.is-primary {
   border-color: color-mix(in srgb, #f59e0b 26%, transparent);
+}
+
+@keyframes ws-item-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary) 42%, transparent);
+  }
+  45% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 28%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  }
+}
+
+.ws-grid-card.is-highlighted,
+.ws-list-row.is-highlighted {
+  background: var(--surface-raised);
+  border-color: color-mix(in srgb, var(--accent-primary) 64%, var(--border-default));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 24%, transparent);
+  animation: ws-item-highlight-pulse 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root[data-reduced-motion='true'] .ws-grid-card.is-highlighted,
+:root[data-reduced-motion='true'] .ws-list-row.is-highlighted {
+  animation: none;
 }
 
 .ws-grid-card-name {
@@ -1157,7 +1260,9 @@ async function attachBoundFile(file: WorkspaceFileGrant): Promise<void> {
   min-width: 0;
   padding: 7px 9px;
   border-radius: 10px;
+  border: 1px solid transparent;
   background: var(--surface-section);
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 220ms ease;
 }
 
 .ws-root-text {

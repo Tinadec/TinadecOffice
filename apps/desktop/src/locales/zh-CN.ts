@@ -6500,6 +6500,8 @@ agentAvatarSaveFailed: '形象保存失败',
   },
   workspaceFolder: {
     restHint: '拖入文件或文件夹即可收纳授权',
+    cardHoverHint: '{name} · 点击定位 · 左右拖动排序',
+    cardDraggingHint: '拖动调整摆放顺序 · 松手落位',
     dragHintLink: '松手即可关联到工作空间（按住 Alt 改为复制）',
     dragHintCopy: '松手将复制到主项目目录（按住 Alt 改为关联）',
     dragHintAsk: '松手后选择直接关联或复制到主项目目录',

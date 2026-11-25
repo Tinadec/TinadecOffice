@@ -19,6 +19,7 @@ import {
 } from '@/composables/useUiPreferences'
 import { __resetThemeForTests } from '@/composables/useTheme'
 import { __resetPanelStylesForTests } from '@/composables/usePanelStyles'
+import LivingWorkspaceFolder from '@/components/workspace/LivingWorkspaceFolder.vue'
 
 const mocks = vi.hoisted(() => ({
   listProjectExposures: vi.fn<() => Promise<unknown[]>>(),
@@ -149,6 +150,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   wrappers.splice(0).forEach((w) => w.unmount())
   __resetUiPreferencesForTests()
   __resetThemeForTests()
@@ -322,5 +324,92 @@ describe('WorkspaceRootsPanel & LivingWorkspaceFolder behavior', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="workspace-drop-ask-bubble"]').exists()).toBe(false)
     expect(mocks.importWorkspaceFiles).toHaveBeenCalledWith(['C:/docs/spec.pdf'])
+  })
+
+  it('loads persisted mixed item order from localStorage and renders unified root+file sequence in both grid and list views', async () => {
+    localStorage.setItem(
+      'tinadec:workspace-item-order:proj-1',
+      JSON.stringify(['file:file-doc', 'root:root-1', 'file:file-img']),
+    )
+
+    const wrapper = mountWorkspacePanel()
+    await flushPromises()
+
+    const pocketKeys = wrapper
+      .findAll('[data-testid="living-folder-pocket"] [data-pocket-card-key]')
+      .map((el) => el.attributes('data-pocket-card-key'))
+    expect(pocketKeys).toEqual(['file:file-doc', 'root:root-1', 'file:file-img'])
+
+    const gridKeys = wrapper
+      .findAll('[data-testid="workspace-grid-card"]')
+      .map((el) => el.attributes('data-workspace-item-key'))
+    expect(gridKeys).toEqual(['file:file-doc', 'root:root-1', 'file:file-img'])
+
+    const prefs = useUiPreferences()
+    await prefs.updateAppearance({ workspace_view: 'list' })
+    await flushPromises()
+
+    const listKeys = wrapper
+      .findAll('[data-testid="workspace-list-row"]')
+      .map((el) => el.attributes('data-workspace-item-key'))
+    expect(listKeys).toEqual(['file:file-doc', 'root:root-1', 'file:file-img'])
+  })
+
+  it('synchronizes Zone 2 DOM order and persists to localStorage when LivingWorkspaceFolder emits reorder-cards', async () => {
+    const wrapper = mountWorkspacePanel()
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('[data-testid="workspace-grid-card"]')
+        .map((el) => el.attributes('data-workspace-item-key')),
+    ).toEqual(['root:root-1', 'file:file-img', 'file:file-doc'])
+
+    const folderComponent = wrapper.findComponent(LivingWorkspaceFolder)
+    folderComponent.vm.$emit('reorder-cards', ['file:file-img', 'file:file-doc', 'root:root-1'])
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('[data-testid="workspace-grid-card"]')
+        .map((el) => el.attributes('data-workspace-item-key')),
+    ).toEqual(['file:file-img', 'file:file-doc', 'root:root-1'])
+
+    const persisted = JSON.parse(localStorage.getItem('tinadec:workspace-item-order:proj-1') ?? '[]')
+    expect(persisted).toEqual(['file:file-img', 'file:file-doc', 'root:root-1'])
+  })
+
+  it('highlights matching Zone 2 item, calls scrollIntoView on select-card, and updates live hover caption', async () => {
+    vi.useFakeTimers()
+    const scrollSpy = vi.fn()
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scrollSpy
+
+    try {
+      const wrapper = mountWorkspacePanel()
+      await flushPromises()
+
+      const docPocketBtn = wrapper.get('[data-pocket-card-key="file:file-doc"]')
+      await docPocketBtn.trigger('mouseenter')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="living-folder-caption"]').text()).toContain('guide.md')
+
+      await docPocketBtn.trigger('click')
+      await flushPromises()
+
+      const docGridCard = wrapper.get('[data-workspace-item-key="file:file-doc"]')
+      const rootGridCard = wrapper.get('[data-workspace-item-key="root:root-1"]')
+      expect(docGridCard.classes()).toContain('is-highlighted')
+      expect(rootGridCard.classes()).not.toContain('is-highlighted')
+      expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' })
+
+      vi.advanceTimersByTime(1450)
+      await flushPromises()
+      expect(wrapper.get('[data-workspace-item-key="file:file-doc"]').classes()).not.toContain(
+        'is-highlighted',
+      )
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    }
   })
 })

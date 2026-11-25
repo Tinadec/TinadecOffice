@@ -6503,6 +6503,8 @@ agentAvatarSaveFailed: 'Could not save the avatar',
   },
   workspaceFolder: {
     restHint: 'Drop folders or files to authorize them in this workspace',
+    cardHoverHint: '{name} · Click to locate · Drag left/right to reorder',
+    cardDraggingHint: 'Drag to reorder · Release to place',
     dragHintLink: 'Release to link into workspace (hold Alt to copy instead)',
     dragHintCopy: 'Release to copy into primary folder (hold Alt to link instead)',
     dragHintAsk: 'Release to choose Link or Copy into project',

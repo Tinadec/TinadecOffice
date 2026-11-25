@@ -7397,6 +7397,8 @@ agentAvatarSaveFailed: "イメージを保存できませんでした",
   },
   workspaceFolder: {
     restHint: "フォルダーやファイルをドロップしてワークスペースに関連付け",
+    cardHoverHint: "{name} · クリックで移動 · 左右ドラッグで並べ替え",
+    cardDraggingHint: "ドラッグして順序を調整 · 離して確定",
     dragHintLink: "離すとワークスペースに関連付け（Alt でコピーに切替）",
     dragHintCopy: "離すとメインフォルダーへコピー（Alt で関連付けに切替）",
     dragHintAsk: "離した後に関連付けまたはコピーを選択",

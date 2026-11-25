@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, useId } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Copy, Link2, Star, X } from '@lucide/vue'
 import { basenameFromPath } from '@/format'
 import type { WorkspaceFileGrant, WorkspaceRoot } from '@/lib/workspaces'
+import { useTheme } from '@/composables/useTheme'
 import {
   useUiPreferences,
   type UiWorkspaceDropAction,
   type UiWorkspaceFolderTone,
 } from '@/composables/useUiPreferences'
 import {
+  createLivingFolderEngine,
+  type LivingFolderCardDescriptor,
+  type LivingFolderEngineHandle,
+  type LivingFolderEngineState,
+} from './LivingFolderThreeEngine'
+import {
+  reconcileWorkspaceItemOrder,
+  type WorkspaceUnifiedItem,
+} from './workspaceCardOrder'
+import {
   FOLDER_TONE_PALETTES,
   buildWorkspaceMediaThumbUrl,
   classifyWorkspaceFileVisual,
   fileBadgeLabel,
-  type FileVisualCategory,
 } from './workspaceVisuals'
 
 export interface DroppedWorkspaceEntry {
@@ -31,6 +41,7 @@ export interface WorkspaceDropBatchPayload {
 const props = withDefaults(defineProps<{
   roots?: WorkspaceRoot[]
   files?: WorkspaceFileGrant[]
+  orderedItems?: WorkspaceUnifiedItem[]
   primaryRootId?: string | null
   tone?: UiWorkspaceFolderTone
   dropAction?: UiWorkspaceDropAction
@@ -39,6 +50,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   roots: () => [],
   files: () => [],
+  orderedItems: undefined,
   primaryRootId: null,
   tone: undefined,
   dropAction: undefined,
@@ -48,13 +60,24 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'drop-batch': [payload: WorkspaceDropBatchPayload]
+  'select-card': [item: WorkspaceUnifiedItem]
+  'reorder-cards': [reorderedVisibleKeys: string[]]
 }>()
 
 const { t } = useI18n()
 const uid = useId()
 const prefs = useUiPreferences()
+const { theme } = useTheme()
+
+const stageRef = ref<HTMLElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const webglActive = ref(false)
+let engine: LivingFolderEngineHandle | null = null
 
 const hovered = ref(false)
+const hoveredCard = ref<LivingFolderCardDescriptor | null>(null)
+const cardDragging = ref(false)
+
 const dragDepth = ref(0)
 const dragging = computed(() => dragDepth.value > 0 && !props.compact && !props.disabled)
 const altPressed = ref(false)
@@ -67,6 +90,23 @@ const pendingAsk = ref<{
 } | null>(null)
 
 const failedThumbs = reactive<Record<string, boolean>>({})
+
+const systemPrefersDark = ref(
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : true,
+)
+let colorSchemeMql: MediaQueryList | null = null
+
+function onColorSchemeChange(event: MediaQueryListEvent): void {
+  systemPrefersDark.value = event.matches
+}
+
+const resolvedTheme = computed<'dark' | 'light'>(() => {
+  if (theme.value === 'light') return 'light'
+  if (theme.value === 'dark') return 'dark'
+  return systemPrefersDark.value ? 'dark' : 'light'
+})
 
 const effectiveTone = computed<UiWorkspaceFolderTone>(
   () => props.tone ?? prefs.appearance.workspace_folder_tone ?? 'amber',
@@ -101,17 +141,6 @@ const stageVars = computed<Record<string, string>>(() => {
   }
 })
 
-interface PocketCardItem {
-  key: string
-  kind: 'folder' | 'photo' | 'doc' | 'code'
-  category: FileVisualCategory
-  label: string
-  badge: string
-  thumbUrl: string
-  isPrimary: boolean
-  accentColor: string
-}
-
 const DOC_BADGE_COLORS: Record<string, string> = {
   pdf: '#dc2626',
   doc: '#0284c7',
@@ -123,96 +152,139 @@ const DOC_BADGE_COLORS: Record<string, string> = {
   generic: '#57534e',
 }
 
-const pocketCards = computed<PocketCardItem[]>(() => {
-  if (props.compact && props.roots.length === 0 && props.files.length === 0) {
+const effectiveOrderedItems = computed<WorkspaceUnifiedItem[]>(() => {
+  if (props.orderedItems !== undefined) {
+    return props.orderedItems
+  }
+  return reconcileWorkspaceItemOrder(props.roots, props.files, [])
+})
+
+const primaryRootResolved = computed<string | null>(
+  () => props.primaryRootId ?? props.roots[0]?.id ?? null,
+)
+
+const cardDescriptors = computed<LivingFolderCardDescriptor[]>(() => {
+  const ordered = effectiveOrderedItems.value
+  if (ordered.length === 0) {
+    if (props.compact) {
+      return [
+        {
+          key: 'preview-photo',
+          kind: 'photo',
+          category: 'image',
+          label: 'cover.png',
+          badge: 'IMG',
+          thumbUrl: '',
+          isPrimary: false,
+          accentColor: '#0ea5e9',
+          sourceItem: null,
+        },
+        {
+          key: 'preview-doc',
+          kind: 'doc',
+          category: 'pdf',
+          label: 'spec.pdf',
+          badge: 'PDF',
+          thumbUrl: '',
+          isPrimary: false,
+          accentColor: '#dc2626',
+          sourceItem: null,
+        },
+        {
+          key: 'preview-code',
+          kind: 'code',
+          category: 'code',
+          label: 'index.ts',
+          badge: 'TS',
+          thumbUrl: '',
+          isPrimary: false,
+          accentColor: '#4f46e5',
+          sourceItem: null,
+        },
+      ]
+    }
     return [
       {
-        key: 'preview-photo',
-        kind: 'photo',
-        category: 'image',
-        label: 'cover.png',
-        badge: 'IMG',
+        key: 'empty-guide',
+        kind: 'empty',
+        category: 'generic',
+        label: t('workspaceFolder.emptyGuideCard'),
+        badge: '',
         thumbUrl: '',
         isPrimary: false,
-        accentColor: '#0ea5e9',
-      },
-      {
-        key: 'preview-doc',
-        kind: 'doc',
-        category: 'pdf',
-        label: 'spec.pdf',
-        badge: 'PDF',
-        thumbUrl: '',
-        isPrimary: false,
-        accentColor: '#dc2626',
-      },
-      {
-        key: 'preview-code',
-        kind: 'code',
-        category: 'code',
-        label: 'index.ts',
-        badge: 'TS',
-        thumbUrl: '',
-        isPrimary: false,
-        accentColor: '#4f46e5',
+        accentColor: palette.value.swatch,
+        sourceItem: null,
       },
     ]
   }
 
-  const items: PocketCardItem[] = []
-  const fileSlice = props.files.slice(0, props.roots.length > 0 ? 4 : 5)
-  const remainingSlots = Math.max(0, 5 - fileSlice.length)
-  const rootSlice = props.roots.slice(0, remainingSlots)
+  return ordered.slice(0, 6).map((item): LivingFolderCardDescriptor => {
+    if (item.kind === 'root') {
+      return {
+        key: item.key,
+        kind: 'folder',
+        category: 'folder',
+        label: basenameFromPath(item.root.path),
+        badge: 'DIR',
+        thumbUrl: '',
+        isPrimary: item.root.id === primaryRootResolved.value,
+        accentColor: palette.value.swatch,
+        sourceItem: item,
+      }
+    }
 
-  for (const root of rootSlice) {
-    items.push({
-      key: `root:${root.id}`,
-      kind: 'folder',
-      category: 'folder',
-      label: basenameFromPath(root.path),
-      badge: 'DIR',
-      thumbUrl: '',
-      isPrimary: root.id === (props.primaryRootId ?? props.roots[0]?.id ?? null),
-      accentColor: palette.value.swatch,
-    })
-  }
-
-  for (const file of fileSlice) {
-    const cat = classifyWorkspaceFileVisual(file.path)
-    const key = `file:${file.id}`
-    const kind: PocketCardItem['kind'] =
+    const cat = classifyWorkspaceFileVisual(item.file.path)
+    const kind: LivingFolderCardDescriptor['kind'] =
       cat === 'image'
         ? 'photo'
         : cat === 'code' || cat === 'config'
           ? 'code'
           : 'doc'
-    items.push({
-      key,
+
+    return {
+      key: item.key,
       kind,
       category: cat,
-      label: basenameFromPath(file.path),
-      badge: fileBadgeLabel(file.path, cat),
-      thumbUrl: cat === 'image' && !failedThumbs[key] ? buildWorkspaceMediaThumbUrl(file.path) : '',
+      label: basenameFromPath(item.file.path),
+      badge: fileBadgeLabel(item.file.path, cat),
+      thumbUrl: cat === 'image' && !failedThumbs[item.key] ? buildWorkspaceMediaThumbUrl(item.file.path) : '',
       isPrimary: false,
       accentColor: DOC_BADGE_COLORS[cat] ?? '#57534e',
-    })
-  }
-
-  return items.slice(0, 5)
+      sourceItem: item,
+    }
+  })
 })
+
+const fallbackCards = computed<LivingFolderCardDescriptor[]>(() =>
+  cardDescriptors.value.filter((card) => card.kind !== 'empty'),
+)
+
+function buildEngineState(): LivingFolderEngineState {
+  return {
+    tone: effectiveTone.value,
+    theme: resolvedTheme.value,
+    cards: cardDescriptors.value,
+    hovered: hovered.value,
+    externalDragging: dragging.value,
+    altInvertActive: dragging.value && altPressed.value,
+    compact: props.compact,
+    disabled: props.disabled,
+    reducedMotion: reducedMotion.value,
+    emptyGuideLabel: t('workspaceFolder.emptyGuideCard'),
+  }
+}
 
 function cardSlotStyle(index: number, total: number): Record<string, string> {
   const center = (total - 1) / 2
   const offset = total <= 1 ? 0 : index - center
-  const spread = props.compact ? 22 : 34
+  const spread = props.compact ? 20 : 28
   const baseX = offset * spread
-  const baseY = Math.abs(offset) * (props.compact ? 3.5 : 5)
-  const baseRot = offset * 4.2
-  const hoverX = offset * (spread + (props.compact ? 4 : 7))
-  const hoverRot = offset * 7.5
+  const baseY = Math.abs(offset) * (props.compact ? 3 : 4.5)
+  const baseRot = offset * 3.8
+  const hoverX = offset * (spread + (props.compact ? 4 : 6))
+  const hoverRot = offset * 6.4
   const partDirection = offset < 0 ? -1 : offset > 0 ? 1 : index % 2 === 0 ? -1 : 1
   const partX = baseX + partDirection * (props.compact ? 10 : 18)
-  const z = 6 + index * 2
 
   return {
     '--card-x': `${baseX.toFixed(1)}px`,
@@ -221,8 +293,8 @@ function cardSlotStyle(index: number, total: number): Record<string, string> {
     '--card-hover-x': `${hoverX.toFixed(1)}px`,
     '--card-hover-rot': `${hoverRot.toFixed(1)}deg`,
     '--card-part-x': `${partX.toFixed(1)}px`,
-    '--card-z': `${z}px`,
-    '--card-accent': pocketCards.value[index]?.accentColor ?? '#64748b',
+    '--card-z': `${index + 2}`,
+    '--card-accent': fallbackCards.value[index]?.accentColor ?? '#64748b',
   }
 }
 
@@ -234,19 +306,32 @@ const resolvedLiveDropMode = computed<'link' | 'copy' | 'ask'>(() => {
   return base
 })
 
+const hasActiveCardHover = computed(
+  () => hoveredCard.value !== null && hoveredCard.value.kind !== 'empty',
+)
+
 const dragCaptionText = computed(() => {
-  if (!dragging.value) {
-    return t('workspaceFolder.restHint')
+  if (dragging.value) {
+    const mode = resolvedLiveDropMode.value
+    if (altPressed.value) {
+      return mode === 'copy'
+        ? t('workspaceFolder.dragHintCopyAlt')
+        : t('workspaceFolder.dragHintLinkAlt')
+    }
+    if (mode === 'copy') return t('workspaceFolder.dragHintCopy')
+    if (mode === 'ask') return t('workspaceFolder.dragHintAsk')
+    return t('workspaceFolder.dragHintLink')
   }
-  const mode = resolvedLiveDropMode.value
-  if (altPressed.value) {
-    return mode === 'copy'
-      ? t('workspaceFolder.dragHintCopyAlt')
-      : t('workspaceFolder.dragHintLinkAlt')
+
+  if (cardDragging.value) {
+    return t('workspaceFolder.cardDraggingHint')
   }
-  if (mode === 'copy') return t('workspaceFolder.dragHintCopy')
-  if (mode === 'ask') return t('workspaceFolder.dragHintAsk')
-  return t('workspaceFolder.dragHintLink')
+
+  if (hoveredCard.value !== null && hoveredCard.value.kind !== 'empty') {
+    return t('workspaceFolder.cardHoverHint', { name: hoveredCard.value.label })
+  }
+
+  return t('workspaceFolder.restHint')
 })
 
 function classifyDataTransfer(transfer: DataTransfer | null): {
@@ -282,6 +367,7 @@ function classifyDataTransfer(transfer: DataTransfer | null): {
 }
 
 function triggerSnapAnimation(): void {
+  engine?.triggerDropPulse()
   if (reducedMotion.value) return
   if (snapTimer) clearTimeout(snapTimer)
   snapping.value = true
@@ -289,6 +375,29 @@ function triggerSnapAnimation(): void {
     snapping.value = false
     snapTimer = null
   }, 520)
+}
+
+function onWrapMouseLeave(): void {
+  hovered.value = false
+  if (!webglActive.value && !cardDragging.value) {
+    hoveredCard.value = null
+  }
+}
+
+function onFallbackCardEnter(card: LivingFolderCardDescriptor): void {
+  if (props.compact || props.disabled) return
+  hoveredCard.value = card
+}
+
+function onFallbackCardLeave(card: LivingFolderCardDescriptor): void {
+  if (hoveredCard.value?.key === card.key) {
+    hoveredCard.value = null
+  }
+}
+
+function onFallbackCardClick(card: LivingFolderCardDescriptor): void {
+  if (props.compact || props.disabled || !card.sourceItem) return
+  emit('select-card', card.sourceItem)
 }
 
 function onDragEnter(event: DragEvent): void {
@@ -363,19 +472,80 @@ function onWindowKeyChange(event: KeyboardEvent): void {
   }
 }
 
+watch(
+  [
+    effectiveTone,
+    resolvedTheme,
+    cardDescriptors,
+    hovered,
+    dragging,
+    altPressed,
+    () => props.compact,
+    () => props.disabled,
+    reducedMotion,
+    () => t('workspaceFolder.emptyGuideCard'),
+  ],
+  () => {
+    if (props.compact || props.disabled) {
+      hoveredCard.value = null
+      cardDragging.value = false
+    }
+    engine?.updateState(buildEngineState())
+  },
+)
+
 onMounted(() => {
   if (typeof window !== 'undefined') {
     window.addEventListener('keydown', onWindowKeyChange)
     window.addEventListener('keyup', onWindowKeyChange)
+    if (typeof window.matchMedia === 'function') {
+      colorSchemeMql = window.matchMedia('(prefers-color-scheme: dark)')
+      systemPrefersDark.value = colorSchemeMql.matches
+      colorSchemeMql.addEventListener?.('change', onColorSchemeChange)
+    }
+  }
+
+  if (canvasRef.value && stageRef.value) {
+    engine = createLivingFolderEngine(
+      canvasRef.value,
+      stageRef.value,
+      buildEngineState(),
+      {
+        onHoverCard: (card) => {
+          hoveredCard.value = card
+        },
+        onSelectCard: (card) => {
+          if (props.compact || props.disabled) return
+          if (card?.sourceItem) {
+            emit('select-card', card.sourceItem)
+          }
+        },
+        onReorderCards: (reorderedVisibleKeys) => {
+          if (props.compact || props.disabled) return
+          emit('reorder-cards', [...reorderedVisibleKeys])
+        },
+        onDragStateChange: (active) => {
+          cardDragging.value = Boolean(active)
+        },
+      },
+    )
+    webglActive.value = engine.isWebGLActive
   }
 })
 
 onBeforeUnmount(() => {
-  if (snapTimer) clearTimeout(snapTimer)
+  if (snapTimer) {
+    clearTimeout(snapTimer)
+    snapTimer = null
+  }
+  engine?.dispose()
+  engine = null
   if (typeof window !== 'undefined') {
     window.removeEventListener('keydown', onWindowKeyChange)
     window.removeEventListener('keyup', onWindowKeyChange)
   }
+  colorSchemeMql?.removeEventListener?.('change', onColorSchemeChange)
+  colorSchemeMql = null
 })
 </script>
 
@@ -384,85 +554,94 @@ onBeforeUnmount(() => {
     class="living-folder-wrap"
     :class="{
       'is-compact': compact,
-      'is-hovered': hovered && !dragging,
+      'is-hovered': (hovered || cardDragging || hasActiveCardHover) && !dragging,
       'is-dragging': dragging,
+      'is-card-dragging': cardDragging,
       'is-alt-invert': dragging && altPressed,
       'is-snapping': snapping,
       'is-reduced-motion': reducedMotion,
       'is-disabled': disabled,
     }"
     :data-folder-tone="effectiveTone"
-    :data-folder-state="dragging ? 'dragover' : hovered ? 'hover' : 'rest'"
+    :data-folder-state="dragging ? 'dragover' : cardDragging ? 'reordering' : hovered ? 'hover' : 'rest'"
     :style="stageVars"
     data-testid="living-workspace-folder"
     @mouseenter="hovered = true"
-    @mouseleave="hovered = false"
+    @mouseleave="onWrapMouseLeave"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <div class="living-folder-stage">
-      <!-- Hover / Dragover rounded backing plate -->
+    <div ref="stageRef" class="living-folder-stage">
+      <!-- Hover / Dragover rounded backing plate (flat 2D backdrop, zero preserve-3d/filter flattening) -->
       <div class="living-folder-backing" aria-hidden="true" />
 
-      <!-- Layer 4: Ambient tinted diffuse shadow -->
+      <!-- Soft ambient ground shadow -->
       <div class="living-folder-ambient" aria-hidden="true" />
 
-      <!-- 3D Preserve-3D Sandwich -->
-      <div class="living-folder-scene">
-        <!-- 1. Backplate + Top-left Tab Ear -->
-        <svg viewBox="0 0 320 184" class="living-folder-backplate" aria-hidden="true">
+      <!-- True Three.js WebGL2 3D Canvas -->
+      <canvas
+        ref="canvasRef"
+        class="living-folder-canvas"
+        :class="{ 'is-inactive': !webglActive }"
+        data-testid="living-folder-canvas"
+      />
+
+      <!-- Accessible GPU-less / happy-dom Fallback -->
+      <div v-if="!webglActive" class="living-folder-fallback">
+        <svg viewBox="0 0 320 215" class="living-folder-backplate" aria-hidden="true">
           <defs>
             <linearGradient :id="`${uid}-bp`" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stop-color="var(--lf-back-top)" />
               <stop offset="100%" stop-color="var(--lf-back-bottom)" />
             </linearGradient>
-            <linearGradient :id="`${uid}-ear`" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="var(--lf-back-top)" />
-              <stop offset="100%" stop-color="var(--lf-back-tab)" />
-            </linearGradient>
           </defs>
-          <!-- Outer folder backplate with rounded ear -->
           <path
-            d="M22 30C22 18.954 30.954 10 42 10H116C123.6 10 130.75 13.56 135.34 19.62L144.66 31.88C147.68 35.86 152.38 38.2 157.38 38.2H278C289.046 38.2 298 47.154 298 58.2V154C298 165.046 289.046 174 278 174H42C30.954 174 22 165.046 22 154V30Z"
+            d="M22 54C22 42.954 30.954 34 42 34H116C123.6 34 130.75 37.56 135.34 43.62L144.66 55.88C147.68 59.86 152.38 62.2 157.38 62.2H278C289.046 62.2 298 71.154 298 82.2V182C298 193.046 289.046 202 278 202H42C30.954 202 22 193.046 22 182V54Z"
             :fill="`url(#${uid}-bp)`"
             stroke="var(--lf-back-stroke)"
             stroke-width="1.2"
           />
-          <!-- Subtle ear accent crease -->
           <path
-            d="M38 22H112"
+            d="M38 46H112"
             stroke="rgba(255, 255, 255, 0.42)"
             stroke-width="1.5"
             stroke-linecap="round"
           />
-          <!-- Recessed inner pocket cavity -->
           <rect
             x="30"
-            y="46"
+            y="70"
             width="260"
-            height="118"
+            height="122"
             rx="14"
             fill="var(--lf-pocket-well)"
           />
         </svg>
 
-        <!-- 2. Real Middle Pocket Stack (sandwiched between backplate and front flap) -->
         <div class="living-folder-pocket" data-testid="living-folder-pocket">
-          <template v-if="pocketCards.length > 0">
-            <div
-              v-for="(card, idx) in pocketCards"
+          <template v-if="fallbackCards.length > 0">
+            <button
+              v-for="(card, idx) in fallbackCards"
               :key="card.key"
+              type="button"
               class="pocket-card"
-              :class="`pocket-card--${card.kind}`"
+              :class="[
+                `pocket-card--${card.kind}`,
+                { 'is-card-hovered': hoveredCard?.key === card.key },
+              ]"
+              :data-pocket-card-key="card.key"
               :data-pocket-kind="card.kind"
-              :style="cardSlotStyle(idx, pocketCards.length)"
+              :style="cardSlotStyle(idx, fallbackCards.length)"
               :title="card.label"
+              :disabled="compact || disabled || !card.sourceItem"
+              @mouseenter="onFallbackCardEnter(card)"
+              @mouseleave="onFallbackCardLeave(card)"
+              @click="onFallbackCardClick(card)"
             >
               <!-- Image photo card -->
               <template v-if="card.kind === 'photo'">
-                <div class="pocket-photo-frame">
+                <span class="pocket-photo-frame">
                   <img
                     v-if="card.thumbUrl"
                     :src="card.thumbUrl"
@@ -483,32 +662,32 @@ onBeforeUnmount(() => {
                     <circle cx="43" cy="13" r="5" fill="#fef08a" />
                     <path d="M0 36L18 19L31 30L42 21L60 37V44H0V36Z" fill="rgba(15, 23, 42, 0.42)" />
                   </svg>
-                </div>
+                </span>
                 <span v-if="!compact" class="pocket-card-caption">{{ card.label }}</span>
               </template>
 
               <!-- Mini folder tab card -->
               <template v-else-if="card.kind === 'folder'">
-                <div class="pocket-folder-tab">
+                <span class="pocket-folder-tab">
                   <span class="pocket-folder-ear" />
-                  <div class="pocket-folder-body">
+                  <span class="pocket-folder-body">
                     <Star v-if="card.isPrimary" :size="compact ? 8 : 10" class="pocket-folder-star" />
                     <span v-if="!compact" class="pocket-folder-name">{{ card.label }}</span>
-                  </div>
-                </div>
+                  </span>
+                </span>
               </template>
 
               <!-- Code / Config card -->
               <template v-else-if="card.kind === 'code'">
-                <div class="pocket-code-head">
+                <span class="pocket-code-head">
                   <span class="pocket-code-glyph">&lt;/&gt;</span>
                   <span class="pocket-code-badge">{{ card.badge }}</span>
-                </div>
-                <div class="pocket-code-lines" aria-hidden="true">
+                </span>
+                <span class="pocket-code-lines" aria-hidden="true">
                   <span class="cline cline--a" />
                   <span class="cline cline--b" />
                   <span class="cline cline--c" />
-                </div>
+                </span>
                 <span v-if="!compact" class="pocket-card-caption pocket-card-caption--dark">{{ card.label }}</span>
               </template>
 
@@ -516,14 +695,14 @@ onBeforeUnmount(() => {
               <template v-else>
                 <span class="pocket-doc-fold" aria-hidden="true" />
                 <span class="pocket-doc-badge">{{ card.badge }}</span>
-                <div class="pocket-doc-lines" aria-hidden="true">
+                <span class="pocket-doc-lines" aria-hidden="true">
                   <span class="dline dline--title" />
                   <span class="dline dline--body" />
                   <span class="dline dline--short" />
-                </div>
+                </span>
                 <span v-if="!compact" class="pocket-card-caption">{{ card.label }}</span>
               </template>
-            </div>
+            </button>
           </template>
 
           <!-- Empty directory dashed guide card -->
@@ -532,34 +711,27 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 3. 4-Layer Liquid Glass Front Flap -->
-        <div class="living-folder-flap" data-testid="living-folder-flap">
-          <!-- Layer ① Frost -->
-          <div class="flap-layer-frost" aria-hidden="true" />
-          <!-- Layer ② Edge Specular (1px top lip + bottom refraction) -->
-          <div class="flap-layer-specular" aria-hidden="true" />
-          <!-- Layer ③ Sheen (diagonal hover/dragover sweep) -->
-          <div class="flap-layer-sheen" aria-hidden="true" />
-
-          <!-- Subtle lower-left tactile groove -->
-          <div v-if="!compact" class="flap-emboss-mark" aria-hidden="true">
-            <span class="flap-emboss-line" />
-            <span class="flap-emboss-line flap-emboss-line--short" />
-          </div>
-
-          <!-- Frosted bottom-right count capsule -->
-          <div v-if="!compact" class="flap-count-pill" data-testid="living-folder-count-pill">
-            {{ t('workspaceFolder.countBadge', { folders: roots.length, files: files.length }) }}
-          </div>
+        <div class="living-folder-flap" data-testid="living-folder-flap" aria-hidden="true">
+          <div class="flap-layer-frost" />
+          <div class="flap-layer-specular" />
+          <div class="flap-layer-sheen" />
         </div>
+      </div>
+
+      <!-- Frosted bottom-right count capsule -->
+      <div v-if="!compact" class="flap-count-pill" data-testid="living-folder-count-pill">
+        {{ t('workspaceFolder.countBadge', { folders: roots.length, files: files.length }) }}
       </div>
     </div>
 
-    <!-- Single-line live drop hint below folder -->
+    <!-- Single-line live drop / hover / reorder hint below folder -->
     <p
       v-if="!compact"
       class="living-folder-caption"
-      :class="{ 'is-active': dragging, 'is-alt': dragging && altPressed }"
+      :class="{
+        'is-active': dragging || cardDragging || hasActiveCardHover,
+        'is-alt': dragging && altPressed,
+      }"
       data-testid="living-folder-caption"
     >
       {{ dragCaptionText }}
@@ -622,9 +794,8 @@ onBeforeUnmount(() => {
 .living-folder-stage {
   position: relative;
   width: 100%;
-  max-width: 288px;
-  aspect-ratio: 320 / 184;
-  perspective: 900px;
+  max-width: 296px;
+  aspect-ratio: 320 / 215;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -636,21 +807,22 @@ onBeforeUnmount(() => {
 }
 
 .living-folder-wrap.is-compact .living-folder-stage {
-  width: 156px;
-  max-width: 156px;
+  width: 148px;
+  max-width: 148px;
 }
 
 /* Soft outer backing plate appearing on Hover / Dragover */
 .living-folder-backing {
   position: absolute;
-  inset: 2px 6px;
+  inset: 4px 6px;
   border-radius: 22px;
   background: color-mix(in srgb, var(--surface-raised, rgba(255, 255, 255, 0.06)) 78%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-default, rgba(255, 255, 255, 0.14)) 65%, transparent);
   opacity: 0;
-  transform: scale(0.96);
-  transition: opacity 240ms cubic-bezier(0.22, 1, 0.36, 1), transform 260ms cubic-bezier(0.22, 1, 0.36, 1), border-color 220ms ease;
+  transform: scale(0.97);
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1), transform 240ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms ease;
   pointer-events: none;
+  z-index: 0;
 }
 
 .living-folder-wrap.is-hovered .living-folder-backing {
@@ -664,54 +836,60 @@ onBeforeUnmount(() => {
   border-color: var(--lf-ready-glow);
 }
 
-/* Layer 4: Ambient Shadow */
+/* Ambient ground shadow */
 .living-folder-ambient {
   position: absolute;
   left: 14%;
   right: 14%;
-  bottom: 4px;
-  height: 28px;
+  bottom: 5px;
+  height: 26px;
   border-radius: 999px;
   background: var(--lf-ambient-shadow);
   filter: blur(16px);
-  opacity: 0.78;
-  transform: translateY(4px) scaleX(0.94);
+  opacity: 0.76;
+  transform: translateY(3px) scaleX(0.94);
   transition:
-    background-color 240ms ease,
-    opacity 240ms ease,
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 240ms ease;
+    background-color 220ms ease,
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
+  z-index: 0;
 }
 
 .living-folder-wrap.is-hovered .living-folder-ambient {
-  opacity: 0.95;
-  transform: translateY(7px) scaleX(1);
+  opacity: 0.94;
+  transform: translateY(6px) scaleX(1);
 }
 
 .living-folder-wrap.is-dragging .living-folder-ambient {
   background: var(--lf-ready-glow);
   opacity: 1;
-  filter: blur(20px);
-  transform: translateY(9px) scaleX(1.06);
+  transform: translateY(8px) scaleX(1.05);
 }
 
-/* 3D Scene */
-.living-folder-scene {
+/* Three.js WebGL2 Canvas */
+.living-folder-canvas {
   position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
-  transform-style: preserve-3d;
-  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), filter 240ms ease;
+  display: block;
+  touch-action: none;
 }
 
-.living-folder-wrap.is-hovered .living-folder-scene {
-  filter: brightness(1.04);
+.living-folder-canvas.is-inactive {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.living-folder-wrap.is-dragging .living-folder-scene {
-  transform: scale(1.04);
-  filter: brightness(1.08) saturate(1.08);
+/* Accessible No-WebGL Fallback Container */
+.living-folder-fallback {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
 }
 
 .living-folder-backplate {
@@ -720,40 +898,49 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   display: block;
-  transform: translateZ(0px);
   pointer-events: none;
 }
 
-/* Middle Pocket Stack */
 .living-folder-pocket {
   position: absolute;
   left: 11%;
   right: 11%;
-  top: 15%;
-  bottom: 18%;
-  transform-style: preserve-3d;
-  transform: translateZ(10px);
+  top: 16%;
+  bottom: 16%;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  pointer-events: none;
+  z-index: 2;
 }
 
 .pocket-card {
   position: absolute;
   top: 8%;
   width: 27%;
-  height: 76%;
+  height: 74%;
   border-radius: 8px;
   padding: 5px 5px 4px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.22);
   transform-origin: 50% 100%;
-  transform: translate3d(var(--card-x, 0px), var(--card-y, 0px), var(--card-z, 8px)) rotateZ(var(--card-rot, 0deg));
-  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms ease;
+  z-index: var(--card-z, 2);
+  transform: translate(var(--card-x, 0px), var(--card-y, 0px)) rotate(var(--card-rot, 0deg));
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+}
+
+.pocket-card:disabled {
+  cursor: default;
+}
+
+.pocket-card:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
 }
 
 .living-folder-wrap.is-compact .pocket-card {
@@ -761,42 +948,22 @@ onBeforeUnmount(() => {
   border-radius: 5px;
 }
 
-/* Hover: pocket cards float up and fan out */
 .living-folder-wrap.is-hovered .pocket-card {
-  transform:
-    translate3d(var(--card-hover-x, 0px), calc(var(--card-y, 0px) - 12px), var(--card-z, 8px))
-    rotateZ(var(--card-hover-rot, 0deg));
+  transform: translate(var(--card-hover-x, 0px), calc(var(--card-y, 0px) - 22px)) rotate(var(--card-hover-rot, 0deg));
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.26);
 }
 
+.living-folder-wrap.is-hovered .pocket-card.is-card-hovered {
+  transform: translate(var(--card-hover-x, 0px), calc(var(--card-y, 0px) - 32px)) scale(1.05);
+  z-index: 12;
+}
+
 .living-folder-wrap.is-compact.is-hovered .pocket-card {
-  transform:
-    translate3d(var(--card-hover-x, 0px), calc(var(--card-y, 0px) - 7px), var(--card-z, 8px))
-    rotateZ(var(--card-hover-rot, 0deg));
+  transform: translate(var(--card-hover-x, 0px), calc(var(--card-y, 0px) - 10px)) rotate(var(--card-hover-rot, 0deg));
 }
 
-/* Dragover: pocket cards part left/right to make room for incoming drop */
 .living-folder-wrap.is-dragging .pocket-card {
-  transform:
-    translate3d(var(--card-part-x, 0px), calc(var(--card-y, 0px) - 6px), var(--card-z, 8px))
-    rotateZ(calc(var(--card-hover-rot, 0deg) * 1.15));
-}
-
-/* Drop spring snap-in */
-@keyframes pocket-card-snap {
-  0% {
-    transform: translate3d(var(--card-x, 0px), -18px, var(--card-z, 8px)) scale(1.05);
-  }
-  58% {
-    transform: translate3d(var(--card-x, 0px), calc(var(--card-y, 0px) + 5px), var(--card-z, 8px)) scale(0.97);
-  }
-  100% {
-    transform: translate3d(var(--card-x, 0px), var(--card-y, 0px), var(--card-z, 8px)) rotateZ(var(--card-rot, 0deg));
-  }
-}
-
-.living-folder-wrap.is-snapping .pocket-card {
-  animation: pocket-card-snap 480ms cubic-bezier(0.22, 1.35, 0.36, 1);
+  transform: translate(var(--card-part-x, 0px), calc(var(--card-y, 0px) - 10px)) rotate(calc(var(--card-hover-rot, 0deg) * 1.15));
 }
 
 .pocket-card--photo {
@@ -811,6 +978,7 @@ onBeforeUnmount(() => {
   border-radius: 4.5px;
   overflow: hidden;
   background: #e2e8f0;
+  display: block;
 }
 
 .pocket-photo-img,
@@ -824,7 +992,6 @@ onBeforeUnmount(() => {
 .pocket-card--doc {
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 1px solid rgba(203, 213, 225, 0.85);
-  position: absolute;
   overflow: hidden;
 }
 
@@ -855,6 +1022,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 3px;
   margin: auto 0;
+  width: 100%;
 }
 
 .dline {
@@ -878,6 +1046,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 2px;
+  width: 100%;
 }
 
 .pocket-code-glyph {
@@ -901,6 +1070,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 3px;
   margin: auto 0;
+  width: 100%;
 }
 
 .cline {
@@ -915,6 +1085,7 @@ onBeforeUnmount(() => {
 
 .pocket-card--folder {
   padding: 0;
+  border: 0;
   background: transparent;
   box-shadow: none;
 }
@@ -924,7 +1095,6 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.22));
 }
 
 .pocket-folder-ear {
@@ -945,6 +1115,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
 }
 
 .pocket-folder-star {
@@ -962,6 +1133,7 @@ onBeforeUnmount(() => {
 }
 
 .pocket-card-caption {
+  width: 100%;
   font-size: 7.5px;
   font-weight: 600;
   color: #334155;
@@ -977,8 +1149,8 @@ onBeforeUnmount(() => {
 
 .pocket-empty-guide {
   width: 74%;
-  height: 68%;
-  margin-top: 6%;
+  height: 66%;
+  margin-top: 10%;
   border-radius: 10px;
   border: 1.5px dashed rgba(255, 255, 255, 0.58);
   background: rgba(255, 255, 255, 0.16);
@@ -987,6 +1159,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 6px 10px;
   text-align: center;
+  pointer-events: none;
 }
 
 .pocket-empty-guide-text {
@@ -996,64 +1169,40 @@ onBeforeUnmount(() => {
   text-shadow: 0 1px 2px rgba(15, 23, 42, 0.28);
 }
 
-/* 3. 4-Layer Liquid Glass Front Flap */
+/* Fallback frosted front flap (pointer-events: none so fallback card buttons stay clickable) */
 .living-folder-flap {
   position: absolute;
   left: 6.8%;
   right: 6.8%;
-  top: 34%;
-  bottom: 5.4%;
+  top: 41%;
+  bottom: 6%;
   border-radius: 15px 15px 17px 17px;
   overflow: hidden;
   transform-origin: 50% 100%;
-  /* Rest state: subtle forward tilt */
-  transform: translateZ(20px) rotateX(-10deg);
-  transition:
-    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 260ms ease;
+  z-index: 20;
+  pointer-events: none;
   box-shadow:
     0 -2px 10px rgba(15, 23, 42, 0.10),
     inset 0 -1px 0 var(--lf-refraction-bottom);
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
 }
 
 .living-folder-wrap.is-compact .living-folder-flap {
   border-radius: 10px 10px 12px 12px;
 }
 
-/* Hover state: flap opens to -24deg */
 .living-folder-wrap.is-hovered .living-folder-flap {
-  transform: translateZ(20px) rotateX(-24deg);
+  transform: scaleY(0.92);
+  opacity: 0.86;
 }
 
-/* Dragover state: wide open -38deg */
 .living-folder-wrap.is-dragging .living-folder-flap {
-  transform: translateZ(22px) rotateX(-38deg);
+  transform: scaleY(0.86);
   box-shadow:
     0 0 0 1.5px var(--lf-specular-top),
     0 8px 24px var(--lf-ready-glow);
 }
 
-/* Drop spring close bounce */
-@keyframes flap-spring-snap {
-  0% {
-    transform: translateZ(22px) rotateX(-34deg);
-  }
-  52% {
-    transform: translateZ(20px) rotateX(-4deg);
-  }
-  78% {
-    transform: translateZ(20px) rotateX(-14deg);
-  }
-  100% {
-    transform: translateZ(20px) rotateX(-10deg);
-  }
-}
-
-.living-folder-wrap.is-snapping .living-folder-flap {
-  animation: flap-spring-snap 500ms cubic-bezier(0.22, 1.35, 0.36, 1);
-}
-
-/* Layer ① Frost */
 .flap-layer-frost {
   position: absolute;
   inset: 0;
@@ -1065,19 +1214,8 @@ onBeforeUnmount(() => {
     var(--lf-flap-mid) 48%,
     var(--lf-flap-bottom) 100%
   );
-  transition: background 240ms ease;
 }
 
-.living-folder-wrap.is-dragging .flap-layer-frost {
-  background: linear-gradient(
-    180deg,
-    var(--lf-flap-ready-top) 0%,
-    var(--lf-flap-mid) 45%,
-    var(--lf-flap-ready-bottom) 100%
-  );
-}
-
-/* Layer ② Edge Specular (1px top lip + bottom micro-refraction) */
 .flap-layer-specular {
   position: absolute;
   inset: 0;
@@ -1086,24 +1224,21 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--lf-refraction-bottom);
   border-left: 1px solid rgba(255, 255, 255, 0.32);
   border-right: 1px solid rgba(255, 255, 255, 0.32);
-  pointer-events: none;
 }
 
-/* Layer ③ Sheen (diagonal light sweep on hover/dragover) */
 .flap-layer-sheen {
   position: absolute;
   inset: -20% -40%;
   background: linear-gradient(
     115deg,
     transparent 34%,
-    rgba(255, 255, 255, 0.38) 48%,
-    rgba(255, 255, 255, 0.10) 56%,
+    rgba(255, 255, 255, 0.34) 48%,
+    rgba(255, 255, 255, 0.08) 56%,
     transparent 68%
   );
   transform: translateX(-46%);
   opacity: 0;
-  transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
-  pointer-events: none;
+  transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease;
 }
 
 .living-folder-wrap.is-hovered .flap-layer-sheen,
@@ -1112,32 +1247,12 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-.flap-emboss-mark {
-  position: absolute;
-  left: 14px;
-  bottom: 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.flap-emboss-line {
-  width: 22px;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.flap-emboss-line--short {
-  width: 14px;
-}
-
+/* Frosted bottom-right count capsule overlaid on stage */
 .flap-count-pill {
   position: absolute;
-  right: 11px;
-  bottom: 10px;
+  right: 22px;
+  bottom: 16px;
+  z-index: 25;
   padding: 2.5px 9px;
   border-radius: 999px;
   background: var(--lf-pill-bg);
@@ -1152,7 +1267,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* Single-line live drop caption */
+/* Single-line live drop / hover / reorder caption */
 .living-folder-caption {
   margin: 0;
   font-size: 11px;
@@ -1220,7 +1335,7 @@ onBeforeUnmount(() => {
 
 .ask-bubble-btn.is-primary {
   background: var(--accent-primary);
-  color: var(--bg-primary, #09090b);
+  color: var(--text-on-primary, var(--bg-primary, #09090b));
   border-color: transparent;
 }
 
@@ -1248,10 +1363,8 @@ onBeforeUnmount(() => {
 /* Honor reduced motion preference cleanly */
 .living-folder-wrap.is-reduced-motion .living-folder-backing,
 .living-folder-wrap.is-reduced-motion .living-folder-ambient,
-.living-folder-wrap.is-reduced-motion .living-folder-scene,
 .living-folder-wrap.is-reduced-motion .pocket-card,
 .living-folder-wrap.is-reduced-motion .living-folder-flap,
-.living-folder-wrap.is-reduced-motion .flap-layer-frost,
 .living-folder-wrap.is-reduced-motion .flap-layer-sheen,
 .living-folder-wrap.is-reduced-motion .living-folder-caption {
   transition: none !important;

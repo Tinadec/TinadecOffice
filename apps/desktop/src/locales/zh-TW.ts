@@ -7397,6 +7397,8 @@ agentAvatarSaveFailed: "形象儲存失敗",
   },
   workspaceFolder: {
     restHint: "拖入檔案或資料夾即可收納授權",
+    cardHoverHint: "{name} · 點擊定位 · 左右拖動排序",
+    cardDraggingHint: "拖動調整擺放順序 · 放開落位",
     dragHintLink: "放開即可關聯到工作空間（按住 Alt 改為複製）",
     dragHintCopy: "放開將複製到主專案目錄（按住 Alt 改為關聯）",
     dragHintAsk: "放開後選擇直接關聯或複製到主專案目錄",
