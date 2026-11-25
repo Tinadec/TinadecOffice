@@ -52,6 +52,19 @@ test('identity mismatch is blocked without automatic retry or leaking error cont
   assert.equal(JSON.stringify(result).includes(secret), false);
   assert.equal(f.host.isReady(), false); f.host.stop();
 });
+test('a bootstrap configuration failure names the document instead of "temporarily unavailable"', async () => {
+  const startupFailure = { code: 'configuration_missing', document: 'storage.toml', message: 'ignored by the host snapshot' };
+  const f = fixture(async () => { throw Object.assign(new Error('service_start_failed'), { startupFailure }); });
+  const status = await f.host.start();
+  assert.equal(status.state, 'unavailable');
+  assert.equal(status.error.code, 'host_startup_configuration_invalid');
+  assert.equal(status.error.document, 'storage.toml');
+  assert.equal(status.error.reason, 'configuration_missing');
+  // The child's own message never becomes user-visible text; the window words it from the code.
+  assert.doesNotMatch(status.error.message, /ignored by the host snapshot/);
+  f.host.stop();
+});
+
 test('closing host aborts pending verification and ignores its late success', async () => {
   let release; let signal;
   const f = fixture(options => { signal = options.signal; return new Promise(resolve => { release = resolve; }); });
@@ -67,4 +80,19 @@ test('verification timeout is recoverable even when a dependency never settles',
 });
 test('a false proof cannot authorize the host', async () => {
   const f = fixture(async () => false); assert.equal((await f.host.start()).state, 'rejected'); f.host.stop();
+});
+test('a receipt-backed configuration failure is not retried automatically', async () => {
+  const f = fixture(async () => {
+    throw Object.assign(new Error('core did not start'), {
+      startupFailure: { code: 'configuration_invalid', document: 'storage.toml', message: 'bad document' },
+    });
+  });
+  const result = await f.host.start();
+  assert.equal(result.state, 'unavailable');
+  assert.equal(result.error.code, 'host_startup_configuration_invalid');
+  assert.equal(result.error.document, 'storage.toml');
+  // The document stays broken until someone repairs it; retrying would only hide the file name.
+  assert.equal(f.timers.size, 0, 'no automatic retry while a document is broken');
+  assert.equal(f.host.snapshot().retryable, false);
+  f.host.stop();
 });

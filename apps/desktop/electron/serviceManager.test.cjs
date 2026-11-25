@@ -296,6 +296,107 @@ test('startup failure rolls back only the processes launched by the failed attem
   }
 });
 
+test('a failed startup keeps the crash line as its diagnostic instead of only a log pointer', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-diagnostic-'));
+  const runtime = createRuntime(root);
+  const ready = new Set();
+  let nextPid = 700;
+  const manager = createServiceManager({
+    platform: 'win32',
+    environment: { TINADEC_HOME: path.join(root, '.tinadec') },
+    homedirImpl: () => root,
+    startupTimeoutMs: 2000,
+    pollIntervalMs: 1,
+    fetchImpl: async (url) => {
+      if (!ready.has(url)) throw new Error('not listening');
+      return healthResponse(url.startsWith(CORE_URL) ? coreHealth : gatewayHealth);
+    },
+    spawnImpl: (command) => {
+      const child = new FakeChild(nextPid++);
+      child.stderr = new EventEmitter();
+      if (command === runtime.paths.core) {
+        ready.add(`${CORE_URL}/api/v1/health`);
+      } else {
+        setTimeout(() => {
+          child.stderr.emit('data', 'info: booting\nUnhandled exception. TinadecCore: configuration is invalid\n');
+          child.exitCode = 134;
+        }, 5);
+      }
+      return child;
+    },
+    spawnSyncImpl: () => ({ status: 0 }),
+  });
+
+  try {
+    const failure = await manager.ensureLocalServices({
+      isPackaged: true,
+      gatewayUrl: DEFAULT_GATEWAY_URL,
+      resourcesPath: runtime.resourcesPath,
+      localAppDataPath: runtime.localAppDataPath,
+    }).then(() => null, error => error);
+    assert.ok(failure, 'startup must fail');
+    assert.equal(failure.code, 'service_start_failed');
+    assert.equal(failure.exitCode, 134);
+    assert.match(failure.diagnostic, /Unhandled exception/);
+    assert.match(failure.message, /Tinadec Gateway exited with code 134: Unhandled exception/);
+  } finally {
+    await manager.stopLocalServices();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stderr split across chunks keeps the last failure line, and a signal survives on the error', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-stderr-'));
+  const runtime = createRuntime(root);
+  const ready = new Set();
+  let nextPid = 800;
+  const manager = createServiceManager({
+    platform: 'win32',
+    environment: { TINADEC_HOME: path.join(root, '.tinadec') },
+    homedirImpl: () => root,
+    startupTimeoutMs: 2000,
+    pollIntervalMs: 1,
+    fetchImpl: async (url) => {
+      if (!ready.has(url)) throw new Error('not listening');
+      return healthResponse(url.startsWith(CORE_URL) ? coreHealth : gatewayHealth);
+    },
+    spawnImpl: (command) => {
+      const child = new FakeChild(nextPid++);
+      child.stderr = new EventEmitter();
+      if (command === runtime.paths.core) {
+        ready.add(`${CORE_URL}/api/v1/health`);
+      } else {
+        setTimeout(() => {
+          // The pipe boundary falls inside the word, and an earlier "Error:" line must not win.
+          child.stderr.emit('data', 'info: starting\nError: retrying\nUnhandled exce');
+          child.stderr.emit('data', 'ption. TinadecCore: configuration is invalid\n');
+          child.signalCode = 'SIGABRT';
+        }, 5);
+      }
+      return child;
+    },
+    spawnSyncImpl: () => ({ status: 0 }),
+  });
+
+  try {
+    const failure = await manager.ensureLocalServices({
+      isPackaged: true,
+      gatewayUrl: DEFAULT_GATEWAY_URL,
+      resourcesPath: runtime.resourcesPath,
+      localAppDataPath: runtime.localAppDataPath,
+    }).then(() => null, error => error);
+    assert.ok(failure, 'startup must fail');
+    assert.equal(failure.code, 'service_start_failed');
+    assert.equal(failure.signal, 'SIGABRT');
+    assert.equal(failure.exitCode, null);
+    assert.match(failure.diagnostic, /Unhandled exception/);
+    assert.match(failure.message, /exited with code SIGABRT: Unhandled exception/);
+  } finally {
+    await manager.stopLocalServices();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('stop uses tree kill for owned processes and never targets a reused Core', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-owned-'));
   const runtime = createRuntime(root);
@@ -514,4 +615,56 @@ test('Linux starts services detached and terminates the process group, not just 
   release(healthResponse(coreHealth));
   await assert.rejects(pending, /host shutting down/);
   assert.equal(starts, 0);
+});
+test('a startup timeout keeps the unmatched final stderr line and reports process status', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tinadec-service-timeout-'));
+  const runtime = createRuntime(root);
+  const ready = new Set();
+  let nextPid = 900;
+  const manager = createServiceManager({
+    platform: 'win32',
+    environment: { TINADEC_HOME: path.join(root, '.tinadec') },
+    homedirImpl: () => root,
+    startupTimeoutMs: 60,
+    pollIntervalMs: 1,
+    fetchImpl: async (url) => {
+      if (!ready.has(url)) throw new Error('not listening');
+      return healthResponse(url.startsWith(CORE_URL) ? coreHealth : gatewayHealth);
+    },
+    spawnImpl: (command) => {
+      const child = new FakeChild(nextPid++);
+      child.stderr = new EventEmitter();
+      child.kill = () => {
+        child.exitCode = 0;
+        queueMicrotask(() => child.emit('close'));
+      };
+      if (command === runtime.paths.core) {
+        ready.add(`${CORE_URL}/api/v1/health`);
+      } else {
+        // A crash line without its newline is still the cause: the timeout branch has to flush it.
+        setTimeout(() => child.stderr.emit('data', 'fatal: sqlite database is locked'), 5);
+      }
+      return child;
+    },
+    spawnSyncImpl: () => ({ status: 0 }),
+  });
+
+  try {
+    const failure = await manager.ensureLocalServices({
+      isPackaged: true,
+      gatewayUrl: DEFAULT_GATEWAY_URL,
+      resourcesPath: runtime.resourcesPath,
+      localAppDataPath: runtime.localAppDataPath,
+    }).then(() => null, error => error);
+    assert.ok(failure, 'startup must time out');
+    assert.equal(failure.code, 'service_start_failed');
+    assert.match(failure.diagnostic, /database is locked/);
+    assert.match(failure.message, /did not become ready/);
+    // The contract promises process status on timeouts too; a live child reports nulls.
+    assert.equal(failure.exitCode, null);
+    assert.equal(failure.signal, null);
+  } finally {
+    await manager.stopLocalServices();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

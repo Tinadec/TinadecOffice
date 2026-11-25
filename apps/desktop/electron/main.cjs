@@ -47,6 +47,7 @@ const { ensureLocalServices, stopLocalServices, canonicalLocalGatewayUrl } = req
 const { createHostControl } = require('./hostControl.cjs');
 const { verifyManagedHost } = require('./hostIdentity.cjs');
 const { createHostConnection } = require('./hostConnection.cjs');
+const { readStartupFailure } = require('./startupFailure.cjs');
 let trustedHostReady = false;
 let hostConnection;
 let shuttingDown = false;
@@ -1053,15 +1054,32 @@ app.whenReady().then(async () => {
       signal.throwIfAborted();
       if (!managed) return true;
       if (!localServicesInitialized) {
-        await ensureLocalServices({
-          isPackaged: app.isPackaged,
-          gatewayUrl,
-          resourcesPath: process.resourcesPath,
-          userStorageRoot: hostPaths.root,
-          hostControlToken: hostControl.serviceToken,
-          localAppDataPath: process.env.LOCALAPPDATA,
-          signal,
-        });
+        try {
+          await ensureLocalServices({
+            isPackaged: app.isPackaged,
+            gatewayUrl,
+            resourcesPath: process.resourcesPath,
+            userStorageRoot: hostPaths.root,
+            hostControlToken: hostControl.serviceToken,
+            localAppDataPath: process.env.LOCALAPPDATA,
+            signal,
+          });
+        } catch (error) {
+          // hostConnection deliberately replaces host errors with fixed, secret-free sentences, so
+          // the real cause has to be written down here or it is lost. A bootstrap-time configuration
+          // failure leaves a receipt behind (Core never binds a port, so /readiness cannot report it);
+          // attaching it here is what lets the window name the file instead of guessing.
+          const startupFailure = readStartupFailure(hostPaths.root);
+          if (startupFailure && error && typeof error === 'object') error.startupFailure = startupFailure;
+          console.error('[tinadec] local service startup failed:',
+            startupFailure?.code ?? error?.code ?? 'unknown',
+            startupFailure?.document ?? '',
+            startupFailure?.message ?? error?.message ?? error,
+            // A timeout carries its cause in diagnostic, not message; without it the log says only
+            // "did not become ready" and the one line that explains it is lost.
+            error?.diagnostic ? 'diagnostic: ' + error.diagnostic : '');
+          throw error;
+        }
         signal.throwIfAborted();
         localServicesInitialized = true;
       }

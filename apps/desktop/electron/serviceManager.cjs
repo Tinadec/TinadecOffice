@@ -163,6 +163,35 @@ function createServiceManager({
     child.stderr?.removeAllListeners('data');
   }
 
+  const FAILURE_LINE = /(unhandled exception|exception|error|fatal|failed|refused|denied)/i;
+  /**
+   * Keep the LAST failure line, not the first: a service usually prints "Error: retrying" before the
+   * line that actually ended it. Chunks are stderr pipe reads, not lines, so an unfinished trailing
+   * line is held until the next chunk (or the stream close) completes it.
+   */
+  /** How much of an unfinished stderr line is worth holding: only the tail can become the
+   * diagnostic, and a service that prints one enormous line (or progress output without newlines)
+   * must not grow this buffer until the main process dies of it. */
+  const MAX_PENDING_LINE = 8 * 1024;
+  function recordFailureLines(child, chunk) {
+    child.stderrPending += String(chunk);
+    if (child.stderrPending.length > MAX_PENDING_LINE) child.stderrPending = child.stderrPending.slice(-MAX_PENDING_LINE);
+    const lines = child.stderrPending.split(/\r?\n/);
+    child.stderrPending = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed && FAILURE_LINE.test(trimmed)) child.lastDiagnostic = trimmed.slice(0, 500);
+    }
+  }
+
+  /**
+   * A final stderr line that never got its newline is still the cause. Exit and timeout both call
+   * this before reading lastDiagnostic, otherwise the one line that names the crash is dropped.
+   */
+  function flushPendingLine(child) {
+    if (child.stderrPending) recordFailureLines(child, "\n");
+  }
+
   function startProcess(label, command, args, cwd, env, logsDir) {
     const logSink = createLogSink(logsDir, { budgetDirectory: join(logsDir, '..') });
     logSink.write(label, `${new Date().toISOString()} starting ${label}\n`);
@@ -185,8 +214,15 @@ function createServiceManager({
     }
 
     child.startupError = null;
+    child.closed = false;
+    // The last failure-looking stderr line is what a startup timeout should say out loud. The full
+    // stream already lands in the service log; a user staring at "host unavailable" needs the one
+    // line that names the cause (a crashed Core prints "Unhandled exception. ..." here).
+    child.lastDiagnostic = '';
+    child.stderrPending = '';
     for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => {
       try { logSink.write(label, data); } catch (error) { console.error(`[tinadec] ${label} log write failed: ${error.message}`); }
+      if (stream === child.stderr) recordFailureLines(child, data);
     });
     ownedChildren.set(label, child);
     child.once('error', (error) => {
@@ -194,6 +230,9 @@ function createServiceManager({
       closeLog(child);
     });
     child.once('close', () => {
+      child.closed = true;
+      // Flush a final line that never got its newline before the pipe closed.
+      recordFailureLines(child, '\n');
       if (ownedChildren.get(label) === child) ownedChildren.delete(label);
       closeLog(child);
     });
@@ -216,11 +255,51 @@ function createServiceManager({
       }
       if (child.startupError) throw child.startupError;
       if (child.exitCode !== null || child.signalCode != null) {
-        throw new Error(`${label} exited with code ${child.exitCode}. See the service log for details.`);
+        // Exit can be observed before stdio closes; wait (bounded) for close so the crash line lands.
+        if (!child.closed) await waitForClose(child, 200);
+        flushPendingLine(child);
+        throw serviceStartFailure(label, child);
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
-    throw new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    const timeout = new Error(`${label} did not become ready within ${startupTimeoutMs / 1000} seconds.`);
+    // The process may still be alive with an unmatched final line buffered: flush it or the timeout
+    // loses the only sentence that says why.
+    flushPendingLine(child);
+    timeout.code = 'service_start_failed';
+    timeout.diagnostic = child.lastDiagnostic || null;
+    // The startup-failure contract promises process status fields for timeouts too.
+    timeout.exitCode = child.exitCode ?? null;
+    timeout.signal = child.signalCode ?? null;
+    throw timeout;
+  }
+
+  /** A startup failure that keeps its cause: the caller logs it, the UI stays sanitized. */
+  function serviceStartFailure(label, child) {
+    const detail = child.lastDiagnostic ? ': ' + child.lastDiagnostic : '';
+    const error = new Error(`${label} exited with code ${child.exitCode ?? child.signalCode}${detail}`);
+    error.code = 'service_start_failed';
+    error.diagnostic = child.lastDiagnostic || null;
+    error.exitCode = child.exitCode;
+    // A signal termination reports a null exit code; keep the signal so the host log can say which one.
+    error.signal = child.signalCode ?? null;
+    return error;
+  }
+
+  /** Resolves when stdio has closed (or after the bound), so a late crash line can still be read. */
+  function waitForClose(child, timeoutMs) {
+    if (child.closed) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      timer?.unref?.();
+      function finish() {
+        clearTimeout(timer);
+        child.removeListener('close', onClosed);
+        resolve(true);
+      }
+      function onClosed() { finish(); }
+      child.once('close', onClosed);
+    });
   }
 
   function waitForExit(child, timeoutMs) {
