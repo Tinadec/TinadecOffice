@@ -2,13 +2,16 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import { ArrowLeft, Bot, Check, ChevronRight, FileCode2, FileText, GitBranch, Image, Layers, ListChecks, MessageSquare, Network, Search, Settings, SlidersHorizontal, Sparkles, Users, Workflow, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { api as baseApi, type AgentModeTopologyDto, type SpaceOptionsDto } from '@/api'
+import { api as baseApi, type AgentModeTopologyDto, type ApprovalPolicySummaryDto, type SpaceOptionsDto } from '@/api'
 import { selectedStorage } from '@/lib/storageScope'
 import type { PermissionLevel } from '@/types/mode'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { isCommandAvailable, slashCommands, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { renderWorkspaceCommandTemplate, useWorkspaceCommands } from '@/composables/useWorkspaceCommands'
-import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionRisk } from '@/lib/composerCommands'
+import { composerSettings, pageDepth, parentPage, permissionChoices, type ComposerPage, type PermissionGroup, type PermissionRisk } from '@/lib/composerCommands'
+import { homeController } from '@/controllers/HomeController'
+import { focusDockCard, tryGetUieStore } from '@/lib/homeDockSync'
+import { useStatusLabels } from '@/lib/statusLabels'
 import { copyContextAdvanced, copySpaceOptions, normalizeContextAdvanced, resolveModeDefaultSpaceOptions, spaceOptionsEqual } from '@/lib/composerSettings'
 import { modeIcon, sortModes } from '@/lib/modePresentation'
 import { withoutRetiredModes } from '@/lib/retiredModes'
@@ -48,6 +51,7 @@ const props = defineProps<{
   settingsSaving?: boolean
   settingsError?: string | null
   workspaceRoot?: string | null
+  approvalRulesCount?: number
   commandHost: CommandHost
 }>()
 const emit = defineEmits<{
@@ -69,6 +73,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const { riskLabel } = useStatusLabels()
 const { canAccessBackend } = useHostAccess()
 const { notify, dismissByKey } = useNotifications()
 const { commands: workspaceCommands, refresh: refreshWorkspaceCommands } = useWorkspaceCommands(() => props.workspaceRoot ?? null)
@@ -239,8 +244,39 @@ const workflowName = computed(() => {
   const mode = availableModes.value.find(mode => mode.latest_published_mode_version_id === space.value.workflow_mode_version_id)
   return mode ? modeName(mode) : undefined
 })
-const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission) ?? permissionChoices[0])
+const currentPermission = computed(() => permissionChoices.find(choice => choice.value === props.permission) ?? permissionChoices[0]!)
 const permissionName = computed(() => t(currentPermission.value.label))
+const approvalPolicy = ref<ApprovalPolicySummaryDto | null>(homeController.approvalPolicy.value)
+const activeRulesCount = computed(() => props.approvalRulesCount ?? homeController.approvalRules.value.length)
+const effectiveRiskMax = computed(() => {
+  const resolved = approvalPolicy.value ?? homeController.approvalPolicy.value
+  if (!resolved) return 'medium'
+  if (props.permission.startsWith('delegate-')) {
+    return resolved.delegated_risk_max || resolved.risk_max || 'medium'
+  }
+  return resolved.risk_max || 'medium'
+})
+async function refreshApprovalPolicy() {
+  if (!canAccessBackend.value) return
+  try {
+    const next = await baseApi.getApprovalPolicy()
+    approvalPolicy.value = next
+    homeController.approvalPolicy.value = next
+  } catch {
+    // Fallback to 'medium' when policy endpoint is unavailable.
+  }
+}
+watch(() => homeController.approvalPolicy.value, next => { if (next) approvalPolicy.value = next })
+watch(() => [props.open, page.value] as const, ([isOpen, currentPage]) => {
+  if (isOpen && currentPage === 'permission') void refreshApprovalPolicy()
+}, { immediate: true })
+function openRulesTabFromPanel() {
+  focusDockCard({ card: 'approval', reason: 'approval', approvalTab: 'rules' })
+  if (!tryGetUieStore() && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'approval', approvalTab: 'rules' } }))
+  }
+  emit('close')
+}
 const title = computed(() => {
   if (page.value === 'root') return t('composer.commands')
   if (page.value === 'model-agents') return t('commandPanel.modelAgents')
@@ -259,6 +295,7 @@ interface Row {
   value?: string
   icon?: Component
   risk?: PermissionRisk
+  group?: PermissionGroup
   checked?: boolean
   switch?: boolean
   submenu?: boolean
@@ -415,7 +452,7 @@ function otherAgentRows(): Row[] {
 const allRows = computed<Row[]>(() => {
   if (page.value === 'context-strategy') return []
   if (page.value === 'permission') return permissionChoices.map(choice => ({
-    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, checked: props.permission === choice.value,
+    id: choice.value, label: t(choice.label), hint: t(choice.hint), icon: choice.icon, risk: choice.risk, group: choice.group, checked: props.permission === choice.value,
     disabled: props.settingsSaving, run: () => emit('update:permission', choice.value),
   }))
   if (page.value === 'mode' || page.value === 'workflow') return modeRows(page.value === 'workflow')
@@ -752,12 +789,22 @@ defineExpose({ keydown, activate, page, selectPage })
       </div>
       <div v-else class="command-panel-list">
         <p v-if="(loading || agentListPending) && page !== 'root'" class="command-panel-note" role="status">{{ t('commandPanel.loading') }}</p>
-        <button v-for="(row, rowIndex) in rows" :key="row.id" class="command-panel-row" :class="{ 'is-highlighted': rowIndex === index, 'is-selected': row.checked, 'mode-selector-item': page === 'mode', active: page === 'mode' && row.checked }" :role="row.switch ? 'switch' : undefined" :aria-checked="row.switch ? row.checked : undefined" :aria-pressed="!row.switch && row.checked !== undefined ? row.checked : undefined" :aria-label="row.risk && row.risk !== 'neutral' ? `${row.label} · ${t(`commandPanel.risk.${row.risk}`)}` : undefined" :disabled="row.disabled" :data-testid="row.testId ?? `command-panel-${row.id}`" :data-row-index="rowIndex" :title="row.hint" @mouseenter="index = rowIndex" @focus="index = rowIndex" @click="activate(row)">
-          <component :is="row.icon" v-if="row.icon" :size="16" class="command-panel-row-icon" :data-risk="row.risk" aria-hidden="true" />
-          <span class="command-panel-copy"><strong>{{ row.label }}</strong><small v-if="row.hint">{{ row.hint }}</small></span>
-          <span v-if="row.switch" class="command-panel-switch" :class="{ 'is-on': row.checked }" aria-hidden="true"><span /></span>
-          <template v-else><span v-if="row.value" class="command-panel-value">{{ row.value }}</span><ChevronRight v-if="row.submenu" :size="14" aria-hidden="true" /><Check v-else-if="row.checked" :size="16" aria-hidden="true" /></template>
-        </button>
+        <template v-for="(row, rowIndex) in rows" :key="row.id">
+          <div
+            v-if="row.group && (rowIndex === 0 || rows[rowIndex - 1]?.group !== row.group)"
+            class="command-panel-group-title"
+            :class="{ 'is-secondary': rowIndex > 0 }"
+            :data-testid="`command-panel-permission-group-${row.group}`"
+          >
+            {{ t(row.group === 'standard' ? 'permission.groupStandard' : 'permission.groupDelegated') }}
+          </div>
+          <button class="command-panel-row" :class="{ 'is-highlighted': rowIndex === index, 'is-selected': row.checked, 'mode-selector-item': page === 'mode', active: page === 'mode' && row.checked }" :role="row.switch ? 'switch' : undefined" :aria-checked="row.switch ? row.checked : undefined" :aria-pressed="!row.switch && row.checked !== undefined ? row.checked : undefined" :aria-label="row.risk && row.risk !== 'neutral' ? `${row.label} · ${t(`commandPanel.risk.${row.risk}`)}` : undefined" :disabled="row.disabled" :data-testid="row.testId ?? `command-panel-${row.id}`" :data-row-index="rowIndex" :title="row.hint" @mouseenter="index = rowIndex" @focus="index = rowIndex" @click="activate(row)">
+            <component :is="row.icon" v-if="row.icon" :size="16" class="command-panel-row-icon" :data-risk="row.risk" aria-hidden="true" />
+            <span class="command-panel-copy"><strong>{{ row.label }}</strong><small v-if="row.hint">{{ row.hint }}</small></span>
+            <span v-if="row.switch" class="command-panel-switch" :class="{ 'is-on': row.checked }" aria-hidden="true"><span /></span>
+            <template v-else><span v-if="row.value" class="command-panel-value">{{ row.value }}</span><ChevronRight v-if="row.submenu" :size="14" aria-hidden="true" /><Check v-else-if="row.checked" :size="16" aria-hidden="true" /></template>
+          </button>
+        </template>
         <div v-if="!rows.length && !loading && !agentListPending" class="command-panel-empty" data-testid="command-panel-empty">
           <p class="command-panel-note">{{ t(page === 'model-agents' && !activeQuery && !agentListFailed ? 'composer.agentModels.none' : 'commandPanel.empty') }}</p>
           <button v-if="catalogError || agentListFailed" type="button" class="command-panel-retry ui-pressable" data-testid="command-panel-retry" @click="retryCatalogs">{{ t('commandPanel.retry') }}</button>
@@ -773,6 +820,24 @@ defineExpose({ keydown, activate, page, selectPage })
         <ReasoningEffortSlider id="command-panel-reasoning-slider" v-model="reasoningDraft" :label="t('composer.reasoning.label')"
           :hint="t('composer.reasoning.hint', { model: defaultModel?.reasoningTarget.value?.model ?? defaultModel?.current.value?.model ?? '' })"
           @commit="defaultModel?.setReasoningEffort($event)" />
+      </div>
+      <div
+        v-if="page === 'permission'"
+        class="command-panel-permission-bar"
+        data-testid="command-panel-permission-footer"
+        :data-risk-max="effectiveRiskMax"
+      >
+        <span class="command-panel-permission-summary">
+          {{ t('permission.policySummary', { risk: riskLabel(effectiveRiskMax), count: activeRulesCount }) }}
+        </span>
+        <button
+          type="button"
+          class="command-panel-manage-rules ui-pressable"
+          data-testid="command-panel-manage-rules-btn"
+          @click="openRulesTabFromPanel"
+        >
+          {{ t('permission.manageRules') }}
+        </button>
       </div>
       </div>
       <footer class="command-panel-footer" role="status">{{ settingsSaving ? t('commandPanel.saving') : t(page === 'model' || page === 'model-agents' || page === 'model-agent' ? 'commandPanel.modelFooter' : 'commandPanel.nextTask') }}</footer>
@@ -799,6 +864,12 @@ defineExpose({ keydown, activate, page, selectPage })
 .command-panel-context-strategy { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 12px 12px; }
 .command-panel-reasoning { flex-shrink: 0; margin: 0 12px 8px; padding: 10px 12px 12px; border-radius: 10px; background: var(--surface-input); }
 .command-panel-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 6px 6px; }
+.command-panel-group-title { padding: 6px 10px 3px; font-size: 11px; font-weight: 600; color: var(--text-muted); line-height: 1.4; }
+.command-panel-group-title.is-secondary { margin-top: 4px; }
+.command-panel-permission-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; margin: 0 12px 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-input); font-size: 11px; color: var(--text-secondary); }
+.command-panel-permission-summary { min-width: 0; line-height: 1.4; }
+.command-panel-manage-rules { flex-shrink: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 11px; font-weight: 500; padding: 2px 6px; border-radius: 5px; cursor: pointer; }
+.command-panel-manage-rules:hover { background: var(--surface-hover); }
 .command-panel-row { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; min-height: 36px; background: transparent; border: 0; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; transition: background-color var(--duration-tap, 120ms) var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1)); }
 .command-panel-row.is-highlighted:not(:disabled), .command-panel-row:hover:not(:disabled) { background: var(--surface-hover); }
 .command-panel-row:disabled { opacity: .5; cursor: not-allowed; }

@@ -114,6 +114,7 @@ const panelSources = import.meta.glob(
     './../components/ComposerBar.vue',
     './../components/ComposerCommandPanel.vue',
     './../components/ApprovalTab.vue',
+    './../components/approval/*.vue',
     // The palette's rows are all labels from the command table, and its chrome is
     // translated too, so an unlisted key here would show a raw dotted string in a dialog.
     './../components/CommandPalette.vue',

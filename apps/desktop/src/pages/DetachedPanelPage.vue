@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api as baseApi, createUserToolActionForPath, type ApprovalDto, type ApprovalRuleDto, type CreateApprovalRuleInput, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api as baseApi, type ApprovalDto, type ApprovalRememberRuleInput, type ApprovalRuleDto, type BatchApprovalDecisionInput, type CreateApprovalRuleInput, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { setSelectedStorage, registerSessionStorage, scopedApi } from '@/lib/storageScope'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
@@ -22,7 +22,6 @@ import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
 import CodeEditorCard from '@/components/code/CodeEditorCard.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
 import BoardTaskInspectorPanel from '@/components/board/BoardTaskInspectorPanel.vue'
-import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -62,7 +61,6 @@ const events = ref<EventEnvelope[]>([])
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
-const shellCommand = ref('npm test')
 const busy = ref(false)
 
 const sessionIdRef = computed(() => sessionId.value)
@@ -164,43 +162,23 @@ function reattach() {
 // ---- Listen for theme broadcasts from main window ----
 let removeThemeListener: (() => void) | null = null
 
-// ---- Shell approval actions (for ApprovalTab) ----
-async function requestShellApproval() {
-  if (!projectPath.value) return
-  busy.value = true
-  try {
-    const command = shellCommand.value.trim()
-    if (!command) throw new Error(t('home.shellNeedsCommand'))
-    const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
-    const params = {
-      executable: windows ? 'cmd.exe' : '/bin/sh',
-      arguments: windows ? ['/d', '/c', command] : ['-lc', command],
-      working_directory: projectPath.value,
-    }
-    const idempotencyKey = await userToolActionIdempotencyKey('desktop:detached:shell', {
-      project_path: projectPath.value,
-      command,
-    })
-    const action = await createUserToolActionForPath(projectPath.value, 'command_run', params, idempotencyKey)
-    const approval = userToolActionToApproval(action, t('approval.runCommandSummary', { command }), {
-      sessionId: sessionId.value,
-      cwd: projectPath.value,
-    })
-    approvals.value = [approval, ...approvals.value]
-  } catch (err) {
-    notify.error(err, { title: t('approval.requestFailed') })
-  } finally {
-    busy.value = false
-  }
-}
-
 async function decideApproval(
   approval: ApprovalDto,
   decision: 'approved' | 'rejected',
-  scope?: 'once' | 'run',
+  optionsOrScope?: 'once' | 'run' | { scope?: 'once' | 'run' | null; reason?: string | null; rememberRule?: ApprovalRememberRuleInput | null },
 ) {
+  const opts = typeof optionsOrScope === 'string' ? { scope: optionsOrScope } : (optionsOrScope ?? {})
   try {
-    await api.decideApproval(approval.id, decision, null, scope)
+    await api.decideApproval(approval.id, decision, opts.reason ?? null, opts.scope ?? undefined, opts.rememberRule ?? null)
+    await loadData()
+  } catch (err) {
+    notify.error(err, { title: t('approval.decideFailed') })
+  }
+}
+
+async function batchDecideApprovals(input: BatchApprovalDecisionInput) {
+  try {
+    await api.batchDecideApprovals(input)
     await loadData()
   } catch (err) {
     notify.error(err, { title: t('approval.decideFailed') })
@@ -330,12 +308,13 @@ watch(sessionId, () => {
         <ApprovalTab
           v-else-if="tabType === 'approval'"
           :approvals="approvals"
-          :shell-command="shellCommand"
+          :approval-rules="approvalRules"
           :busy="busy"
           :selected-session-id="sessionId"
-          @request-approval="requestShellApproval"
           @decide-approval="decideApproval"
-          @update:shell-command="shellCommand = $event"
+          @batch-decide="batchDecideApprovals"
+          @revoke-approval-rule="revokeApprovalRule"
+          @create-approval-rule="createApprovalRule"
         />
 
         <OrchestrationTab

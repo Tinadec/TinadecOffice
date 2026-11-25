@@ -92,8 +92,18 @@ const runs = computed<RunView[]>(() => {
   return props.turn.runs.map(({ run, activity, streamingText }) => {
     // Only the settled run is trimmed: while it works the newest rows are the point, and a
     // parked run is something the reader has to decide on.
-    const grouped = activity ? groupRun(activity, isLiveRunStatus(run.status), { quiet: shape.quiet, budget: shape.budget }) : null
-    const known = new Set(grouped?.approvals.map((approval) => approval.entry.approvalId).filter(Boolean))
+    const rawGrouped = activity ? groupRun(activity, isLiveRunStatus(run.status), { quiet: shape.quiet, budget: shape.budget }) : null
+    const grouped = rawGrouped
+      ? {
+          ...rawGrouped,
+          approvals: rawGrouped.approvals.filter((pending) => {
+            if (!pending.entry.approvalId) return true
+            const record = approvalsById.value.get(pending.entry.approvalId)
+            return !record || record.status === 'pending'
+          }),
+        }
+      : null
+    const known = new Set(rawGrouped?.approvals.map((approval) => approval.entry.approvalId).filter(Boolean))
     const orphanApprovals = props.approvals.filter((approval) =>
       approval.run_id === run.id && approval.status === 'pending' && !known.has(approval.id))
     const live = isLiveRunStatus(run.status)

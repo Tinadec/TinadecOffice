@@ -9,7 +9,11 @@ import {
   api,
   createUserToolActionForPath,
   type ApprovalDto,
+  type ApprovalPolicySummaryDto,
+  type ApprovalRememberRuleInput,
   type ApprovalRuleDto,
+  type BatchApprovalDecisionInput,
+  type BatchApprovalDecisionResultDto,
   type CreateApprovalRuleInput,
   type EventEnvelope,
   type MessageDto,
@@ -73,6 +77,7 @@ const lastSessionByView: Record<SessionView, string | null> = { flat: null, spac
 const messages = ref<MessageDto[]>([])
 const approvals = ref<ApprovalDto[]>([])
 const approvalRules = ref<ApprovalRuleDto[]>([])
+const approvalPolicy = ref<ApprovalPolicySummaryDto | null>(null)
 const events = ref<EventEnvelope[]>([])
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const modelSettings = ref<ModelSettingsDto | null>(null)
@@ -1374,27 +1379,133 @@ async function requestShellApproval() {
   })
 }
 
+export interface ApprovalDecisionOptions {
+  scope?: 'once' | 'run' | null
+  reason?: string | null
+  rememberRule?: ApprovalRememberRuleInput | null
+}
+
+function normalizeApprovalDecisionOptions(
+  optionsOrScope?: 'once' | 'run' | ApprovalDecisionOptions | null,
+): ApprovalDecisionOptions {
+  if (!optionsOrScope) return {}
+  if (typeof optionsOrScope === 'string') return { scope: optionsOrScope }
+  return optionsOrScope
+}
+
+async function loadApprovalPolicy(signal?: AbortSignal): Promise<ApprovalPolicySummaryDto | null> {
+  if (!canAccessBackend.value) return approvalPolicy.value
+  const storage = selectedStorageId()
+  try {
+    const policy = await api.getApprovalPolicy({ signal })
+    if (storage === selectedStorageId()) approvalPolicy.value = policy
+    return policy
+  } catch {
+    return approvalPolicy.value
+  }
+}
+
+async function refreshApprovalSlices(sessionId: string | null) {
+  if (!sessionId || !canAccessBackend.value) return
+  await loadMessagesAndApprovals()
+}
+
 async function decideApproval(
   approval: ApprovalDto,
   decision: 'approved' | 'rejected',
-  scope?: 'once' | 'run',
+  optionsOrScope?: 'once' | 'run' | ApprovalDecisionOptions | null,
 ) {
+  const opts = normalizeApprovalDecisionOptions(optionsOrScope)
+  const trimmedReason = opts.reason?.trim() || null
   await run(t('home.action.decideApproval'), async () => {
-    await api.decideApproval(approval.id, decision, null, scope)
-    await loadMessagesAndApprovals()
+    const result = await api.decideApproval(
+      approval.id,
+      decision,
+      trimmedReason,
+      opts.scope ?? undefined,
+      opts.rememberRule ?? null,
+    )
+    const now = new Date().toISOString()
+    approvals.value = approvals.value.map((item) =>
+      item.id === approval.id
+        ? {
+            ...item,
+            status: result?.status ?? decision,
+            decision,
+            decided_at: result?.decided_at ?? now,
+            decision_reason: result?.decision_reason ?? trimmedReason ?? item.decision_reason ?? null,
+          }
+        : item,
+    )
+    await refreshApprovalSlices(selectedSessionId.value)
   })
 }
 
 /**
- * Decide by id, for the chat's inline approve/reject buttons. Those buttons sit on a
- * tool card, which knows the approval id but not the whole approval record, and the
- * chat had no handler at all before — the button existed and clicked into nothing.
+ * Decide by id, for the chat's inline approve/reject buttons and atomic remember-rule actions.
+ * Refreshes `approvals` and `approvalRules` in lockstep so right-hand `ApprovalTab` and
+ * in-stream `conversation/ApprovalCard` stay 100% synced.
  */
-async function decideApprovalById(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'run') {
+async function decideApprovalById(
+  approvalId: string,
+  decision: 'approved' | 'rejected',
+  optionsOrScope?: 'once' | 'run' | ApprovalDecisionOptions | null,
+) {
+  const opts = normalizeApprovalDecisionOptions(optionsOrScope)
+  const trimmedReason = opts.reason?.trim() || null
   await run(t('home.action.decideApproval'), async () => {
-    await api.decideApproval(approvalId, decision, null, scope)
-    await loadMessagesAndApprovals()
+    const result = await api.decideApproval(
+      approvalId,
+      decision,
+      trimmedReason,
+      opts.scope ?? undefined,
+      opts.rememberRule ?? null,
+    )
+    const now = new Date().toISOString()
+    approvals.value = approvals.value.map((item) =>
+      item.id === approvalId
+        ? {
+            ...item,
+            status: result?.status ?? decision,
+            decision,
+            decided_at: result?.decided_at ?? now,
+            decision_reason: result?.decision_reason ?? trimmedReason ?? item.decision_reason ?? null,
+          }
+        : item,
+    )
+    await refreshApprovalSlices(selectedSessionId.value)
   })
+}
+
+async function batchDecideApprovals(input: BatchApprovalDecisionInput): Promise<BatchApprovalDecisionResultDto | null> {
+  if (!input.approval_ids.length) return { results: [] }
+  let response: BatchApprovalDecisionResultDto | null = null
+  const trimmedReason = input.reason?.trim() || null
+  await run(t('home.action.decideApproval'), async () => {
+    response = await api.batchDecideApprovals({
+      ...input,
+      ...(trimmedReason ? { reason: trimmedReason } : { reason: undefined }),
+    })
+    const succeeded = new Map(
+      (response?.results ?? []).filter((item) => item.ok).map((item) => [item.id, item]),
+    )
+    if (succeeded.size > 0) {
+      const now = new Date().toISOString()
+      approvals.value = approvals.value.map((item) => {
+        const hit = succeeded.get(item.id)
+        if (!hit) return item
+        return {
+          ...item,
+          status: hit.status ?? input.decision,
+          decision: input.decision,
+          decided_at: now,
+          decision_reason: trimmedReason ?? item.decision_reason ?? null,
+        }
+      })
+    }
+    await refreshApprovalSlices(selectedSessionId.value)
+  })
+  return response
 }
 
 async function revokeApprovalRule(rule: ApprovalRuleDto) {
@@ -1543,6 +1654,12 @@ watch(selectedProjectId, id => {
 
 watch([selectedSessionId, selectedStorage], ([, storageId], [, previousStorage]) => {
   sessionLoadAbort?.abort()
+  if (storageId !== previousStorage) {
+    approvalPolicy.value = null
+    void loadApprovalPolicy()
+  } else if (!approvalPolicy.value) {
+    void loadApprovalPolicy()
+  }
   messages.value = storageId !== previousStorage ? [] : messages.value.filter((message) => message.session_id === selectedSessionId.value)
   transcriptLoading.value = Boolean(selectedSessionId.value) && messages.value.length === 0
   orchestration.value = null
@@ -1650,6 +1767,7 @@ export const homeController = {
   messages,
   approvals,
   approvalRules,
+  approvalPolicy,
   events,
   recentEvents,
   readiness,
@@ -1730,10 +1848,12 @@ export const homeController = {
   handleWelcomeSend: (payload: ComposerSubmitOptions & { content: string }) => handleSend(payload.content, payload),
   editAndResend,
   requestShellApproval,
+  loadApprovalPolicy,
   decideApproval,
-    decideApprovalById,
-    revokeApprovalRule,
-    createApprovalRule,
+  decideApprovalById,
+  batchDecideApprovals,
+  revokeApprovalRule,
+  createApprovalRule,
   stopRun,
   executeCatalogTool,
   stoppableRunId,

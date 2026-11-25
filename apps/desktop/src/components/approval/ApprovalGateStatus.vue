@@ -1,57 +1,106 @@
 <script setup lang="ts">
 /**
  * Where a delegated approval stands (delegate-* permission modes): which gate was asked, what it
- * decided and why. Renders nothing for an approval that was never delegated. Polls only while a
- * gate is still deciding, so a settled card costs nothing; the person's own buttons stay beside it
- * and always win.
+ * decided and why. Renders nothing for an approval that was never delegated. Loads once via REST
+ * and listens to `approval.gate_updated` on the shared session SSE bus, with an ultra-low-frequency
+ * 30s safety fallback only while still evaluating without any SSE event.
  */
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type ApprovalGatesDto } from '@/api'
+import { api, type ApprovalGateDto, type ApprovalGatesDto, type EventEnvelope } from '@/api'
+import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 
 const props = defineProps<{ approvalId: string }>()
 const { t, te } = useI18n()
 const gates = ref<ApprovalGatesDto | null>(null)
-let timer: ReturnType<typeof setTimeout> | null = null
+let fallbackTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 let generation = 0
+let sseDelivered = false
 
-const POLL_MS = 2000
+const SAFETY_FALLBACK_MS = 30_000
+
+function clearFallbackTimer() {
+  if (fallbackTimer !== null) {
+    clearTimeout(fallbackTimer)
+    fallbackTimer = null
+  }
+}
+
+function scheduleSafetyFallback() {
+  clearFallbackTimer()
+  if (!disposed && !sseDelivered && gates.value?.status === 'evaluating') {
+    fallbackTimer = setTimeout(() => {
+      fallbackTimer = null
+      void load()
+    }, SAFETY_FALLBACK_MS)
+  }
+}
 
 async function load() {
   const asked = ++generation
   try {
     const result = await api.getApprovalGates(props.approvalId)
-    // A late answer for an approval this card no longer shows is dropped.
     if (disposed || asked !== generation) return
     gates.value = result
   } catch {
-    // Transient: the next poll (if any) tries again; the buttons do not depend on this.
+    // Transient read error; SSE updates or safety fallback can still populate later.
   }
-  schedule()
+  scheduleSafetyFallback()
 }
 
-function schedule() {
-  if (timer) clearTimeout(timer)
-  timer = null
-  if (!disposed && gates.value?.status === 'evaluating') timer = setTimeout(load, POLL_MS)
+function handleSessionEvent(event: EventEnvelope) {
+  if (disposed || event.type !== 'approval.gate_updated') return
+  const payload = event.payload as Record<string, unknown> | null | undefined
+  if (!payload || payload.approval_id !== props.approvalId) return
+  sseDelivered = true
+  generation += 1
+  clearFallbackTimer()
+  if (typeof payload.status === 'string' && Array.isArray(payload.gates)) {
+    gates.value = {
+      approval_id: props.approvalId,
+      run_id: event.run_id ?? gates.value?.run_id ?? null,
+      status: payload.status,
+      gates: payload.gates as ApprovalGateDto[],
+    }
+  } else {
+    void load()
+  }
 }
 
-watch(() => props.approvalId, () => { gates.value = null; void load() }, { immediate: true })
-onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer) })
+const unsubscribe = subscribeToSessionEvents(handleSessionEvent)
 
-const rows = computed(() => (gates.value?.gates ?? []).map((gate) => ({
-  key: `${gate.gate_index}-${gate.gate_kind}`,
-  who: gate.gate_kind === 'conversation_identity' ? t('approval.gates.conversation') : t('approval.gates.reviewer'),
-  decider: gate.decider_agent,
-  status: gate.status,
-  statusLabel: te(`approval.gates.status.${gate.status}`) ? t(`approval.gates.status.${gate.status}`) : gate.status,
-  reason: gate.reason,
-})))
+watch(
+  () => props.approvalId,
+  () => {
+    sseDelivered = false
+    clearFallbackTimer()
+    gates.value = null
+    void load()
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  disposed = true
+  clearFallbackTimer()
+  unsubscribe()
+})
+
+const rows = computed(() =>
+  (gates.value?.gates ?? []).map((gate, idx) => ({
+    key: `${gate.gate_index ?? idx}-${gate.gate_kind}`,
+    who: gate.gate_kind === 'conversation_identity' ? t('approval.gates.conversation') : t('approval.gates.reviewer'),
+    decider: gate.decider_agent ?? null,
+    status: gate.status,
+    statusLabel: te(`approval.gates.status.${gate.status}`) ? t(`approval.gates.status.${gate.status}`) : gate.status,
+    reason: gate.reason ?? null,
+  })),
+)
 </script>
 
 <template>
-  <div v-if="gates" class="approval-gates" :data-status="gates.status" role="status">
+  <div v-if="gates" class="approval-gates" :data-status="gates.status" data-testid="approval-gate-status" role="status">
     <span class="approval-gates-title">{{ t('approval.gates.title') }}</span>
     <ul>
       <li v-for="row in rows" :key="row.key" :data-gate-status="row.status">

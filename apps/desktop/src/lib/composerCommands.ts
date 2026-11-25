@@ -38,13 +38,24 @@ export const composerSettings = [
 ] as const satisfies readonly ComposerSettingEntry[]
 
 export type PermissionRisk = 'neutral' | 'low' | 'medium' | 'high'
-export const permissionChoices: ReadonlyArray<{ value: PermissionLevel; label: string; hint: string; icon: Component; risk: PermissionRisk }> = [
-  { value: 'default', label: 'permission.default', hint: 'permission.defaultHint', icon: Shield, risk: 'neutral' },
-  { value: 'auto-approve', label: 'permission.autoApprove', hint: 'permission.autoApproveHint', icon: ShieldCheck, risk: 'medium' },
-  { value: 'full-access', label: 'permission.fullAccess', hint: 'permission.fullAccessHint', icon: ShieldAlert, risk: 'high' },
-  { value: 'delegate-conversation', label: 'permission.delegateConversation', hint: 'permission.delegateConversationHint', icon: UserCheck, risk: 'medium' },
-  { value: 'delegate-reviewer', label: 'permission.delegateReviewer', hint: 'permission.delegateReviewerHint', icon: Eye, risk: 'low' },
-  { value: 'delegate-both', label: 'permission.delegateBoth', hint: 'permission.delegateBothHint', icon: Users, risk: 'low' },
+export type PermissionGroup = 'standard' | 'delegated'
+
+export interface PermissionChoice {
+  readonly value: PermissionLevel
+  readonly label: string
+  readonly hint: string
+  readonly icon: Component
+  readonly risk: PermissionRisk
+  readonly group: PermissionGroup
+}
+
+export const permissionChoices: ReadonlyArray<PermissionChoice> = [
+  { value: 'default', label: 'permission.default', hint: 'permission.defaultHint', icon: Shield, risk: 'neutral', group: 'standard' },
+  { value: 'auto-approve', label: 'permission.autoApprove', hint: 'permission.autoApproveHint', icon: ShieldCheck, risk: 'medium', group: 'standard' },
+  { value: 'full-access', label: 'permission.fullAccess', hint: 'permission.fullAccessHint', icon: ShieldAlert, risk: 'high', group: 'standard' },
+  { value: 'delegate-conversation', label: 'permission.delegateConversation', hint: 'permission.delegateConversationHint', icon: UserCheck, risk: 'medium', group: 'delegated' },
+  { value: 'delegate-reviewer', label: 'permission.delegateReviewer', hint: 'permission.delegateReviewerHint', icon: Eye, risk: 'low', group: 'delegated' },
+  { value: 'delegate-both', label: 'permission.delegateBoth', hint: 'permission.delegateBothHint', icon: Users, risk: 'low', group: 'delegated' },
 ]
 
 // Only the first token is a command. Absolute paths and prose containing slashes

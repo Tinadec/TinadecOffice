@@ -45,7 +45,7 @@ const { t } = useI18n()
 const router = useRouter()
 
 function openGovernanceRuntimeDrawer() {
-  focusDockCard({ card: 'approval', approvalTab: 'runtime' })
+  focusDockCard({ card: 'approval', approvalTab: 'pending' })
   void router.push({ name: 'home' })
 }
 

@@ -386,12 +386,11 @@ async function readFile(path: string) {
         </template>
       </template>
       <template v-else-if="object.kind === 'approval'">
-        <ApprovalTab v-if="!preview && approvalSessionId" compact :approvals="approvals" :approval-rules="approvalRules" :shell-command="c.shellCommand.value" :busy="c.busy.value" :selected-session-id="approvalSessionId"
-          @request-approval="c.requestShellApproval()"
+        <ApprovalTab v-if="!preview && approvalSessionId" compact :approvals="approvals" :approval-rules="approvalRules" :busy="c.busy.value" :selected-session-id="approvalSessionId"
           @decide-approval="decideApproval"
+          @batch-decide="c.batchDecideApprovals($event)"
           @revoke-approval-rule="c.revokeApprovalRule($event)"
-          @create-approval-rule="c.createApprovalRule($event)"
-          @update:shell-command="c.shellCommand.value = $event" />
+          @create-approval-rule="c.createApprovalRule($event)" />
         <template v-else>
           <p v-if="!approvals.length" class="space-muted">{{ t('space.noApprovals') }}</p>
           <div v-for="a in approvals" :key="a.id" class="space-todo-row"><ShieldCheck :size="18" /><div>{{ approvalSummary(a, { t, te }) }}<small>{{ status(a.status) }}</small></div></div>

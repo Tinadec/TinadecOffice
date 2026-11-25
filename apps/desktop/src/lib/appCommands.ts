@@ -195,7 +195,7 @@ export const appCommands: readonly AppCommand[] = [
     run: (host) => {
       if (host.routeName() !== 'home') host.navigate('home')
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'approval', approvalTab: 'governance' } }))
+        window.dispatchEvent(new CustomEvent('tinadec:focus-home-dock', { detail: { card: 'approval', approvalTab: 'pending' } }))
       }
     },
   },

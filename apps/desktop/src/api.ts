@@ -170,6 +170,54 @@ export interface CreateApprovalRuleInput {
   session_id?: string | null
 }
 
+export interface ApprovalPolicySummaryDto {
+  policy_version: string;
+  enabled: boolean;
+  risk_max: string;
+  delegated_risk_max: string;
+  max_per_run: number;
+  release_read_only_in_ask_mode: boolean;
+  human_only_tools: string[];
+  delegation_blocked_tools: string[];
+}
+
+export interface ApprovalRememberRuleInput {
+  kind: 'command_prefix' | 'delegate_tool';
+  pattern?: string | null;
+  scope?: 'session' | 'workspace' | null;
+}
+
+export interface ApprovalDecisionResultDto {
+  id: string;
+  status: string;
+  decided_at?: string | null;
+  scope?: string | null;
+  run_scope_released?: number | null;
+  pre_authorization_id?: string | null;
+  capability_grant_id?: string | null;
+  created_rule_id?: string | null;
+  decision_reason?: string | null;
+}
+
+export interface BatchApprovalDecisionInput {
+  approval_ids: string[];
+  decision: 'approved' | 'rejected';
+  reason?: string | null;
+  scope?: 'once' | 'run' | null;
+}
+
+export interface BatchApprovalDecisionItemResultDto {
+  id: string;
+  ok: boolean;
+  status?: string | null;
+  error_code?: string | null;
+  error?: string | null;
+}
+
+export interface BatchApprovalDecisionResultDto {
+  results: BatchApprovalDecisionItemResultDto[];
+}
+
 export interface PreAuthorizationDto {
   id: string;
   run_id: string;
@@ -4009,19 +4057,42 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, expected_sha256: expectedSha256 }),
     }),
+  getApprovalPolicy: (options?: { signal?: AbortSignal }) =>
+    cachedRead(catalogKey('approval-policy'), () => request<ApprovalPolicySummaryDto>('/api/v1/approvals/policy'), options?.signal),
   /**
-   * Decide a pending approval. `scope: 'run'` is "always allow this tool for this
-   * session": Core mints a run-scoped pre-authorization plus a run-scoped capability
-   * grant, and releases the run's other pending requests for the same tool. Without
-   * a scope the decision stays a one-shot.
+   * Decide a pending approval. `scope: 'run'` grants this tool for the current run
+   * (both `tool` and `permission` kinds, never `spec_propose`); `rememberRule`
+   * atomically persists a session/workspace approval rule in the same decision.
    */
-  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null, scope?: 'once' | 'run') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+  decideApproval: (
+    approvalId: string,
+    decision: 'approved' | 'rejected',
+    reason?: string | null,
+    scope?: 'once' | 'run' | null,
+    rememberRule?: ApprovalRememberRuleInput | null,
+  ) => request<ApprovalDecisionResultDto>(`/api/v1/approvals/${encodeURIComponent(approvalId)}/decision`, {
     method: 'POST',
     body: JSON.stringify({
       decision,
       ...(reason ? { reason } : {}),
       ...(scope ? { scope } : {}),
-    })
+      ...(rememberRule ? {
+        remember_rule: {
+          kind: rememberRule.kind,
+          ...(rememberRule.pattern != null ? { pattern: rememberRule.pattern } : {}),
+          ...(rememberRule.scope != null ? { scope: rememberRule.scope } : {}),
+        },
+      } : {}),
+    }),
+  }),
+  batchDecideApprovals: (input: BatchApprovalDecisionInput) => request<BatchApprovalDecisionResultDto>('/api/v1/approvals/batch-decision', {
+    method: 'POST',
+    body: JSON.stringify({
+      approval_ids: input.approval_ids,
+      decision: input.decision,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.scope ? { scope: input.scope } : {}),
+    }),
   }),
   createPreAuthorization: (input: CreatePreAuthorizationInput) => request<PreAuthorizationDto>('/api/v1/approvals/pre-authorizations', {
     method: 'POST',

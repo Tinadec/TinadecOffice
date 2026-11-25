@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type ApprovalDto } from '@/api'
+import type { ApprovalDto } from '@/api'
 import ApprovalGateStatus from '@/components/approval/ApprovalGateStatus.vue'
 import { Spinner } from '@/components/ui/spinner'
 import { homeController } from '@/controllers/HomeController'
@@ -9,17 +9,16 @@ import { useAgentDirectory } from '@/composables/useAgentDirectory'
 import { useDelayedLoading } from '@/composables/useDelayedLoading'
 import { useNotifications } from '@/composables/useNotifications'
 import { entrySentence, verbKey } from '@/lib/conversation/toolSentence'
-import { interfaceLocale } from '@/lib/interfaceLocale'
 import type { SubAgent, ToolEntry } from '@/lib/conversation/reducer'
 
 /**
  * A call waiting on a person, always outside any fold and naming the sub-agent that asked.
  * The facts are Core's approval evidence (command, directory, target), never raw parameters.
  *
- * Approve · Approve for this run (scope=run) · Reject · Do this instead (reject, then send the
- * correction into the run as an insert) · for a shell call, Always allow commands starting with
- * its first word (a command-prefix rule, then approve this one). ⌘/Ctrl+Enter approves,
- * ⌘/Ctrl+Backspace rejects, Esc closes the correction field.
+ * Approve · Approve for this run (scope=run) · Reject · Do this instead (atomic reject with
+ * steering `reason`) · for a shell call, Always allow commands starting with its prefix (single
+ * atomic `remember_rule` decision). ⌘/Ctrl+Enter approves, ⌘/Ctrl+Backspace rejects, Esc closes
+ * the correction field.
  */
 const props = defineProps<{
   entry: ToolEntry
@@ -40,14 +39,19 @@ const correcting = ref(false)
 const correction = ref('')
 const correctionField = ref<HTMLTextAreaElement | null>(null)
 
+const approvalId = computed(() => props.approval?.id ?? props.entry.approvalId)
+const liveApproval = computed(
+  () => props.approval ?? (approvalId.value ? homeController.approvals.value.find((item) => item.id === approvalId.value) ?? null : null),
+)
+const isSettled = computed(() => Boolean(liveApproval.value && liveApproval.value.status !== 'pending'))
+
 const sentence = computed(() => entrySentence(props.entry, props.workspaceRoot))
 const question = computed(() => t(verbKey(sentence.value.verb, 'done'), { subject: sentence.value.subject ?? props.entry.toolId }))
-const command = computed(() => props.approval?.command ?? props.entry.command)
-const directory = computed(() => props.approval?.cwd ?? props.entry.cwd)
-const target = computed(() => (command.value ? null : props.approval?.resource_path ?? props.entry.resourcePath))
-const approvalId = computed(() => props.approval?.id ?? props.entry.approvalId)
+const command = computed(() => liveApproval.value?.command ?? props.entry.command)
+const directory = computed(() => liveApproval.value?.cwd ?? props.entry.cwd)
+const target = computed(() => (command.value ? null : liveApproval.value?.resource_path ?? props.entry.resourcePath))
 const requesterName = computed(() => (props.requester ? nameFor(props.requester.handle ?? props.requester.agentSlug) : ''))
-const commandPrefix = computed(() => (sentence.value.verb === 'run' && command.value ? command.value.trim().split(/\s+/)[0] ?? null : null))
+const commandPrefix = computed(() => (sentence.value.verb === 'run' && command.value ? command.value.trim().split(/\s+/)[0]?.replace(/\*/g, '') || null : null))
 
 async function act(action: Action, work: (id: string) => Promise<unknown>) {
   const id = approvalId.value
@@ -63,7 +67,7 @@ async function act(action: Action, work: (id: string) => Promise<unknown>) {
 }
 
 const approve = () => act('approve', (id) => homeController.decideApprovalById(id, 'approved'))
-const approveRun = () => act('approveRun', (id) => homeController.decideApprovalById(id, 'approved', 'run'))
+const approveRun = () => act('approveRun', (id) => homeController.decideApprovalById(id, 'approved', { scope: 'run' }))
 const reject = () => act('reject', (id) => homeController.decideApprovalById(id, 'rejected'))
 
 async function openCorrection() {
@@ -74,10 +78,8 @@ async function openCorrection() {
 
 const sendCorrection = () => act('instead', async (id) => {
   const content = correction.value.trim()
-  const sessionId = homeController.currentSession.value?.id
-  if (!content || !sessionId) return
-  await homeController.decideApprovalById(id, 'rejected')
-  await api.createInteraction(sessionId, { content, client_message_id: crypto.randomUUID(), dispatch_mode: 'insert', target_run_id: props.runId, interface_locale: interfaceLocale() })
+  if (!content) return
+  await homeController.decideApprovalById(id, 'rejected', { reason: content })
   correcting.value = false
   correction.value = ''
 })
@@ -85,8 +87,13 @@ const sendCorrection = () => act('instead', async (id) => {
 const allowPrefix = () => act('rule', async (id) => {
   const prefix = commandPrefix.value
   if (!prefix) return
-  await homeController.createApprovalRule({ kind: 'command_prefix', tool_id: props.entry.toolId, pattern: prefix, session_id: homeController.currentSession.value?.id ?? null })
-  await homeController.decideApprovalById(id, 'approved')
+  await homeController.decideApprovalById(id, 'approved', {
+    rememberRule: {
+      kind: 'command_prefix',
+      pattern: prefix,
+      scope: 'session',
+    },
+  })
 })
 
 function onKeydown(event: KeyboardEvent) {
@@ -105,7 +112,7 @@ function onKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="conversation-card conversation-approval" role="group" :aria-label="t('conversation.approval.title')" :aria-busy="busy ? 'true' : undefined" data-testid="approval-card" @keydown="onKeydown">
+  <section v-if="!isSettled" class="conversation-card conversation-approval" role="group" :aria-label="t('conversation.approval.title')" :aria-busy="busy ? 'true' : undefined" data-testid="approval-card" @keydown="onKeydown">
     <header class="conversation-approval-head">
       <span class="conversation-approval-title">{{ t('conversation.approval.title') }}</span>
       <span v-if="requesterName" class="conversation-approval-requester">{{ t('conversation.approval.requestedBy', { name: requesterName }) }}</span>

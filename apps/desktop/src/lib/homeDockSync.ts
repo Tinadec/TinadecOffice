@@ -7,7 +7,7 @@ export type HomeDockCardId = 'live-digest' | 'agent' | 'git' | 'orchestration' |
 export type DockSyncReason = 'digest' | 'dispatch' | 'worktree' | 'approval' | 'worker' | 'code'
 export type GitDockTab = 'changes' | 'history' | 'branches' | 'stash'
 export type GitDockSubView = 'diff' | 'file_history' | 'blame'
-export type ApprovalDockTab = 'approvals' | 'governance' | 'runtime'
+export type ApprovalDockTab = 'pending' | 'rules' | 'history' | 'approvals'
 
 export interface DockFocusTarget {
   card: HomeDockCardId
