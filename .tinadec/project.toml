@@ -14,3 +14,7 @@ color = "default"
 [[workspace.roots]]
 id = "ddd57c67-a9f1-46c3-b7e5-e0b8cca3e758"
 path = "."
+
+[[workspace.roots]]
+id = "9af22241-089f-4166-8b27-29cd0e21631d"
+path = "../TinadecDenv"
