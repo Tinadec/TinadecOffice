@@ -1287,12 +1287,45 @@ const app = new Elysia()
     const q = query as Record<string,unknown>;
     if (q.status) params.set('status', String(q.status));
     if (q.session_id) params.set('session_id', String(q.session_id));
-    const result = await proxyJson(`/api/v1/approvals?${params.toString()}`, { headers });
+    if (q.run_id) params.set('run_id', String(q.run_id));
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const result = await proxyJson(`/api/v1/approvals${suffix}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/approvals'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List approvals', tags: ['System'] } })
+  .get('/api/v1/approvals/policy', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/approvals/policy';
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Get effective approval policy summary',
+      tags: ['System'],
+      responses: { 200: externalJsonResponse('ApprovalPolicySummary', 'Effective read-only approval policy summary.') },
+    },
+  })
+  .post('/api/v1/approvals/batch-decision', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/approvals/batch-decision';
+    const result = await proxyJson(path, { method: 'POST', body: (body as Record<string, unknown> | undefined) ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Decide multiple approvals in a batch',
+      tags: ['System'],
+      requestBody: externalJsonRequest('BatchApprovalDecisionRequest'),
+      responses: { 200: externalJsonResponse('BatchApprovalDecisionResponse', 'Per-approval batch decision outcomes.') },
+    },
+  })
   .get('/api/v1/approval-rules', async ({ request }) => {
     const url = new URL(request.url);
     return proxyRaw(url.pathname + url.search, { headers: forwardHeaders(request) });
@@ -1309,12 +1342,23 @@ const app = new Elysia()
     }), { detail: { summary: 'Revoke approval rule', tags: ['System'] } })
   .post('/api/v1/approvals/:approvalId/decision', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/approvals/${params.approvalId}/decision`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    const path = `/api/v1/approvals/${encodeURIComponent(params.approvalId)}/decision`;
+    const result = await proxyJson(path, { method: 'POST', body: (body as Record<string, unknown> | undefined) ?? {}, headers });
     setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/approvals/${params.approvalId}/decision`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Decide approval', tags: ['System'] } })
+  }, {
+    detail: {
+      summary: 'Decide approval',
+      tags: ['System'],
+      requestBody: externalJsonRequest('ApprovalDecisionRequest'),
+      responses: {
+        200: externalJsonResponse('ApprovalDecisionResponse', 'Approval decision outcome.'),
+        202: externalJsonResponse('ApprovalDecisionResponse', 'Pending user tool action decision accepted.'),
+      },
+    },
+  })
   .post('/api/v1/approvals/pre-authorizations', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/approvals/pre-authorizations', { method: 'POST', body: body as Record<string, unknown>, headers });

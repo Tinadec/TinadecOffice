@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import { app } from './index.js';
+
+function sortKeysRecursively(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysRecursively);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, sortKeysRecursively((value as Record<string, unknown>)[key])]),
+    );
+  }
+  return value;
+}
 
 function valueAt(root: unknown, ...path: string[]): unknown {
   let current = root;
@@ -53,4 +67,44 @@ test('openapi external contract — serves valid document with host security sch
   assert.ok('ProjectBoardSettings' in schemas, 'ProjectBoardSettings schema must exist');
   assert.ok('ProjectBoardSummary' in schemas, 'ProjectBoardSummary schema must exist');
   assert.ok('ProjectBoardView' in schemas, 'ProjectBoardView schema must exist');
+
+  // Approval redesign schemas and paths (preserved /gates from organizationRoutes + policy, decision, batch-decision).
+  for (const name of [
+    'ApprovalPolicySummary',
+    'ApprovalRememberRuleInput',
+    'ApprovalDecisionRequest',
+    'ApprovalDecisionResponse',
+    'BatchApprovalDecisionRequest',
+    'BatchApprovalDecisionItem',
+    'BatchApprovalDecisionResponse',
+  ]) {
+    assert.ok(name in schemas, `${name} schema must exist`);
+  }
+  assert.deepEqual(valueAt(schemas, 'ApprovalPolicySummary', 'required'), [
+    'policy_version',
+    'enabled',
+    'risk_max',
+    'delegated_risk_max',
+    'max_per_run',
+    'release_read_only_in_ask_mode',
+    'human_only_tools',
+    'delegation_blocked_tools',
+  ]);
+  assert.equal(valueAt(schemas, 'ApprovalPolicySummary', 'properties', 'max_per_run', 'type'), 'integer');
+  assert.equal(valueAt(schemas, 'ApprovalRememberRuleInput', 'additionalProperties'), false);
+  assert.deepEqual(valueAt(schemas, 'ApprovalRememberRuleInput', 'properties', 'kind', 'enum'), ['command_prefix', 'delegate_tool']);
+  assert.equal(valueAt(schemas, 'ApprovalDecisionRequest', 'additionalProperties'), false);
+  assert.equal(valueAt(schemas, 'BatchApprovalDecisionRequest', 'additionalProperties'), false);
+  assert.equal(valueAt(schemas, 'BatchApprovalDecisionRequest', 'properties', 'approval_ids', 'minItems'), 1);
+  assert.equal(valueAt(schemas, 'BatchApprovalDecisionRequest', 'properties', 'approval_ids', 'maxItems'), 50);
+
+  assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/policy', 'get'), 'GET /api/v1/approvals/policy must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/batch-decision', 'post'), 'POST /api/v1/approvals/batch-decision must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/{approvalId}/decision', 'post'), 'POST /api/v1/approvals/{approvalId}/decision must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/{approvalId}/gates', 'get'), 'GET /api/v1/approvals/{approvalId}/gates must remain registered');
+
+  const snapshotPath = resolve(import.meta.dir, '../tests/__snapshots__/openapi.external.json');
+  const committedSnapshot = readFileSync(snapshotPath, 'utf8').replace(/\r\n/g, '\n');
+  const liveSerialized = JSON.stringify(sortKeysRecursively(doc), null, 2) + '\n';
+  assert.equal(liveSerialized, committedSnapshot, 'openapi.external.json snapshot must match sorted /docs/json');
 });

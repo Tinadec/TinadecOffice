@@ -738,3 +738,189 @@ test('tool execution preview is a no-store passthrough that keeps Core problem c
   assert.equal(problem.code, 'tool_execution_not_found');
   assert.equal(problem.instance, '/api/v1/tool-executions/e-2/preview');
 });
+
+test('approval policy, run_id list filter, atomic remember_rule decision, and batch-decision proxy to Core', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined; headers: Headers }> = [];
+  const policySummary = {
+    policy_version: 'tool-approval-v1',
+    enabled: true,
+    risk_max: 'medium',
+    delegated_risk_max: 'medium',
+    max_per_run: 32,
+    release_read_only_in_ask_mode: true,
+    human_only_tools: ['git_push', 'command_run', 'shell'],
+    delegation_blocked_tools: ['web_fetch', 'mcp_invoke'],
+  };
+  const decisionResponse = {
+    id: '11111111-1111-4111-8111-111111111111',
+    status: 'approved',
+    decided_at: '2026-11-25T03:00:00Z',
+    scope: 'once',
+    run_scope_released: 0,
+    pre_authorization_id: null,
+    capability_grant_id: null,
+    created_rule_id: 'rule-99999999-9999-4999-8999-999999999999',
+    decision_reason: null,
+  };
+  const rejectionResponse = {
+    id: '22222222-2222-4222-8222-222222222222',
+    status: 'rejected',
+    decided_at: '2026-11-25T03:01:00Z',
+    scope: 'once',
+    decision_reason: 'Use rg instead of find.',
+  };
+  const batchResponse = {
+    results: [
+      { id: '11111111-1111-4111-8111-111111111111', ok: true, status: 'approved', error_code: null, error: null },
+      { id: '33333333-3333-4333-8333-333333333333', ok: false, status: null, error_code: 'already_decided', error: 'Approval already decided.' },
+    ],
+  };
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({
+      url,
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      headers: new Headers(init?.headers),
+    });
+    const pathname = new URL(url).pathname;
+    if (pathname === '/api/v1/approvals/policy') {
+      return new Response(JSON.stringify(policySummary), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (pathname === '/api/v1/approvals') {
+      return new Response(JSON.stringify([]), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (pathname === '/api/v1/approvals/11111111-1111-4111-8111-111111111111/decision') {
+      return new Response(JSON.stringify(decisionResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (pathname === '/api/v1/approvals/22222222-2222-4222-8222-222222222222/decision') {
+      return new Response(JSON.stringify(rejectionResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (pathname === '/api/v1/approvals/batch-decision') {
+      return new Response(JSON.stringify(batchResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ code: 'not_found' }), { status: 404, headers: { 'content-type': 'application/problem+json' } });
+  }) as typeof fetch;
+
+  const commonHeaders = { 'x-request-id': 'req-approval-1', 'x-user-id': 'user-1' };
+
+  const policyRes = await app.handle(new Request('http://gateway.local/api/v1/approvals/policy', { headers: commonHeaders }));
+  assert.equal(policyRes.status, 200);
+  assert.deepEqual(await policyRes.json(), policySummary);
+
+  const listRes = await app.handle(new Request('http://gateway.local/api/v1/approvals?status=pending&session_id=s-1&run_id=r-1', { headers: commonHeaders }));
+  assert.equal(listRes.status, 200);
+  assert.deepEqual(await listRes.json(), []);
+
+  const decisionBody = {
+    decision: 'approved',
+    scope: 'once',
+    remember_rule: {
+      kind: 'command_prefix',
+      pattern: 'git status',
+      scope: 'session',
+    },
+  };
+  const decisionRes = await app.handle(new Request('http://gateway.local/api/v1/approvals/11111111-1111-4111-8111-111111111111/decision', {
+    method: 'POST',
+    headers: { ...commonHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(decisionBody),
+  }));
+  assert.equal(decisionRes.status, 200);
+  assert.deepEqual(await decisionRes.json(), decisionResponse);
+
+  const rejectBody = {
+    decision: 'rejected',
+    reason: 'Use rg instead of find.',
+  };
+  const rejectRes = await app.handle(new Request('http://gateway.local/api/v1/approvals/22222222-2222-4222-8222-222222222222/decision', {
+    method: 'POST',
+    headers: { ...commonHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(rejectBody),
+  }));
+  assert.equal(rejectRes.status, 200);
+  assert.deepEqual(await rejectRes.json(), rejectionResponse);
+
+  const batchBody = {
+    approval_ids: [
+      '11111111-1111-4111-8111-111111111111',
+      '33333333-3333-4333-8333-333333333333',
+    ],
+    decision: 'approved',
+    scope: 'run',
+  };
+  const batchRes = await app.handle(new Request('http://gateway.local/api/v1/approvals/batch-decision', {
+    method: 'POST',
+    headers: { ...commonHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(batchBody),
+  }));
+  assert.equal(batchRes.status, 200);
+  assert.deepEqual(await batchRes.json(), batchResponse);
+
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ['GET', 'http://127.0.0.1:48731/api/v1/approvals/policy'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/approvals?status=pending&session_id=s-1&run_id=r-1'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/approvals/11111111-1111-4111-8111-111111111111/decision'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/approvals/22222222-2222-4222-8222-222222222222/decision'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/approvals/batch-decision'],
+  ]);
+  assert.equal(requests[0]!.headers.get('x-request-id'), 'req-approval-1');
+  assert.equal(requests[0]!.headers.get('x-user-id'), 'user-1');
+  assert.deepEqual(JSON.parse(requests[2]!.body ?? ''), decisionBody);
+  assert.deepEqual(JSON.parse(requests[3]!.body ?? ''), rejectBody);
+  assert.deepEqual(JSON.parse(requests[4]!.body ?? ''), batchBody);
+});
+
+test('approval policy, decision, and batch-decision preserve Core ProblemDetails codes', { concurrency: false }, async () => {
+  const cases: Array<{ method: string; path: string; code: string; status: number; body?: Record<string, unknown> }> = [
+    {
+      method: 'GET',
+      path: '/api/v1/approvals/policy',
+      code: 'service_unavailable',
+      status: 503,
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/approvals/approval-1/decision',
+      code: 'invalid_rule',
+      status: 400,
+      body: { decision: 'approved', remember_rule: { kind: 'command_prefix', pattern: '*' } },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/approvals/approval-2/decision',
+      code: 'spec_confirmation_scope',
+      status: 400,
+      body: { decision: 'approved', scope: 'run' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/approvals/batch-decision',
+      code: 'invalid_request',
+      status: 400,
+      body: { approval_ids: [], decision: 'approved' },
+    },
+  ];
+
+  for (const testCase of cases) {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      code: testCase.code,
+      detail: `Refused with ${testCase.code}.`,
+      trace_id: `trace-${testCase.code}`,
+    }), { status: testCase.status, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+
+    const response = await app.handle(new Request(`http://gateway.local${testCase.path}`, {
+      method: testCase.method,
+      headers: { 'content-type': 'application/json' },
+      body: testCase.body ? JSON.stringify(testCase.body) : undefined,
+    }));
+
+    assert.equal(response.status, testCase.status, testCase.path);
+    assert.equal(response.headers.get('content-type'), 'application/problem+json');
+    const problem = await response.json() as Record<string, unknown>;
+    assert.equal(problem.code, testCase.code);
+    assert.equal(problem.instance, testCase.path);
+    assert.equal(problem.trace_id, `trace-${testCase.code}`);
+  }
+});

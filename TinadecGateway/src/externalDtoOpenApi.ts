@@ -303,6 +303,63 @@ const preAuthorization = t.Object({
   revoked: t.Unsafe({ type: 'boolean' }),
 }, { additionalProperties: true });
 
+const approvalPolicySummary = t.Object({
+  policy_version: t.String(),
+  enabled: t.Boolean(),
+  risk_max: t.String(),
+  delegated_risk_max: t.String(),
+  max_per_run: t.Unsafe({ type: 'integer' }),
+  release_read_only_in_ask_mode: t.Boolean(),
+  human_only_tools: t.Array(t.String()),
+  delegation_blocked_tools: t.Array(t.String()),
+}, { additionalProperties: true });
+
+const approvalRememberRuleInput = t.Object({
+  kind: t.Unsafe({ type: 'string', enum: ['command_prefix', 'delegate_tool'] }),
+  pattern: t.Optional(nullableString()),
+  scope: t.Optional(t.Unsafe({ type: 'string', enum: ['session', 'workspace'], nullable: true })),
+}, { additionalProperties: false });
+
+const approvalDecisionRequest = t.Object({
+  decision: t.Unsafe({ type: 'string', enum: ['approved', 'rejected'] }),
+  reason: t.Optional(nullableString()),
+  scope: t.Optional(t.Unsafe({ type: 'string', enum: ['once', 'run'], nullable: true })),
+  remember_rule: t.Optional(nullableRef('ApprovalRememberRuleInput')),
+}, { additionalProperties: false });
+
+const approvalDecisionResponse = t.Object({
+  id: t.String({ format: 'uuid' }),
+  status: t.String(),
+  decided_at: t.Optional(nullableString()),
+  scope: t.Optional(t.Unsafe({ type: 'string', enum: ['once', 'run'], nullable: true })),
+  run_scope_released: t.Optional(nullableInteger()),
+  pre_authorization_id: t.Optional(nullableString()),
+  capability_grant_id: t.Optional(nullableString()),
+  created_rule_id: t.Optional(nullableString()),
+  decision_reason: t.Optional(nullableString()),
+  user_tool_action_id: t.Optional(nullableString()),
+  action: t.Optional(nullableJsonObject()),
+}, { additionalProperties: true });
+
+const batchApprovalDecisionRequest = t.Object({
+  approval_ids: t.Array(t.String({ format: 'uuid' }), { minItems: 1, maxItems: 50 }),
+  decision: t.Unsafe({ type: 'string', enum: ['approved', 'rejected'] }),
+  reason: t.Optional(nullableString()),
+  scope: t.Optional(t.Unsafe({ type: 'string', enum: ['once', 'run'], nullable: true })),
+}, { additionalProperties: false });
+
+const batchApprovalDecisionItem = t.Object({
+  id: t.String({ format: 'uuid' }),
+  ok: t.Boolean(),
+  status: t.Optional(nullableString()),
+  error_code: t.Optional(nullableString()),
+  error: t.Optional(nullableString()),
+}, { additionalProperties: true });
+
+const batchApprovalDecisionResponse = t.Object({
+  results: t.Array(componentRef('BatchApprovalDecisionItem')),
+}, { additionalProperties: true });
+
 /**
  * Core's ModelInvocationPageDto, deliberately shallow. Core drops null keys when it
  * writes, so a field-by-field mirror would declare `input_tokens: number | null` for
@@ -537,6 +594,13 @@ export const externalDtoSchemas = {
   SessionPlan: sessionPlan,
   Health: health,
   PreAuthorization: preAuthorization,
+  ApprovalPolicySummary: approvalPolicySummary,
+  ApprovalRememberRuleInput: approvalRememberRuleInput,
+  ApprovalDecisionRequest: approvalDecisionRequest,
+  ApprovalDecisionResponse: approvalDecisionResponse,
+  BatchApprovalDecisionRequest: batchApprovalDecisionRequest,
+  BatchApprovalDecisionItem: batchApprovalDecisionItem,
+  BatchApprovalDecisionResponse: batchApprovalDecisionResponse,
   ToolPreviewLine: toolPreviewLine,
   ToolPreviewEntry: toolPreviewEntry,
   ToolResultPreview: toolResultPreview,

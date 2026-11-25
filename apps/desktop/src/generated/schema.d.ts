@@ -168,6 +168,14 @@ export interface paths {
     /** List approvals */
     get: operations["getApiV1Approvals"];
   };
+  "/api/v1/approvals/batch-decision": {
+    /** Decide multiple approvals in a batch */
+    post: operations["postApiV1ApprovalsBatch-decision"];
+  };
+  "/api/v1/approvals/policy": {
+    /** Get effective approval policy summary */
+    get: operations["getApiV1ApprovalsPolicy"];
+  };
   "/api/v1/approvals/pre-authorizations": {
     /** Create pre-authorization */
     post: operations["postApiV1ApprovalsPre-authorizations"];
@@ -1882,6 +1890,32 @@ export interface components {
       require_eval_gate?: boolean | null;
       [key: string]: unknown;
     };
+    ApprovalDecisionRequest: {
+      /** @enum {string} */
+      decision: "approved" | "rejected";
+      reason?: string | null;
+      remember_rule?: components["schemas"]["ApprovalRememberRuleInput"] | null;
+      /** @enum {string|null} */
+      scope?: "once" | "run" | null;
+    };
+    ApprovalDecisionResponse: {
+      action?: {
+        [key: string]: unknown;
+      } | null;
+      capability_grant_id?: string | null;
+      created_rule_id?: string | null;
+      decided_at?: string | null;
+      decision_reason?: string | null;
+      /** Format: uuid */
+      id: string;
+      pre_authorization_id?: string | null;
+      run_scope_released?: number | null;
+      /** @enum {string|null} */
+      scope?: "once" | "run" | null;
+      status: string;
+      user_tool_action_id?: string | null;
+      [key: string]: unknown;
+    };
     ApprovalGateDto: {
       /** Format: date-time */
       created_at: string;
@@ -1903,6 +1937,24 @@ export interface components {
       run_id: string | null;
       status: string;
     };
+    ApprovalPolicySummary: {
+      delegated_risk_max: string;
+      delegation_blocked_tools: string[];
+      enabled: boolean;
+      human_only_tools: string[];
+      max_per_run: number;
+      policy_version: string;
+      release_read_only_in_ask_mode: boolean;
+      risk_max: string;
+      [key: string]: unknown;
+    };
+    ApprovalRememberRuleInput: {
+      /** @enum {string} */
+      kind: "command_prefix" | "delegate_tool";
+      pattern?: string | null;
+      /** @enum {string|null} */
+      scope?: "session" | "workspace" | null;
+    };
     ApproveProjectBoardTaskRequest: {
       merge_or_clean_worktree?: boolean | null;
       note?: string | null;
@@ -1916,6 +1968,27 @@ export interface components {
       run_id: string;
       status: string;
       task_node_id: string;
+      [key: string]: unknown;
+    };
+    BatchApprovalDecisionItem: {
+      error?: string | null;
+      error_code?: string | null;
+      /** Format: uuid */
+      id: string;
+      ok: boolean;
+      status?: string | null;
+      [key: string]: unknown;
+    };
+    BatchApprovalDecisionRequest: {
+      approval_ids: string[];
+      /** @enum {string} */
+      decision: "approved" | "rejected";
+      reason?: string | null;
+      /** @enum {string|null} */
+      scope?: "once" | "run" | null;
+    };
+    BatchApprovalDecisionResponse: {
+      results: components["schemas"]["BatchApprovalDecisionItem"][];
       [key: string]: unknown;
     };
     ChapterToolCall: {
@@ -6070,6 +6143,33 @@ export interface operations {
       };
     };
   };
+  /** Decide multiple approvals in a batch */
+  "postApiV1ApprovalsBatch-decision": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BatchApprovalDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Per-approval batch decision outcomes. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["BatchApprovalDecisionResponse"];
+        };
+      };
+    };
+  };
+  /** Get effective approval policy summary */
+  getApiV1ApprovalsPolicy: {
+    responses: {
+      /** @description Effective read-only approval policy summary. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ApprovalPolicySummary"];
+        };
+      };
+    };
+  };
   /** Create pre-authorization */
   "postApiV1ApprovalsPre-authorizations": {
     responses: {
@@ -6088,9 +6188,23 @@ export interface operations {
         approvalId: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApprovalDecisionRequest"];
+      };
+    };
     responses: {
+      /** @description Approval decision outcome. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["ApprovalDecisionResponse"];
+        };
+      };
+      /** @description Pending user tool action decision accepted. */
+      202: {
+        content: {
+          "application/json": components["schemas"]["ApprovalDecisionResponse"];
+        };
       };
     };
   };

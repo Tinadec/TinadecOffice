@@ -865,6 +865,102 @@
         },
         "type": "object"
       },
+      "ApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "remember_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalRememberRuleInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "enum": [
+              "once",
+              "run"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ApprovalDecisionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "capability_grant_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "created_rule_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "decided_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "decision_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "pre_authorization_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "run_scope_released": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "scope": {
+            "enum": [
+              "once",
+              "run"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "user_tool_action_id": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "type": "object"
+      },
       "ApprovalGateDto": {
         "properties": {
           "created_at": {
@@ -962,6 +1058,80 @@
         ],
         "type": "object"
       },
+      "ApprovalPolicySummary": {
+        "additionalProperties": true,
+        "properties": {
+          "delegated_risk_max": {
+            "type": "string"
+          },
+          "delegation_blocked_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "human_only_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_per_run": {
+            "type": "integer"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "release_read_only_in_ask_mode": {
+            "type": "boolean"
+          },
+          "risk_max": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_version",
+          "enabled",
+          "risk_max",
+          "delegated_risk_max",
+          "max_per_run",
+          "release_read_only_in_ask_mode",
+          "human_only_tools",
+          "delegation_blocked_tools"
+        ],
+        "type": "object"
+      },
+      "ApprovalRememberRuleInput": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "command_prefix",
+              "delegate_tool"
+            ],
+            "type": "string"
+          },
+          "pattern": {
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "session",
+              "workspace"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
       "ApproveProjectBoardTaskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1013,6 +1183,88 @@
           "agent_name",
           "agent_layer",
           "status"
+        ],
+        "type": "object"
+      },
+      "BatchApprovalDecisionItem": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "error_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ok"
+        ],
+        "type": "object"
+      },
+      "BatchApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "once",
+              "run"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_ids",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "BatchApprovalDecisionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchApprovalDecisionItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
         ],
         "type": "object"
       },
@@ -15785,6 +16037,58 @@
         ]
       }
     },
+    "/api/v1/approvals/batch-decision": {
+      "post": {
+        "operationId": "postApiV1ApprovalsBatch-decision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchApprovalDecisionResponse"
+                }
+              }
+            },
+            "description": "Per-approval batch decision outcomes."
+          }
+        },
+        "summary": "Decide multiple approvals in a batch",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/approvals/policy": {
+      "get": {
+        "operationId": "getApiV1ApprovalsPolicy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalPolicySummary"
+                }
+              }
+            },
+            "description": "Effective read-only approval policy summary."
+          }
+        },
+        "summary": "Get effective approval policy summary",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/api/v1/approvals/pre-authorizations": {
       "post": {
         "operationId": "postApiV1ApprovalsPre-authorizations",
@@ -15819,8 +16123,37 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDecisionResponse"
+                }
+              }
+            },
+            "description": "Approval decision outcome."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDecisionResponse"
+                }
+              }
+            },
+            "description": "Pending user tool action decision accepted."
+          }
         },
         "summary": "Decide approval",
         "tags": [
