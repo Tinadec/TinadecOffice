@@ -12,6 +12,10 @@ import { homeController } from '@/controllers/HomeController'
 import { focusDockCard, type InlineDockCardItem } from '@/lib/homeDockSync'
 import { selectionIdentity } from '@/lib/storageScope'
 
+const props = defineProps<{
+  compactPip?: boolean
+}>()
+
 const c = homeController
 const { t } = useI18n()
 
@@ -161,7 +165,12 @@ const liveDigestStorageId = computed<string | undefined>(() => {
 </script>
 
 <template>
-  <div class="chat-card-shell" data-testid="chat-card-root">
+  <div
+    class="chat-card-shell"
+    :class="{ 'is-compact-pip': props.compactPip }"
+    :data-compact-pip="props.compactPip ? 'true' : undefined"
+    data-testid="chat-card-root"
+  >
     <aside
       v-if="streamDockCards.length > 0"
       class="chat-dock-sync-bar"
@@ -383,5 +392,122 @@ const liveDigestStorageId = computed<string | undefined>(() => {
 
 .chat-dock-worker-badge:hover {
   background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+/* Compact PiP mode: PiP window provides its own compact titlebar, so remove the
+   40px BrowserTabBar clearance and tighten transcript / approval / composer density
+   for 340–460px floating widths without sacrificing any live controls. */
+.chat-card-shell.is-compact-pip .chat-dock-sync-bar {
+  padding: 6px 10px 4px;
+  gap: 4px;
+  max-height: 64px;
+}
+
+.chat-card-shell.is-compact-pip .chat-live-digest-strip {
+  padding: 6px 10px 4px;
+}
+
+.chat-card-shell.is-compact-pip .chat-live-digest-strip.has-dock-cards {
+  padding-top: 2px;
+}
+
+.chat-card-shell.is-compact-pip .chat-dock-card {
+  padding: 2px 6px;
+  font-size: 10.5px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-head) {
+  display: none;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-content) {
+  gap: 12px;
+  padding: 8px 10px 12px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-skeleton) {
+  gap: 14px;
+  padding: 10px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-card.conversation-approval) {
+  padding: 8px 10px;
+  gap: 5px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-approval-question) {
+  font-size: 12px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-approval-facts) {
+  gap: 2px 6px;
+  font-size: 11px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-approval-actions) {
+  gap: 4px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.conversation-approval-actions .conversation-text-button) {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.message-content.user),
+.chat-card-shell.is-compact-pip :deep(.cn-bubble) {
+  max-width: 94%;
+}
+
+.chat-card-shell.is-compact-pip :deep(.welcome-screen) {
+  padding: 0 10px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.welcome-content) {
+  gap: 8px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.welcome-title) {
+  font-size: 15px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.composer) {
+  padding: 0 8px 8px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.composer-box) {
+  border-radius: 12px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.welcome-dialog-main) {
+  padding: 8px 10px 4px;
+  gap: 6px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.welcome-dialog-toolbar) {
+  padding: 3px 8px 7px;
+  gap: 3px 5px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.mode-selector-trigger),
+.chat-card-shell.is-compact-pip :deep(.permission-selector-trigger),
+.chat-card-shell.is-compact-pip :deep(.project-dropdown-trigger),
+.chat-card-shell.is-compact-pip :deep(.toolbar-agent-config) {
+  padding: 3px 6px;
+  font-size: 11px;
+  gap: 3px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.mode-selector-label),
+.chat-card-shell.is-compact-pip :deep(.permission-selector-label) {
+  max-width: 68px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.project-dropdown-label) {
+  max-width: 72px;
+}
+
+.chat-card-shell.is-compact-pip :deep(.toolbar-agent-config span) {
+  display: none;
 }
 </style>

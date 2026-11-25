@@ -160,6 +160,7 @@ const panelSources = import.meta.glob(
     './../components/chat/TerminalCallBlock.vue',
     './../components/chat/AgentActivityBanner.vue',
     './../components/chat/AgentStatusIndicator.vue',
+    './../components/chat/FloatingChatPip.vue',
     './../lib/hostAccess.ts',
     './../lib/hostConnection.ts',
     // The pipeline canvas, whose chrome was hardcoded Chinese.
@@ -180,6 +181,18 @@ const panelSources = import.meta.glob(
     './../components/spatial/SpatialTextNode.vue',
     './../pages/GlobalBoardPage.vue',
     './../pages/ProjectHubPage.vue',
+  ],
+  { query: '?raw', import: 'default', eager: true },
+) as Record<string, string>
+
+// Surfaces that guard t()/te() through inline label(key, fallback) / tr(key, fallback) helpers
+// or table-driven key properties (OOBE welcome, global material preset control). Every referenced
+// dotted key must still exist in the locale bundles, while their templates intentionally carry
+// fallback literals inside helper calls.
+const fallbackGuardedSources = import.meta.glob(
+  [
+    './../components/oobe/OobeStepWelcome.vue',
+    './../components/ui/panel-style-control.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
@@ -217,6 +230,10 @@ function cardSources(): Record<string, string> {
 function referencedKeys(source: string): Set<string> {
   const keys = new Set<string>()
   for (const match of source.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)) {
+    keys.add(match[1])
+  }
+  // Guarded `label('namespace.key', fallback)` helpers (e.g. FloatingChatPip) reference dotted keys too.
+  for (const match of source.matchAll(/\blabel\(\s*'([a-zA-Z0-9_]+\.[a-zA-Z0-9_.]+)'/g)) {
     keys.add(match[1])
   }
   // <i18n-t keypath="…"> renders a sentence with markup inside it; its key is just as dead if missing.
@@ -359,6 +376,35 @@ describe('i18n locale parity and reference integrity', () => {
       // A card that labels nothing is not a failure — several are thin wrappers around a panel that
       // does its own translating, and those panels are listed above.
       assertKeysExist(file, referencedKeys(source))
+    }
+  })
+
+  it('every guarded key in OOBE welcome, material controls, floating chat PiP, and BrowserTabBar exists in both locales', () => {
+    const cards = cardSources()
+    const floatingPipEntry = Object.entries(panelSources).find(([file]) => file.endsWith('/FloatingChatPip.vue'))
+    expect(floatingPipEntry, 'FloatingChatPip.vue must be registered in panelSources').toBeDefined()
+    expect(Object.keys(fallbackGuardedSources).length).toBe(2)
+    expect(cards['TinadecUI/components/BrowserTabBar.vue']).toBeDefined()
+    const targets: Record<string, string> = {
+      ...fallbackGuardedSources,
+      [floatingPipEntry![0]]: floatingPipEntry![1],
+      'TinadecUI/components/BrowserTabBar.vue': cards['TinadecUI/components/BrowserTabBar.vue']!,
+    }
+    for (const [file, source] of Object.entries(targets)) {
+      expect(source, `${file} must be loaded`).toBeTruthy()
+      const keys = referencedKeys(source)
+      for (const match of source.matchAll(/(?:\b(?:te|tr)\(\s*|(?:titleKey|descKey|labelKey|key)\s*:\s*)'([a-zA-Z0-9_]+\.[a-zA-Z0-9_.]+)'/g)) {
+        keys.add(match[1]!)
+      }
+      expect(keys.size, `${file} should reference at least one translation`).toBeGreaterThan(0)
+      assertKeysExist(file, keys)
+    }
+    for (const [file, source] of Object.entries(fallbackGuardedSources)) {
+      const template = templateText(source)
+      if (template === null) continue
+      const stripped = template.replace(/\b(?:label|tr)\(\s*'[^']+'\s*,\s*'[^']*'\s*\)/g, '')
+      const rawCjk = stripped.match(new RegExp(`[^'"\\\`>]*${CJK.source}`))
+      expect(rawCjk, `${file} has unguarded CJK text in template: ${rawCjk?.[0]?.trim()}`).toBeNull()
     }
   })
 

@@ -23,6 +23,9 @@ async function openSession(id: string) {
 
 async function createSession(projectId: string | null) {
   c.startNewConversation(projectId)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tinadec:new-conversation'))
+  }
   if (route.path !== '/' && route.path !== '/space') await router.push('/')
 }
 

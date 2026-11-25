@@ -17,6 +17,8 @@ import {
   PanelsTopLeft,
   ExternalLink,
   Home as HomeIcon,
+  Maximize2,
+  Minimize2,
   PanelRightClose,
   Plus,
   X,
@@ -30,7 +32,7 @@ import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
 import { catalogEntriesForPage } from './cards/home/featureCatalog'
 import type { PersistedCardInstance, UiePageId, UieSlotId } from '../engine/types'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const cardTitle = useCardTitle()
 const collapseLabel = computed(() => t('context.collapsePanel', t('app.collapse')))
 
@@ -50,6 +52,8 @@ const props = defineProps<{
   canRestore?: boolean
   /** Page whose catalog entries the "+" menu lists (defaults to Home). */
   pageId?: UiePageId
+  /** True when the Home right feature panel is expanded across the chat column. */
+  maximized?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -65,7 +69,26 @@ const emit = defineEmits<{
   'dock-drop': [target: DockDropTarget, tabId: string]
   /** Restore the whole dock back to a single panel. */
   'restore-dock': []
+  /** Toggle in-app maximize / restore of the Home feature panel. */
+  'toggle-maximize': []
 }>()
+
+const showMaximizeAction = computed(
+  () => (props.pageId ?? 'home') === 'home' && (!props.slotId || props.slotId === 'right'),
+)
+const maximizeLabel = computed(() =>
+  props.maximized
+    ? (te('context.restorePanel') ? String(t('context.restorePanel')) : '还原三栏布局')
+    : (te('context.maximizePanel') ? String(t('context.maximizePanel')) : '最大化面板'),
+)
+
+function onTabBarDblClick(event: MouseEvent) {
+  if (!showMaximizeAction.value) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('button, a, input, [role="menuitem"]')) return
+  emit('toggle-maximize')
+}
 
 const detached = useDetachedTabs()
 const dockDrag = useDockDrag()
@@ -210,7 +233,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="browser-tab-bar uie-stack-tabbar">
+  <div class="browser-tab-bar uie-stack-tabbar" @dblclick="onTabBarDblClick">
     <!-- Pinned Home tab -->
     <button
       class="browser-tab browser-tab-home"
@@ -295,6 +318,29 @@ onUnmounted(() => {
         <TooltipPortal>
           <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
             {{ t('context.restoreDock') }}
+          </TooltipContent>
+        </TooltipPortal>
+      </TooltipRoot>
+
+      <!-- In-app maximize / restore of the Home feature panel (3-col <-> 2-col). -->
+      <TooltipRoot v-if="showMaximizeAction">
+        <TooltipTrigger as-child>
+          <button
+            type="button"
+            class="browser-tab-collapse browser-tab-maximize"
+            :class="{ active: maximized }"
+            data-testid="feature-panel-maximize-btn"
+            :aria-label="maximizeLabel"
+            :aria-pressed="Boolean(maximized)"
+            @click="emit('toggle-maximize')"
+          >
+            <Minimize2 v-if="maximized" :size="15" aria-hidden="true" />
+            <Maximize2 v-else :size="15" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipPortal>
+          <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
+            {{ maximizeLabel }}
           </TooltipContent>
         </TooltipPortal>
       </TooltipRoot>
@@ -425,6 +471,17 @@ onUnmounted(() => {
 .browser-tab-add:active,
 .browser-tab-collapse:active {
   transform: scale(0.94);
+}
+
+/* Pack multiple right-edge action buttons (restoreDock / maximize / collapse)
+   flush together so only the first one takes margin-left: auto. */
+.browser-tab-collapse + .browser-tab-collapse {
+  margin-left: 0;
+}
+
+.browser-tab-maximize.active {
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 
 /* Highlight the + button while its menu is open. */

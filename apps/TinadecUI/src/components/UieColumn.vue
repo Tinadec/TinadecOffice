@@ -25,6 +25,18 @@ const props = defineProps<{
   geometry: ColumnGeometry
   split?: SplitGeometry
   dock?: UieDockGeometry
+  /** Hide the column-edge resizer handle (e.g. while maximized on Home). */
+  hideResizer?: boolean
+  /** True when this column is expanded across the chat column on Home. */
+  maximized?: boolean
+  /** True when this column is smoothly faded behind the maximized feature panel. */
+  maximizedHidden?: boolean
+  /** True while any sibling column is being pointer-resized (keeps 0ms snap). */
+  peerResizing?: boolean
+}>()
+
+const emit = defineEmits<{
+  'resizing-change': [resizing: boolean]
 }>()
 
 const { t } = useI18n()
@@ -74,7 +86,8 @@ const visualCollapsed = computed(
 // instead of inheriting the rail branch's `v-else`: side columns only, and never on
 // the collapsed rail (an icon rail has no width worth dragging).
 const showResizer = computed(() =>
-  !isZeroWidthEmpty.value
+  !props.hideResizer
+  && !isZeroWidthEmpty.value
   && (props.column.slotId === 'left' || props.column.slotId === 'right')
   && !(isFeatureColumn.value && (props.column.collapsed || visualCollapsed.value)),
 )
@@ -187,11 +200,13 @@ function resizeSplit(ratio: number) {
 
 // Pointer resize for column edge.
 const isResizing = ref(false)
+const effectiveResizing = computed(() => isResizing.value || Boolean(props.peerResizing))
 let resizeStart = 0
 let resizeWidth = 0
 function onResizeDown(event: PointerEvent) {
   event.preventDefault()
   isResizing.value = true
+  emit('resizing-change', true)
   resizeStart = event.clientX
   resizeWidth = props.geometry.width
   window.addEventListener('pointermove', onResizeMove)
@@ -205,7 +220,10 @@ function onResizeMove(event: PointerEvent) {
   resizeColumn(Math.min(maxW, Math.max(minW, newWidth)))
 }
 function onResizeUp() {
-  isResizing.value = false
+  if (isResizing.value) {
+    isResizing.value = false
+    emit('resizing-change', false)
+  }
   window.removeEventListener('pointermove', onResizeMove)
   window.removeEventListener('pointerup', onResizeUp)
 }
@@ -239,10 +257,16 @@ function syncVirtualPane() {
 
 onMounted(() => syncVirtualPane())
 watch(
-  () => [props.column.dock, props.geometry.width, props.geometry.height, isFeatureColumn.value],
+  () => [props.column.dock, props.geometry.x, props.geometry.width, props.geometry.height, isFeatureColumn.value],
   syncVirtualPane,
 )
 onBeforeUnmount(() => {
+  if (isResizing.value) {
+    isResizing.value = false
+    emit('resizing-change', false)
+  }
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeUp)
   virtualUnsub?.()
   virtualUnsub = null
 })
@@ -274,11 +298,17 @@ function onDividerUp() {
   <div
     ref="colRef"
     class="uie-column"
-    :class="{
-      'is-resizing': isResizing,
-      'uie-column--overlay': geometry.overlay,
-      'uie-column--empty-hidden': isZeroWidthEmpty,
-    }"
+    :data-uie-slot="column.slotId"
+    :class="[
+      `uie-slot-${column.slotId}`,
+      {
+        'is-resizing': effectiveResizing,
+        'uie-column--overlay': geometry.overlay,
+        'uie-column--empty-hidden': isZeroWidthEmpty,
+        'uie-column--maximized': maximized,
+        'uie-column--maximized-hidden': maximizedHidden,
+      },
+    ]"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -336,7 +366,7 @@ function onDividerUp() {
           :column="column"
           :geometry="geometry"
           :dock="dock"
-          :resizing="isResizing"
+          :resizing="effectiveResizing"
         />
 
         <!-- Plain stacks: primary + optional secondary -->
@@ -349,7 +379,7 @@ function onDividerUp() {
             :degraded="primaryDegraded"
             :surface-mode="column.surfaceMode"
             :slot-id="column.slotId"
-            :resizing="isResizing"
+            :resizing="effectiveResizing"
           />
 
           <!-- Secondary stack + divider -->
@@ -366,7 +396,7 @@ function onDividerUp() {
               :degraded="!!split.lower.degraded"
               :surface-mode="column.surfaceMode"
               :slot-id="column.slotId"
-              :resizing="isResizing"
+              :resizing="effectiveResizing"
             />
           </template>
         </template>
@@ -377,7 +407,7 @@ function onDividerUp() {
          gutter. It sits outside .uie-column-clip because a clipped half would still
          look right but be dead to the pointer — the handle is 12px wide, 6 inside and
          6 in the gutter. Left column resizes via its right edge, the right column via
-         its left edge; neither exists on the collapsed rail. -->
+         its left edge; neither exists on the collapsed rail or while maximized. -->
     <div
       v-if="showResizer"
       class="uie-column-resizer"
@@ -391,11 +421,15 @@ function onDividerUp() {
 .uie-column {
   position: absolute;
   min-height: 0;
+  opacity: 1;
   /* The drag handle straddles this column's edge, so the column itself must not
      clip: a clipped half still looks fine but is dead to the pointer. Clipping
      moved to .uie-column-clip, which holds every child. */
   overflow: visible;
-  transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
+  transition:
+    left 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease;
 }
 
 /* The clipped box: the collapsed rail, the stacks and their shadows, and the
@@ -413,6 +447,19 @@ function onDividerUp() {
 
 .uie-column--empty-hidden {
   pointer-events: none;
+}
+
+/* Maximized right feature panel sits cleanly above the fading center column. */
+.uie-column--maximized {
+  z-index: 15;
+}
+
+/* Smooth fade-out for the center chat column while feature panel is maximized.
+   STRICTLY ZERO transform on ancestors so backdrop-filter glass never breaks. */
+.uie-column--maximized-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
 }
 
 /* Window-stacking overlay: a very wide right feature panel floats over the chat
@@ -514,5 +561,17 @@ function onDividerUp() {
 .uie-split-divider:hover::after,
 .uie-split-divider:active::after {
   opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uie-column,
+  .uie-column--maximized-hidden {
+    transition: none !important;
+  }
+}
+
+:global([data-reduced-motion='true']) .uie-column,
+:global([data-reduced-motion='true']) .uie-column--maximized-hidden {
+  transition: none !important;
 }
 </style>

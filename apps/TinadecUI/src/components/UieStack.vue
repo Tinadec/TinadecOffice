@@ -8,6 +8,7 @@ import { useCardTitle } from './cardTitle'
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { useFeaturePanelMaximize } from '@/composables/useFeaturePanelMaximize'
 import { useResponsiveMode, useTabLabelMode } from '@/composables/useElementSize'
 import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
 import { dropZoneToSplit } from '../engine/dockDrop'
@@ -81,6 +82,18 @@ const homeInstance = computed(
 const isMainPane = computed(() => props.paneMain === true || isFeaturePanel.value)
 const isSplitPane = computed(() => !!props.paneId && !isMainPane.value)
 const showTabBar = computed(() => isMainPane.value || isSplitPane.value || props.instances.length > 1)
+
+const panelMaximize = useFeaturePanelMaximize()
+const canMaximizePanel = computed(
+  () => isMainPane.value && uie.pageId.value === 'home' && props.slotId === 'right',
+)
+const isPanelMaximized = computed(
+  () => canMaximizePanel.value && panelMaximize.maximized.value,
+)
+function togglePanelMaximize() {
+  if (!canMaximizePanel.value) return
+  panelMaximize.toggleMaximize()
+}
 
 // ---- Feature-panel responsive modes ----
 const panelRef = ref<HTMLElement | null>(null)
@@ -328,6 +341,7 @@ onUnmounted(() => {
       :pane-id="paneId"
       :can-restore="canRestore"
       :page-id="uie.pageId.value"
+      :maximized="isPanelMaximized"
       @home="goHome"
       @activate="activate"
       @close="close"
@@ -337,6 +351,7 @@ onUnmounted(() => {
       @open-panel="openFeature"
       @dock-drop="handleDockDrop"
       @restore-dock="restoreDock"
+      @toggle-maximize="togglePanelMaximize"
     />
 
     <!-- Split dock pane: minimal browser-style tab bar + merge-into-main -->
@@ -423,7 +438,9 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
+  transition:
+    left 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* While the column is being dragged, snap geometry. */
@@ -438,7 +455,10 @@ onUnmounted(() => {
   border-radius: 12px;
   /* Conditional shadow: only when surface mode is not immersive */
   box-shadow: var(--shadow-card-subtle);
-  transition: box-shadow 0.2s ease;
+  transition:
+    left 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.2s ease;
 }
 
 /* Hover elevation for floating panels */
@@ -500,5 +520,17 @@ onUnmounted(() => {
   min-height: 0;
   position: relative;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uie-stack,
+  .uie-stack:not(.uie-stack--app):not(.uie-stack--immersive) {
+    transition: none !important;
+  }
+}
+
+:global([data-reduced-motion='true']) .uie-stack,
+:global([data-reduced-motion='true']) .uie-stack:not(.uie-stack--app):not(.uie-stack--immersive) {
+  transition: none !important;
 }
 </style>
