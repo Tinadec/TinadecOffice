@@ -299,6 +299,8 @@ function onDividerUp() {
     ref="colRef"
     class="uie-column"
     :data-uie-slot="column.slotId"
+    :inert="maximizedHidden ? true : undefined"
+    :aria-hidden="maximizedHidden ? 'true' : undefined"
     :class="[
       `uie-slot-${column.slotId}`,
       {
@@ -455,11 +457,17 @@ function onDividerUp() {
 }
 
 /* Smooth fade-out for the center chat column while feature panel is maximized.
+   Visibility switches to hidden after opacity settles so the occluded chat tree
+   stops painting behind glass surfaces and disappears from the a11y tree.
    STRICTLY ZERO transform on ancestors so backdrop-filter glass never breaks. */
 .uie-column--maximized-hidden {
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 200ms ease;
+  contain: layout style paint;
+  transition:
+    opacity 200ms ease,
+    visibility 0ms linear 200ms;
 }
 
 /* Window-stacking overlay: a very wide right feature panel floats over the chat

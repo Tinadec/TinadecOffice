@@ -228,17 +228,25 @@ describe('FloatingChatPip', () => {
     await wrapper.get('.floating-chat-orb-btn').trigger('mouseenter')
     expect(wrapper.get('[data-testid="floating-chat-hover-chip"]').text()).toContain('1 项待审批')
 
-    // Click opens PiP, clears unread count, and focuses composer textarea
+    // Click opens PiP once, clears unread count, locks fixed inner geometry during morph,
+    // and focuses composer textarea with { preventScroll: true }
+    const focusSpy = vi.spyOn(HTMLTextAreaElement.prototype, 'focus')
     await wrapper.get('.floating-chat-orb-btn').trigger('click')
     await nextTick()
     await nextTick()
 
     expect(mockMaximizeState.openPip).toHaveBeenCalledTimes(1)
     expect(wrapper.find('[data-testid="floating-chat-pip-window"]').exists()).toBe(true)
+    const contentWrap = wrapper.get('.floating-chat-window-content')
+    expect(contentWrap.attributes('style')).toContain('width: 418px')
+    expect(contentWrap.attributes('style')).toContain('height: 494px')
     const chatCardStub = wrapper.get('[data-testid="chat-card-stub"]')
     expect(chatCardStub.attributes('data-compact-pip')).toBe('true')
     const textarea = wrapper.get('[data-testid="pip-composer-textarea"]').element
     expect(document.activeElement).toBe(textarea)
+    expect(focusSpy).toHaveBeenCalledTimes(1)
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true })
+    focusSpy.mockRestore()
 
     // Minimize back to orb: unread message was cleared, only 1 pending approval remains
     await wrapper.get('[data-testid="floating-chat-minimize-orb"]').trigger('click')

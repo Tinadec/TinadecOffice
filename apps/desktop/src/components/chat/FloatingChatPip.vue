@@ -276,6 +276,18 @@ const shellStyle = computed(() => ({
   borderRadius: pipOpen.value ? '14px' : '999px',
 }))
 
+// Lock expanded body geometry to the target pixel size (shell minus 2px border) so opening/closing
+// shell width/height transitions clip smoothly without reflowing the inner chat/scroller/composer tree
+// 18+ times across breakpoints during the 300ms morph. Strictly zero transform.
+const windowContentStyle = computed(() => {
+  const targetWidth = Math.max(0, (resizeWidth.value ?? clampedPipWidth.value) - 2)
+  const targetHeight = Math.max(0, (resizeHeight.value ?? clampedPipHeight.value) - 2)
+  return {
+    width: `${targetWidth}px`,
+    height: `${targetHeight}px`,
+  }
+})
+
 // Hover chip positioned strictly inside bounds next to the orb (zero transform)
 const showHoverChip = computed(() => !pipOpen.value && !isDragging.value && (orbHovered.value || orbFocused.value))
 
@@ -323,8 +335,9 @@ const dropGhosts = computed(() => {
 // ---- Focus composer textarea on open & clear unread ----
 async function focusComposerTextarea() {
   await nextTick()
+  if (!pipOpen.value) return
   const textarea = shellRef.value?.querySelector<HTMLTextAreaElement>('textarea.welcome-dialog-input, textarea')
-  textarea?.focus()
+  textarea?.focus({ preventScroll: true })
 }
 
 function handleOpenPip() {
@@ -332,7 +345,6 @@ function handleOpenPip() {
   orbHovered.value = false
   orbFocused.value = false
   openPip()
-  void focusComposerTextarea()
 }
 
 watch(pipOpen, (open) => {
@@ -597,7 +609,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Expanded PiP Window State -->
-      <div v-else class="floating-chat-window-content">
+      <div v-else class="floating-chat-window-content" :style="windowContentStyle">
         <!-- Edge resize handles -->
         <div
           class="floating-chat-resize-handle is-top"
@@ -846,7 +858,7 @@ onBeforeUnmount(() => {
 }
 
 .floating-chat-shell.is-window {
-  overflow: hidden;
+  overflow: clip;
 }
 
 .floating-chat-shell.is-dragging,
@@ -947,10 +959,20 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  height: 100%;
+  flex: 0 0 auto;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
+  animation: floating-chat-content-fade 180ms ease-out;
+}
+
+@keyframes floating-chat-content-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .floating-chat-resize-handle {
@@ -1080,11 +1102,12 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: clip;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .floating-chat-shell,
+  .floating-chat-window-content,
   .floating-chat-orb-btn,
   .floating-chat-hover-chip,
   .floating-chat-ghost,
@@ -1096,6 +1119,7 @@ onBeforeUnmount(() => {
 }
 
 :global([data-reduced-motion="true"]) .floating-chat-shell,
+:global([data-reduced-motion="true"]) .floating-chat-window-content,
 :global([data-reduced-motion="true"]) .floating-chat-orb-btn,
 :global([data-reduced-motion="true"]) .floating-chat-hover-chip,
 :global([data-reduced-motion="true"]) .floating-chat-ghost,

@@ -30,6 +30,7 @@ const { isolatedGroups } = useSessionWorktrees({
   feed: () => c.conversationFeed,
   orchestration: () => c.orchestration.value,
   toolExecutions: () => c.toolExecutions.value,
+  deferInitialProbe: Boolean(props.compactPip),
   resolveAgentName,
 })
 
@@ -216,6 +217,7 @@ const liveDigestStorageId = computed<string | undefined>(() => {
     </div>
     <ChatPanel
       class="chat-card-panel"
+      :compact-pip="props.compactPip"
       :messages="c.messages.value"
       :sessions="c.sessions.value"
       :projects="c.projects.value"
@@ -485,6 +487,8 @@ const liveDigestStorageId = computed<string | undefined>(() => {
 }
 
 .chat-card-shell.is-compact-pip :deep(.welcome-dialog-toolbar) {
+  flex-direction: row;
+  align-items: center;
   padding: 3px 8px 7px;
   gap: 3px 5px;
 }
@@ -500,7 +504,7 @@ const liveDigestStorageId = computed<string | undefined>(() => {
 
 .chat-card-shell.is-compact-pip :deep(.mode-selector-label),
 .chat-card-shell.is-compact-pip :deep(.permission-selector-label) {
-  max-width: 68px;
+  display: none;
 }
 
 .chat-card-shell.is-compact-pip :deep(.project-dropdown-label) {

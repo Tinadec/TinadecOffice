@@ -37,8 +37,18 @@ onMounted(() => {
     mutationObserver.observe(content, { childList: true })
   }
 
+  let lastObservedWidth = Math.round(content.offsetWidth)
+  let lastObservedNonSpacerHeight = Math.round(content.offsetHeight - (spacerRef.value?.offsetHeight ?? 0))
+
   if (typeof ResizeObserver !== "undefined") {
     resizeObserver = new ResizeObserver(() => {
+      const nextWidth = Math.round(content.offsetWidth)
+      const nextNonSpacerHeight = Math.round(content.offsetHeight - (spacerRef.value?.offsetHeight ?? 0))
+      if (Math.abs(nextWidth - lastObservedWidth) <= 1 && Math.abs(nextNonSpacerHeight - lastObservedNonSpacerHeight) <= 1) {
+        return
+      }
+      lastObservedWidth = nextWidth
+      lastObservedNonSpacerHeight = nextNonSpacerHeight
       window.cancelAnimationFrame(resizeFrame)
       resizeFrame = window.requestAnimationFrame(handleResize)
     })

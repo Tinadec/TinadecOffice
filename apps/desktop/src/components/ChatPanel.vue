@@ -38,6 +38,8 @@ const props = defineProps<{
    * skeleton) instead of flashing the welcome screen for a session that has history.
    */
   loading?: boolean
+  /** True while rendering inside the compact floating PiP window. */
+  compactPip?: boolean
   /**
    * The flat feed's inputs (APP-HOME-108): session messages are paired with these runs and
    * the event-sourced feed into turns by ConversationView. Activity, approvals and streaming
@@ -106,8 +108,8 @@ watch(
 )
 
 const conversationClass = computed(() => ({
-  'chat-narrow': chatMode.value === 'narrow' || chatMode.value === 'ultra',
-  'chat-ultra': chatMode.value === 'ultra',
+  'chat-narrow': props.compactPip ? true : (chatMode.value === 'narrow' || chatMode.value === 'ultra'),
+  'chat-ultra': props.compactPip ? false : chatMode.value === 'ultra',
   'composer-hero': hero.value,
 }))
 

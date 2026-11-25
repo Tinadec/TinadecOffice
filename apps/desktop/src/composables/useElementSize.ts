@@ -1,7 +1,9 @@
-import { onMounted, onUnmounted, ref, computed, type Ref } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch, type Ref } from 'vue'
 
 /**
- * Tracks the width and height of a DOM element using ResizeObserver.
+ * Tracks the width and height of a DOM element using ResizeObserver,
+ * rounding to integer CSS pixels and coalescing bursts on rAF to avoid
+ * ResizeObserver feedback loops across fractional DPR displays.
  *
  * Usage:
  * ```ts
@@ -13,27 +15,50 @@ export function useElementSize(target: Ref<HTMLElement | null>) {
   const width = ref(0)
   const height = ref(0)
   let observer: ResizeObserver | null = null
+  let rafId: number | null = null
+  let pendingW = 0
+  let pendingH = 0
+
+  function applySize(rawW: number, rawH: number) {
+    const nextW = Math.max(0, Math.round(rawW))
+    const nextH = Math.max(0, Math.round(rawH))
+    if (width.value !== nextW) width.value = nextW
+    if (height.value !== nextH) height.value = nextH
+  }
+
+  function flushPending() {
+    rafId = null
+    applySize(pendingW, pendingH)
+  }
 
   onMounted(() => {
     if (!target.value) return
 
     observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const rect = entry.contentRect
-        width.value = rect.width
-        height.value = rect.height
+      const entry = entries[entries.length - 1]
+      if (!entry) return
+      pendingW = entry.contentRect.width
+      pendingH = entry.contentRect.height
+      if (typeof requestAnimationFrame === 'undefined') {
+        flushPending()
+        return
       }
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(flushPending)
     })
 
     observer.observe(target.value)
 
-    // Set initial size
+    // Set initial size synchronously (rounded) so initial layout has integer measurements.
     const rect = target.value.getBoundingClientRect()
-    width.value = rect.width
-    height.value = rect.height
+    applySize(rect.width, rect.height)
   })
 
   onUnmounted(() => {
+    if (rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(rafId)
+      rafId = null
+    }
     observer?.disconnect()
     observer = null
   })
@@ -48,18 +73,43 @@ export function useElementSize(target: Ref<HTMLElement | null>) {
  * - **normal** (≥ 420px): Full layout with labels, descriptions, multi-column grids.
  * - **compact** (340–419px): Icon-only tabs, single-column grids, reduced padding.
  * - **ultra** (< 340px): Extreme compact — hide secondary actions, minimal padding.
+ *
+ * Applies a 10px hysteresis deadband (±5px around 340 and 420) after the initial
+ * non-zero measurement so subpixel or scrollbar width changes near a boundary
+ * cannot oscillate between modes.
  */
 export type ResponsiveMode = 'normal' | 'compact' | 'ultra'
 
 export function useResponsiveMode(target: Ref<HTMLElement | null>) {
   const { width } = useElementSize(target)
+  const mode = ref<ResponsiveMode>('normal')
+  let measuredOnce = false
 
-  const mode = computed<ResponsiveMode>(() => {
-    if (width.value === 0) return 'normal' // Before measurement, assume normal
-    if (width.value < 340) return 'ultra'
-    if (width.value < 420) return 'compact'
-    return 'normal'
-  })
+  watch(
+    width,
+    (w) => {
+      if (w === 0) {
+        mode.value = 'normal'
+        return
+      }
+      if (!measuredOnce) {
+        measuredOnce = true
+        mode.value = w < 340 ? 'ultra' : w < 420 ? 'compact' : 'normal'
+        return
+      }
+      const cur = mode.value
+      if (cur === 'ultra') {
+        if (w >= 345) mode.value = w >= 425 ? 'normal' : 'compact'
+      } else if (cur === 'compact') {
+        if (w <= 335) mode.value = 'ultra'
+        else if (w >= 425) mode.value = 'normal'
+      } else {
+        if (w <= 335) mode.value = 'ultra'
+        else if (w <= 415) mode.value = 'compact'
+      }
+    },
+    { immediate: true },
+  )
 
   const isCompact = computed(() => mode.value !== 'normal')
 
@@ -143,18 +193,43 @@ export function useTabLabelMode(
  *   reduce paddings, keep toolbar on one row but icon-only.
  * - **ultra** (< 400px): Stack toolbar vertically, minimal padding,
  *   user messages take full width.
+ *
+ * Applies a 12px hysteresis deadband (±6px around 400 and 560) after the
+ * first non-zero measurement so layout changes caused by switching modes
+ * (e.g. scrollbar toggling) cannot oscillate back across the threshold.
  */
 export type ChatResponsiveMode = 'normal' | 'narrow' | 'ultra'
 
 export function useChatResponsiveMode(target: Ref<HTMLElement | null>) {
   const { width } = useElementSize(target)
+  const mode = ref<ChatResponsiveMode>('normal')
+  let measuredOnce = false
 
-  const mode = computed<ChatResponsiveMode>(() => {
-    if (width.value === 0) return 'normal' // Before measurement, assume normal
-    if (width.value < 400) return 'ultra'
-    if (width.value < 560) return 'narrow'
-    return 'normal'
-  })
+  watch(
+    width,
+    (w) => {
+      if (w === 0) {
+        mode.value = 'normal'
+        return
+      }
+      if (!measuredOnce) {
+        measuredOnce = true
+        mode.value = w < 400 ? 'ultra' : w < 560 ? 'narrow' : 'normal'
+        return
+      }
+      const cur = mode.value
+      if (cur === 'ultra') {
+        if (w >= 406) mode.value = w >= 566 ? 'normal' : 'narrow'
+      } else if (cur === 'narrow') {
+        if (w <= 394) mode.value = 'ultra'
+        else if (w >= 566) mode.value = 'normal'
+      } else {
+        if (w <= 394) mode.value = 'ultra'
+        else if (w <= 554) mode.value = 'narrow'
+      }
+    },
+    { immediate: true },
+  )
 
   const isNarrow = computed(() => mode.value !== 'normal')
 

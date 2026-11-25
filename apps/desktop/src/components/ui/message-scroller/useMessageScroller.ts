@@ -553,7 +553,11 @@ function createEngine(props: MessageScrollerProviderProps) {
   function setSpacerHeight(height: number) {
     if (!spacer)
       return
-    const next = Math.max(0, Math.ceil(height))
+    const next = Math.max(0, Math.round(height))
+    // Ignore subpixel DPR rounding jitter when the spacer is already active so it
+    // cannot re-trigger ResizeObserver loops on compact/high-DPI viewports.
+    if (next > 0 && spacerHeight > 0 && Math.abs(spacerHeight - next) <= 1)
+      return
     if (spacerHeight !== next) {
       spacerHeight = next
       spacer.hidden = next === 0
