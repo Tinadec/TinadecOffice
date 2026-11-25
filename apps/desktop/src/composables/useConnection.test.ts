@@ -245,4 +245,17 @@ describe('useConnection', () => {
     await starting
     expect(connectionState.value).toBe('host_unavailable')
   })
+  it('periodic health watch automatically retries an unavailable host and recovers', async () => {
+    getHostStatus.mockResolvedValue({ state: 'unavailable', managed: true, error: { code: 'host_identity_unavailable', message: 'retry' } })
+    retryHost.mockResolvedValueOnce({ state: 'ready', managed: true })
+    vi.mocked(api.health).mockResolvedValue({ status: 'ok' })
+    const { start, connectionState, businessReady } = useConnection()
+    await start()
+    expect(connectionState.value).toBe('host_unavailable')
+    expect(retryHost).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(CONNECTION_POLL_INTERVAL_MS * 4)
+    expect(retryHost).toHaveBeenCalledTimes(1)
+    expect(connectionState.value).toBe('connected')
+    expect(businessReady.value).toBe(true)
+  })
 })

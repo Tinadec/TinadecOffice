@@ -117,7 +117,7 @@ function bridge() {
   return typeof window === 'undefined' ? undefined : window.tinadec
 }
 
-function probe(refreshHost = true): Promise<boolean> {
+function probe(refreshHost = true, recoverUnavailableHost = false): Promise<boolean> {
   if (hostStatus.value.state === 'restart_required') return Promise.resolve(false)
   if (pendingProbe) return pendingProbe
   const epoch = generation
@@ -126,10 +126,17 @@ function probe(refreshHost = true): Promise<boolean> {
     try {
       const host = bridge()
       if (refreshHost) {
-        const next = await readHostStatus(host)
+        const wasUnavailable = hostStatus.value.state === 'unavailable'
+        let next = await readHostStatus(host)
         if (epoch !== generation) return false
         // A newer main-process event outranks an older IPC read.
         if (revision === hostRevision) applyHostStatus(next)
+        if (recoverUnavailableHost && wasUnavailable && hostStatus.value.state === 'unavailable') {
+          const retryRevision = hostRevision
+          next = await retryHostStatus(host)
+          if (epoch !== generation) return false
+          if (retryRevision === hostRevision) applyHostStatus(next)
+        }
       }
       if (hostStatus.value.state !== 'ready') return false
       const authenticatedRevision = hostRevision
@@ -159,7 +166,7 @@ function probe(refreshHost = true): Promise<boolean> {
 function startHealthWatch() {
   if (watchHandle !== undefined || !started) return
   watchHandle = setInterval(() => {
-    void probe()
+    void probe(true, true)
   }, CONNECTION_POLL_INTERVAL_MS * 4)
 }
 

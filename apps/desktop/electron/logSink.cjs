@@ -23,6 +23,8 @@ function createLogSink(directory, options = {}) {
   if (maxFileBytes <= 0 || maxTotalBytes < maxFileBytes) throw new Error('Invalid host log budget.');
   fs.mkdirSync(directory, { recursive: true });
   let sequence = 0;
+  let bytesSinceBudget = 0;
+  const budgetCheckIntervalBytes = Math.min(maxFileBytes, 256 * 1024);
   function enforceBudget() {
     const entries = [];
     function visit(root) {
@@ -51,16 +53,24 @@ function createLogSink(directory, options = {}) {
     if (!['electron', 'core', 'gateway'].includes(label)) throw new Error('Unknown host log stream.');
     const file = path.join(directory, `${label}.log`);
     let remaining = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+    let rotated = false;
+    const totalBytes = remaining.length;
     while (remaining.length) {
       let size = fs.existsSync(file) ? fs.statSync(file).size : 0;
       if (size >= maxFileBytes) {
-        fs.renameSync(file, path.join(directory, `${label}.${Date.now()}-${sequence++}.log`)); size = 0;
+        fs.renameSync(file, path.join(directory, `${label}.${Date.now()}-${sequence++}.log`));
+        size = 0;
+        rotated = true;
       }
       const chunk = remaining.subarray(0, maxFileBytes - size);
       fs.appendFileSync(file, chunk, { mode: 0o600 });
       remaining = remaining.subarray(chunk.length);
     }
-    enforceBudget();
+    bytesSinceBudget += totalBytes;
+    if (rotated || bytesSinceBudget >= budgetCheckIntervalBytes) {
+      bytesSinceBudget = 0;
+      enforceBudget();
+    }
   }
   return { write, enforceBudget };
 }

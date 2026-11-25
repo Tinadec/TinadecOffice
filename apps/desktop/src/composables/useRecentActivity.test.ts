@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { SessionDto } from '@/api'
-import { setSelectedStorage } from '@/lib/storageScope'
+import { captureStorageId, selectionKey, setSelectedStorage } from '@/lib/storageScope'
 import { ACTIVITY_CONCURRENCY, ACTIVITY_LIMIT, ACTIVITY_TTL_MS, latestRun, useRecentActivity, type ActivityCandidate } from './useRecentActivity'
 
 const { listRunsMock } = vi.hoisted(() => ({
@@ -157,5 +157,25 @@ describe('useRecentActivity', () => {
     expect(activity.runs.value['s-1']).toBeUndefined()
     wrapper.unmount()
     setSelectedStorage('user')
+  })
+
+  it('scopes each listRuns request to its session storage_id rather than selectedStorage', async () => {
+    setSelectedStorage('user')
+    const seenScopes: Record<string, string> = {}
+    listRunsMock.mockImplementation(async (sessionId: unknown) => {
+      const id = String(sessionId)
+      seenScopes[id] = captureStorageId(`/api/v1/sessions/${id}/runs`)
+      return [runRow(`${id}-run`, 'completed', '2026-10-21T09:00:00Z')]
+    })
+    const a = candidate('s-a')
+    a.session.storage_id = 'project-alpha'
+    const b = candidate('s-b')
+    b.session.storage_id = 'project-beta'
+    const { activity, wrapper } = harness(() => [a, b])
+    await activity.refresh()
+    expect(seenScopes).toEqual({ 's-a': 'project-alpha', 's-b': 'project-beta' })
+    expect(activity.runs.value[selectionKey(a.session)]?.status).toBe('completed')
+    expect(activity.runs.value[selectionKey(b.session)]?.status).toBe('completed')
+    wrapper.unmount()
   })
 })

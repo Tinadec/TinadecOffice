@@ -7,7 +7,7 @@ import { Elysia, t } from 'elysia';
 import { createHmac } from 'node:crypto';
 import { swagger } from '@elysiajs/swagger';
 import { getConfig } from './config.js';
-import { coreUrl, proxyJson, proxyRaw, proxySse } from './coreClient.js';
+import { coreUrl, isCancellationError, proxyJson, proxyRaw, proxySse } from './coreClient.js';
 import { proxyToolRuntimeJson, toolRuntimeUrl } from './toolRuntimeClient.js';
 import {
   authenticate,
@@ -362,6 +362,10 @@ const app = new Elysia()
     // 抛错/未匹配的请求不会经过 onAfterHandle，而错误恰恰是最需要耗时归因的一类。
     emitServerTiming(request, set);
     const path = new URL(request.url).pathname;
+    if (isCancellationError(error, request.signal)) {
+      set.status = 499;
+      return '';
+    }
     if (code === 'NOT_FOUND') {
       set.status = 404;
       set.headers['content-type'] = 'application/problem+json';

@@ -5,7 +5,7 @@
  * Gateway 透传请求和响应的 body 流，不做缓冲。
  */
 
-import { coreEndpoint } from './coreClient.js';
+import { coreEndpoint, isCancellationError, rethrowCancellation } from './coreClient.js';
 import { toolRuntimeEndpoint } from './toolRuntimeClient.js';
 import { upstreamUnreachableResponse } from './upstreamFailure.js';
 
@@ -40,6 +40,7 @@ export async function proxyStream(options: StreamProxyOptions): Promise<Response
       duplex: options.body ? 'half' : undefined,
     });
   } catch (error) {
+    rethrowCancellation(error, options.signal);
     return upstreamUnreachableResponse(options.target === 'core' ? 'core' : 'toolRuntime', url, error);
   }
 }
@@ -84,7 +85,9 @@ export function wrapSseWithKeepalive(
       timer = null;
     }
     try {
-      void reader?.cancel();
+      void reader?.cancel().catch(() => {
+        // Ignore AbortError / closed stream rejection when tearing down SSE readers.
+      });
     } catch {
       // ignore
     }
@@ -130,8 +133,13 @@ export function wrapSseWithKeepalive(
           cleanup();
           try { controller.close(); } catch { /* ignore */ }
         } catch (err) {
+          const cancelled = closed || isCancellationError(err, signal);
           cleanup();
-          try { controller.error(err); } catch { /* ignore */ }
+          if (cancelled) {
+            try { controller.close(); } catch { /* ignore */ }
+          } else {
+            try { controller.error(err); } catch { /* ignore */ }
+          }
         }
       })();
     },

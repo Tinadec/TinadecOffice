@@ -602,11 +602,16 @@ function connectGlobalBoardBadgeStream() {
   boardSummaryStream?.close()
   boardSummaryStream = null
   if (props.companionDomain || !canAccessBackend.value) return
+  let skipInitialNullSnapshot = true
   try {
     boardSummaryStream = api.subscribeGlobalBoardEvents((evt) => {
       if (evt.summary) {
+        skipInitialNullSnapshot = false
         boardNeedsActionCount.value = Math.max(0, evt.summary.needs_action_count || 0)
+      } else if (evt.event_type === 'snapshot' && skipInitialNullSnapshot) {
+        skipInitialNullSnapshot = false
       } else {
+        skipInitialNullSnapshot = false
         void refreshGlobalBoardBadge()
       }
     })

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { coreEndpoint, proxyJson, proxyRaw, proxySse, proxySseWithCursor, proxyStream } from './coreClient.js';
+import { proxyStream as proxyTargetedStream, wrapSseWithKeepalive } from './streaming.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -39,5 +40,53 @@ test('Core transports still report unavailable upstreams as 502', { concurrency:
 
 test('coreEndpoint resolves API paths against the configured Core URL', () => {
   assert.equal(coreEndpoint('/api/v1/health'), 'http://127.0.0.1:48731/api/v1/health');
+});
+
+test('streaming proxyStream preserves caller cancellation and AbortError without fabricating 502', { concurrency: false }, async () => {
+  const controller = new AbortController();
+  const reason = new Error('stream aborted');
+  controller.abort(reason);
+  globalThis.fetch = (async () => { throw reason; }) as typeof fetch;
+  await assert.rejects(
+    proxyTargetedStream({ target: 'core', path: '/api/v1/files', signal: controller.signal }),
+    error => error === reason,
+  );
+
+  const aborted = new DOMException('aborted fetch', 'AbortError');
+  globalThis.fetch = (async () => { throw aborted; }) as typeof fetch;
+  await assert.rejects(
+    proxyTargetedStream({ target: 'core', path: '/api/v1/files' }),
+    error => error === aborted,
+  );
+});
+
+test('wrapSseWithKeepalive absorbs AbortError from reader.cancel() and aborted read()', { concurrency: false }, async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (err: unknown) => { unhandled.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const controller = new AbortController();
+    const source = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>((_, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            reject(new DOMException('The connection was closed.', 'AbortError'));
+          }, { once: true });
+        });
+      },
+      cancel() {
+        return Promise.reject(new DOMException('The connection was closed.', 'AbortError'));
+      },
+    });
+    const wrapped = wrapSseWithKeepalive(source, 50, controller.signal)!;
+    const reader = wrapped.getReader();
+    controller.abort();
+    const next = await reader.read();
+    assert.equal(next.done, true);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(unhandled.length, 0);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 

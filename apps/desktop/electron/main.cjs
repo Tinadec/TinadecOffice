@@ -1046,8 +1046,10 @@ app.whenReady().then(async () => {
   let localServicesInitialized = false;
   hostConnection = createHostConnection({
     managed,
-    // Packaged service startup can take up to two bounded 90-second waits.
-    verificationTimeoutMs: app.isPackaged ? 200_000 : 10_000,
+    // Packaged service startup can take up to two bounded 90-second waits; keep retries finite
+    // across longer cold starts in dev as well so early transient failures settle automatically.
+    retryDelaysMs: [1_000, 2_000, 5_000, 10_000, 15_000, 20_000, 30_000],
+    verificationTimeoutMs: app.isPackaged ? 200_000 : 20_000,
     onStatusChange: publishHostStatus,
     verify: async ({ signal }) => {
       signal.throwIfAborted();

@@ -75,17 +75,17 @@ export function useRecentActivity(candidates: () => ActivityCandidate[], options
     controller?.abort()
     controller = new AbortController()
     const { signal } = controller
-    // Pin the scope for the whole fan-out: a storage switch mid-read must not stitch two stores.
+    // Pin the fallback storage for the whole fan-out while honoring each session's own storage_id.
     const storage = selectedStorage.value
-    const scoped = scopedApi(api, () => storage)
     type Result = PromiseSettledResult<{ key: string; updatedAt: string; list: OrchestrationRunDto[] }>
     const results: Result[] = []
     // A wide view (所有活动) can hand over every conversation; batching keeps the gateway from
     // receiving one burst of identical requests and lets an abandoned run stop early.
     for (let index = 0; index < wanted.length; index += ACTIVITY_CONCURRENCY) {
       const batch = wanted.slice(index, index + ACTIVITY_CONCURRENCY)
-      results.push(...await Promise.allSettled(batch.map(row => scoped.listRuns(row.session.id, signal)
-        .then(list => ({ key: selectionKey(row.session), updatedAt: row.session.updated_at, list })))))
+      results.push(...await Promise.allSettled(batch.map(row =>
+        scopedApi(api, () => row.session.storage_id || storage).listRuns(row.session.id, signal)
+          .then(list => ({ key: selectionKey(row.session), updatedAt: row.session.updated_at, list })))))
       if (current !== generation) return
     }
     if (storage !== selectedStorage.value) return

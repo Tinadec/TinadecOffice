@@ -24,9 +24,13 @@ export interface ProxyResult {
   headers?: Headers;
 }
 
-function rethrowCancellation(error: unknown, signal?: AbortSignal | null): void {
-  if (signal?.aborted || (error !== null && typeof error === 'object' && 'name' in error
-    && error.name === 'AbortError')) throw error;
+export function isCancellationError(error: unknown, signal?: AbortSignal | null): boolean {
+  return Boolean(signal?.aborted || (error !== null && typeof error === 'object' && 'name' in error
+    && (error as { name?: unknown }).name === 'AbortError'));
+}
+
+export function rethrowCancellation(error: unknown, signal?: AbortSignal | null): void {
+  if (isCancellationError(error, signal)) throw error;
 }
 
 /** For transport surfaces, preserve the Core status, headers, and bytes. */
