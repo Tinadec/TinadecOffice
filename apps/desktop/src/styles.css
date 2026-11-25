@@ -1653,12 +1653,70 @@ button.agent-topology-node:hover,
      surface under every effect (opaque / translucent / blur). */
   background: transparent;
   flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  overflow: hidden;
 }
 
-.browser-tab-bar::-webkit-scrollbar {
+.browser-tab-strip {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+}
+
+.browser-tab-strip::-webkit-scrollbar {
+  display: none;
+  width: 0;
   height: 0;
+}
+
+.browser-tab-strip > .browser-tab {
+  flex-shrink: 0;
+}
+
+/* Glass-safe edge feathering via CSS mask-image (zero transform, zero solid overlay). */
+.browser-tab-strip.has-overflow-right {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 22px), transparent 100%);
+}
+
+.browser-tab-strip.has-overflow-left {
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 22px, #000 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 22px, #000 100%);
+}
+
+.browser-tab-strip.has-overflow-left.has-overflow-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+}
+
+.browser-tab-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.browser-tab-actions .browser-tab-collapse {
+  margin-left: 0;
 }
 
 .browser-tab {
@@ -1906,13 +1964,13 @@ button.agent-topology-node:hover,
 }
 
 /* ===== Responsive: Ultra-compact mode (panel width < 340px) ===== */
-/* Strategy: Hide secondary actions, keep only essential icons. */
-.uie-stack.mode-ultra .browser-tab-add {
-  display: none;
-}
-
+/* Strategy: Tighten tab & action dimensions while keeping pinned actions accessible. */
 .uie-stack.mode-ultra .browser-tab-bar {
   padding: 4px;
+  gap: 2px;
+}
+
+.uie-stack.mode-ultra .browser-tab-strip {
   gap: 2px;
 }
 
@@ -1922,9 +1980,12 @@ button.agent-topology-node:hover,
   padding: 5px 4px;
 }
 
+.uie-stack.mode-ultra .browser-tab-add,
 .uie-stack.mode-ultra .browser-tab-collapse {
   width: 24px;
   height: 24px;
+  min-width: 24px;
+  min-height: 24px;
 }
 
 /* ===== Responsive: Preview browser toolbar ===== */

@@ -10,7 +10,7 @@
 //   - Chrome-style drag-to-detach (tab tearing) with Electron cursor polling.
 //
 // Shared styles come from apps/desktop/src/styles.css (.browser-tab-*).
-import { Transition, computed, nextTick, onMounted, onUnmounted, ref, type FunctionalComponent, type TransitionProps } from 'vue'
+import { Transition, computed, nextTick, onMounted, onUnmounted, ref, watch, type FunctionalComponent, type TransitionProps } from 'vue'
 
 const MotionTransition: FunctionalComponent<TransitionProps> = (props, ctx) => Transition(props, ctx)
 import {
@@ -101,6 +101,88 @@ const detachedTabs = computed(() => detached.detachedTabs.value)
 // companion cards belong to the companion center and must not appear on Home.
 const menuFeatures = computed(() => catalogEntriesForPage(props.pageId ?? 'home'))
 
+// ---- Scrollable tab strip: wheel scrolling, active-tab reveal, glass-safe fade ----
+const tabStripRef = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+const OVERFLOW_EPSILON = 1
+let stripResizeObserver: ResizeObserver | null = null
+
+function updateOverflowState() {
+  const el = tabStripRef.value
+  if (!el) {
+    canScrollLeft.value = false
+    canScrollRight.value = false
+    return
+  }
+  const maxScroll = el.scrollWidth - el.clientWidth
+  if (maxScroll <= OVERFLOW_EPSILON) {
+    canScrollLeft.value = false
+    canScrollRight.value = false
+    return
+  }
+  canScrollLeft.value = el.scrollLeft > OVERFLOW_EPSILON
+  canScrollRight.value = el.scrollLeft < maxScroll - OVERFLOW_EPSILON
+}
+
+function onStripWheel(event: WheelEvent) {
+  const el = tabStripRef.value
+  if (!el) return
+  if (el.scrollWidth <= el.clientWidth) return
+
+  const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? el.clientWidth : 1
+  const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  if (rawDelta === 0) return
+
+  const delta = rawDelta * scale
+  const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+  const prev = el.scrollLeft
+  const next = Math.min(maxScroll, Math.max(0, prev + delta))
+
+  if (next !== prev || event.deltaY !== 0) {
+    event.preventDefault()
+  }
+  if (next !== prev) {
+    el.scrollLeft = next
+    updateOverflowState()
+  }
+}
+
+function scrollActiveTabIntoView() {
+  const el = tabStripRef.value
+  if (!el) return
+  const activeEl = el.querySelector<HTMLElement>('.browser-tab.active')
+  if (!activeEl || typeof activeEl.scrollIntoView !== 'function') return
+  const reducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  activeEl.scrollIntoView({
+    inline: 'nearest',
+    block: 'nearest',
+    behavior: reducedMotion ? 'auto' : 'smooth',
+  })
+}
+
+watch(
+  () => props.activeTabId,
+  () => {
+    void nextTick(() => {
+      scrollActiveTabIntoView()
+      updateOverflowState()
+    })
+  },
+)
+
+watch(
+  [() => featureInstances.value.length, () => detachedTabs.value.length],
+  () => {
+    void nextTick(() => {
+      updateOverflowState()
+    })
+  },
+)
+
 // ---- "+" new-tab dropdown menu ----
 const menuOpen = ref(false)
 const addButtonRef = ref<HTMLElement | null>(null)
@@ -151,12 +233,22 @@ function onDocKeydown(event: KeyboardEvent) {
 
 function onDocResize() {
   closeMenu()
+  updateOverflowState()
 }
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointerDown)
   document.addEventListener('keydown', onDocKeydown)
   window.addEventListener('resize', onDocResize)
+  if (typeof ResizeObserver !== 'undefined' && tabStripRef.value) {
+    stripResizeObserver = new ResizeObserver(() => {
+      updateOverflowState()
+    })
+    stripResizeObserver.observe(tabStripRef.value)
+  }
+  void nextTick(() => {
+    updateOverflowState()
+  })
 })
 
 // ---- Drag-to-split / drag-to-detach (shared dock drag state) ----
@@ -228,142 +320,164 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onDocKeydown)
   window.removeEventListener('resize', onDocResize)
+  stripResizeObserver?.disconnect()
+  stripResizeObserver = null
   dockDrag.cancel()
 })
 </script>
 
 <template>
   <div class="browser-tab-bar uie-stack-tabbar" @dblclick="onTabBarDblClick">
-    <!-- Pinned Home tab -->
-    <button
-      class="browser-tab browser-tab-home"
-      :class="{ active: activeTabId === homeInstance?.id }"
-      :title="t('context.homeTitle')"
-      @click="emit('home')"
-      @auxclick="onHomeAuxClick"
+    <!-- Scrollable tab strip: pinned Home, open feature tabs, and detached indicators -->
+    <div
+      ref="tabStripRef"
+      class="browser-tab-strip"
+      :class="{
+        'has-overflow-left': canScrollLeft,
+        'has-overflow-right': canScrollRight,
+      }"
+      @scroll.passive="updateOverflowState"
+      @wheel="onStripWheel"
     >
-      <HomeIcon :size="14" />
-      <span class="browser-tab-label">{{ t('context.homeTabLabel') }}</span>
-    </button>
-
-    <!-- Open feature tabs -->
-    <button
-      v-for="inst in featureInstances"
-      :key="inst.id"
-      class="browser-tab"
-      :class="{ active: activeTabId === inst.id, 'tab-dragging': dockDrag.isDraggingTab(inst.id) }"
-      :title="cardTitle(inst)"
-      @click="onTabClick($event, inst.id)"
-      @mousedown="onTabMouseDown($event, inst)"
-      @auxclick="onTabAuxClick($event, inst)"
-      @contextmenu="onTabContextMenu($event, inst)"
-    >
-      <component :is="iconFor(inst.descriptorId)" :size="14" class="browser-tab-icon" />
-      <span class="browser-tab-label">{{ cardTitle(inst) }}</span>
-      <span
-        class="browser-tab-detach"
-        :title="t('context.detachTab')"
-        @click.stop="emit('detach', inst.id)"
+      <!-- Pinned Home tab -->
+      <button
+        type="button"
+        class="browser-tab browser-tab-home"
+        :class="{ active: activeTabId === homeInstance?.id }"
+        :title="t('context.homeTitle')"
+        @click="emit('home')"
+        @auxclick="onHomeAuxClick"
       >
-        <ExternalLink :size="11" />
-      </span>
-      <span
-        class="browser-tab-close"
-        :title="t('app.close')"
-        @click.stop="emit('close', inst.id)"
+        <HomeIcon :size="14" class="browser-tab-icon" />
+        <span class="browser-tab-label">{{ t('context.homeTabLabel') }}</span>
+      </button>
+
+      <!-- Open feature tabs -->
+      <button
+        v-for="inst in featureInstances"
+        :key="inst.id"
+        type="button"
+        class="browser-tab"
+        :class="{ active: activeTabId === inst.id, 'tab-dragging': dockDrag.isDraggingTab(inst.id) }"
+        :title="cardTitle(inst)"
+        @click="onTabClick($event, inst.id)"
+        @mousedown="onTabMouseDown($event, inst)"
+        @auxclick="onTabAuxClick($event, inst)"
+        @contextmenu="onTabContextMenu($event, inst)"
       >
-        <X :size="11" />
-      </span>
-    </button>
+        <component :is="iconFor(inst.descriptorId)" :size="14" class="browser-tab-icon" />
+        <span class="browser-tab-label">{{ cardTitle(inst) }}</span>
+        <span
+          class="browser-tab-detach"
+          :title="t('context.detachTab')"
+          @click.stop="emit('detach', inst.id)"
+        >
+          <ExternalLink :size="11" />
+        </span>
+        <span
+          class="browser-tab-close"
+          :title="t('app.close')"
+          @click.stop="emit('close', inst.id)"
+        >
+          <X :size="11" />
+        </span>
+      </button>
 
-    <!-- Detached window indicators (click to focus the floating window) -->
-    <button
-      v-for="dt in detachedTabs"
-      :key="dt.tabId"
-      class="browser-tab browser-tab-detached"
-      :title="t('context.detachedTabHint', { title: cardTitle({ descriptorId: dt.type, title: dt.title }) })"
-      @click="emit('focus-detached', dt.windowId)"
-    >
-      <component :is="iconFor(dt.type)" :size="14" class="browser-tab-icon" />
-      <span class="browser-tab-label">{{ cardTitle({ descriptorId: dt.type, title: dt.title }) }}</span>
-      <ExternalLink :size="10" class="browser-tab-detached-icon" />
-    </button>
+      <!-- Detached window indicators (click to focus the floating window) -->
+      <button
+        v-for="dt in detachedTabs"
+        :key="dt.tabId"
+        type="button"
+        class="browser-tab browser-tab-detached"
+        :title="t('context.detachedTabHint', { title: cardTitle({ descriptorId: dt.type, title: dt.title }) })"
+        @click="emit('focus-detached', dt.windowId)"
+      >
+        <component :is="iconFor(dt.type)" :size="14" class="browser-tab-icon" />
+        <span class="browser-tab-label">{{ cardTitle({ descriptorId: dt.type, title: dt.title }) }}</span>
+        <ExternalLink :size="10" class="browser-tab-detached-icon" />
+      </button>
+    </div>
 
-    <!-- Add tab: opens the new-tab dropdown (no longer goes straight Home) -->
-    <button
-      ref="addButtonRef"
-      class="browser-tab-add"
-      :class="{ active: menuOpen }"
-      :title="t('context.homeNewTab')"
-      :aria-haspopup="'menu'"
-      :aria-expanded="menuOpen"
-      @click="toggleMenu"
-    >
-      <Plus :size="14" />
-    </button>
+    <!-- Pinned right-side actions: never scrolled or squeezed out regardless of tab count -->
+    <div class="browser-tab-actions">
+      <!-- Add tab: opens the new-tab dropdown (no longer goes straight Home) -->
+      <button
+        ref="addButtonRef"
+        type="button"
+        class="browser-tab-add"
+        :class="{ active: menuOpen }"
+        :title="t('context.homeNewTab')"
+        :aria-label="t('context.homeNewTab')"
+        :aria-haspopup="'menu'"
+        :aria-expanded="menuOpen"
+        @click="toggleMenu"
+      >
+        <Plus :size="14" />
+      </button>
 
-    <!-- Restore single panel (dock has more than one pane) -->
-    <TooltipProvider :delay-duration="300">
-      <TooltipRoot v-if="canRestore">
-        <TooltipTrigger as-child>
-          <button
-            type="button"
-            class="browser-tab-collapse"
-            :aria-label="t('context.restoreDock')"
-            @click="emit('restore-dock')"
-          >
-            <PanelsTopLeft :size="16" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipPortal>
-          <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
-            {{ t('context.restoreDock') }}
-          </TooltipContent>
-        </TooltipPortal>
-      </TooltipRoot>
+      <!-- Restore single panel (dock has more than one pane) -->
+      <TooltipProvider :delay-duration="300">
+        <TooltipRoot v-if="canRestore">
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              class="browser-tab-collapse"
+              :aria-label="t('context.restoreDock')"
+              @click="emit('restore-dock')"
+            >
+              <PanelsTopLeft :size="16" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipPortal>
+            <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
+              {{ t('context.restoreDock') }}
+            </TooltipContent>
+          </TooltipPortal>
+        </TooltipRoot>
 
-      <!-- In-app maximize / restore of the Home feature panel (3-col <-> 2-col). -->
-      <TooltipRoot v-if="showMaximizeAction">
-        <TooltipTrigger as-child>
-          <button
-            type="button"
-            class="browser-tab-collapse browser-tab-maximize"
-            :class="{ active: maximized }"
-            data-testid="feature-panel-maximize-btn"
-            :aria-label="maximizeLabel"
-            :aria-pressed="Boolean(maximized)"
-            @click="emit('toggle-maximize')"
-          >
-            <Minimize2 v-if="maximized" :size="15" aria-hidden="true" />
-            <Maximize2 v-else :size="15" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipPortal>
-          <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
-            {{ maximizeLabel }}
-          </TooltipContent>
-        </TooltipPortal>
-      </TooltipRoot>
+        <!-- In-app maximize / restore of the Home feature panel (3-col <-> 2-col). -->
+        <TooltipRoot v-if="showMaximizeAction">
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              class="browser-tab-collapse browser-tab-maximize"
+              :class="{ active: maximized }"
+              data-testid="feature-panel-maximize-btn"
+              :aria-label="maximizeLabel"
+              :aria-pressed="Boolean(maximized)"
+              @click="emit('toggle-maximize')"
+            >
+              <Minimize2 v-if="maximized" :size="15" aria-hidden="true" />
+              <Maximize2 v-else :size="15" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipPortal>
+            <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
+              {{ maximizeLabel }}
+            </TooltipContent>
+          </TooltipPortal>
+        </TooltipRoot>
 
-      <!-- Collapse preserves every pane and tab in the column. -->
-      <TooltipRoot>
-        <TooltipTrigger as-child>
-          <button
-            type="button"
-            class="browser-tab-collapse"
-            :aria-label="collapseLabel"
-            @click="emit('collapse')"
-          >
-            <PanelRightClose :size="16" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipPortal>
-          <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
-            {{ collapseLabel }}
-          </TooltipContent>
-        </TooltipPortal>
-      </TooltipRoot>
-    </TooltipProvider>
+        <!-- Collapse preserves every pane and tab in the column. -->
+        <TooltipRoot>
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              class="browser-tab-collapse"
+              :aria-label="collapseLabel"
+              @click="emit('collapse')"
+            >
+              <PanelRightClose :size="16" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipPortal>
+            <TooltipContent side="bottom" align="end" :side-offset="6" class="uie-action-tooltip">
+              {{ collapseLabel }}
+            </TooltipContent>
+          </TooltipPortal>
+        </TooltipRoot>
+      </TooltipProvider>
+    </div>
 
     <!-- New-tab dropdown: teleported to body so the panel's overflow clipping
          never cuts it off; position:fixed right-aligned to the + button.
@@ -379,6 +493,7 @@ onUnmounted(() => {
           <button
             v-for="feature in menuFeatures"
             :key="feature.descriptorId"
+            type="button"
             class="feature-panel-menu-item"
             role="menuitem"
             @click="onSelect(feature.descriptorId)"
@@ -473,8 +588,9 @@ onUnmounted(() => {
   transform: scale(0.94);
 }
 
-/* Pack multiple right-edge action buttons (restoreDock / maximize / collapse)
-   flush together so only the first one takes margin-left: auto. */
+/* Pack action buttons inside .browser-tab-actions flush together while keeping
+   standalone .browser-tab-collapse compatibility in other tab bars. */
+.browser-tab-actions .browser-tab-collapse,
 .browser-tab-collapse + .browser-tab-collapse {
   margin-left: 0;
 }
