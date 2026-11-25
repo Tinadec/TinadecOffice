@@ -57,6 +57,7 @@ import { contextMemorySchemas, registerContextMemoryRoutes } from './contextMemo
 import { liveExplainerSchemas, registerLiveExplainerRoutes } from './liveExplainerRoutes.js';
 import { projectBoardSchemas, registerProjectBoardRoutes } from './projectBoardRoutes.js';
 import { registerTeammateControlRoutes, teammateControlSchemas } from './teammateControlRoutes.js';
+import { registerPreferencesRoutes } from './preferencesRoutes.js';
 import {
   finalizeRequestTiming,
   logRequestTiming,
@@ -3177,6 +3178,7 @@ registerContextMemoryRoutes(app, forwardHeaders);
 registerLiveExplainerRoutes(app, forwardHeaders);
 registerProjectBoardRoutes(app, forwardHeaders);
 registerTeammateControlRoutes(app, forwardHeaders);
+registerPreferencesRoutes(app, forwardHeaders);
 registerWebServerPlugin(app, {
   runtime: webAuthRuntime,
   getPrincipal: (request) => requestPrincipals.get(request),

@@ -552,6 +552,116 @@ const toolExecutionPreview = t.Object({
   truncated: t.Boolean(),
 });
 
+export const UI_PREFERENCES_THEMES = ['dark', 'light', 'system'] as const;
+export const UI_PREFERENCES_ACCENTS = [
+  'monochrome',
+  'warm',
+  'dynamic',
+  'custom',
+  'blue',
+  'green',
+  'orange',
+  'purple',
+  'pink',
+  'red',
+  'cyan',
+  'yellow',
+] as const;
+export const UI_PREFERENCES_PANEL_EFFECTS = ['solid', 'translucent', 'blur'] as const;
+export const UI_PREFERENCES_PANEL_EFFECT_INPUTS = ['solid', 'translucent', 'blur', 'opaque'] as const;
+export const UI_PREFERENCES_WORKSPACE_VIEWS = ['grid', 'list'] as const;
+export const UI_PREFERENCES_WORKSPACE_FOLDER_TONES = ['amber', 'teal', 'sky', 'coral', 'frost'] as const;
+export const UI_PREFERENCES_WORKSPACE_DROP_ACTIONS = ['link', 'copy', 'ask'] as const;
+export const UI_PREFERENCES_SPATIAL_PROMOTE_MODES = ['merge', 'split', 'parent_children'] as const;
+export const UI_PREFERENCES_SPATIAL_PROMOTE_MODE_INPUTS = [
+  'merge',
+  'split',
+  'parent_children',
+  'merge_single',
+  'split_many',
+  'parent_with_children',
+] as const;
+export const UI_PREFERENCES_REDUCED_MOTIONS = ['system', 'on', 'off'] as const;
+
+const uiAppearancePreferencesDto = t.Object({
+  theme: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_THEMES] }),
+  accent: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS] }),
+  custom_accent_hex: t.String({ pattern: '^#[0-9a-fA-F]{6}$' }),
+  panel_effect: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECTS] }),
+  workspace_view: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS] }),
+  workspace_folder_tone: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES] }),
+}, { additionalProperties: false });
+
+const uiInteractionPreferencesDto = t.Object({
+  workspace_drop_action: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_DROP_ACTIONS] }),
+  spatial_promote_mode: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_SPATIAL_PROMOTE_MODES] }),
+  reduced_motion: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_REDUCED_MOTIONS] }),
+}, { additionalProperties: false });
+
+const uiPreferencesDocumentDto = t.Object({
+  version: t.Unsafe({ type: 'integer', minimum: 1 }),
+  file_path: t.String(),
+  content_hash: t.String(),
+  updated_at: t.String({ format: 'date-time' }),
+  appearance: componentRef('UiAppearancePreferencesDto'),
+  interaction: componentRef('UiInteractionPreferencesDto'),
+}, { additionalProperties: false });
+
+const uiAppearancePreferencesInputDto = t.Object({
+  theme: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_THEMES] }),
+  accent: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS] }),
+  custom_accent_hex: t.String({ pattern: '^#[0-9a-fA-F]{6}$' }),
+  panel_effect: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECT_INPUTS] }),
+  workspace_view: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS] }),
+  workspace_folder_tone: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES] }),
+}, { additionalProperties: false });
+
+const uiInteractionPreferencesInputDto = t.Object({
+  workspace_drop_action: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_DROP_ACTIONS] }),
+  spatial_promote_mode: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_SPATIAL_PROMOTE_MODE_INPUTS] }),
+  reduced_motion: t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_REDUCED_MOTIONS] }),
+}, { additionalProperties: false });
+
+const uiPreferencesPutRequestDto = t.Object({
+  expected_content_hash: t.Optional(nullableString()),
+  reset_defaults: t.Optional(t.Boolean()),
+  appearance: t.Optional(nullableRef('UiAppearancePreferencesInputDto')),
+  interaction: t.Optional(nullableRef('UiInteractionPreferencesInputDto')),
+}, { additionalProperties: false });
+
+const uiAppearancePreferencesPatchDto = t.Object({
+  theme: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_THEMES], nullable: true })),
+  accent: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_ACCENTS], nullable: true })),
+  custom_accent_hex: t.Optional(t.Unsafe({ type: 'string', pattern: '^#[0-9a-fA-F]{6}$', nullable: true })),
+  panel_effect: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_PANEL_EFFECT_INPUTS], nullable: true })),
+  workspace_view: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_VIEWS], nullable: true })),
+  workspace_folder_tone: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_FOLDER_TONES], nullable: true })),
+}, { additionalProperties: false });
+
+const uiInteractionPreferencesPatchDto = t.Object({
+  workspace_drop_action: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_WORKSPACE_DROP_ACTIONS], nullable: true })),
+  spatial_promote_mode: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_SPATIAL_PROMOTE_MODE_INPUTS], nullable: true })),
+  reduced_motion: t.Optional(t.Unsafe({ type: 'string', enum: [...UI_PREFERENCES_REDUCED_MOTIONS], nullable: true })),
+}, { additionalProperties: false });
+
+const uiPreferencesPatchRequestDto = t.Object({
+  expected_content_hash: t.Optional(nullableString()),
+  appearance: t.Optional(nullableRef('UiAppearancePreferencesPatchDto')),
+  interaction: t.Optional(nullableRef('UiInteractionPreferencesPatchDto')),
+}, { additionalProperties: false });
+
+export const uiPreferencesOpenApiSchemas = {
+  UiAppearancePreferencesDto: uiAppearancePreferencesDto,
+  UiInteractionPreferencesDto: uiInteractionPreferencesDto,
+  UiPreferencesDocumentDto: uiPreferencesDocumentDto,
+  UiAppearancePreferencesInputDto: uiAppearancePreferencesInputDto,
+  UiInteractionPreferencesInputDto: uiInteractionPreferencesInputDto,
+  UiPreferencesPutRequestDto: uiPreferencesPutRequestDto,
+  UiAppearancePreferencesPatchDto: uiAppearancePreferencesPatchDto,
+  UiInteractionPreferencesPatchDto: uiInteractionPreferencesPatchDto,
+  UiPreferencesPatchRequestDto: uiPreferencesPatchRequestDto,
+};
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   ContextPolicyParamsOverride: contextPolicyParamsOverride,
@@ -605,6 +715,7 @@ export const externalDtoSchemas = {
   ToolPreviewEntry: toolPreviewEntry,
   ToolResultPreview: toolResultPreview,
   ToolExecutionPreview: toolExecutionPreview,
+  ...uiPreferencesOpenApiSchemas,
 };
 
 export function externalJsonResponse(schemaName: string, description: string) {

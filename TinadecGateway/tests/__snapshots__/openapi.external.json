@@ -14059,6 +14059,416 @@
         ],
         "type": "object"
       },
+      "UiAppearancePreferencesDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accent": {
+            "enum": [
+              "monochrome",
+              "warm",
+              "dynamic",
+              "custom",
+              "blue",
+              "green",
+              "orange",
+              "purple",
+              "pink",
+              "red",
+              "cyan",
+              "yellow"
+            ],
+            "type": "string"
+          },
+          "custom_accent_hex": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "panel_effect": {
+            "enum": [
+              "solid",
+              "translucent",
+              "blur"
+            ],
+            "type": "string"
+          },
+          "theme": {
+            "enum": [
+              "dark",
+              "light",
+              "system"
+            ],
+            "type": "string"
+          },
+          "workspace_folder_tone": {
+            "enum": [
+              "amber",
+              "teal",
+              "sky",
+              "coral",
+              "frost"
+            ],
+            "type": "string"
+          },
+          "workspace_view": {
+            "enum": [
+              "grid",
+              "list"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "theme",
+          "accent",
+          "custom_accent_hex",
+          "panel_effect",
+          "workspace_view",
+          "workspace_folder_tone"
+        ],
+        "type": "object"
+      },
+      "UiAppearancePreferencesInputDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accent": {
+            "enum": [
+              "monochrome",
+              "warm",
+              "dynamic",
+              "custom",
+              "blue",
+              "green",
+              "orange",
+              "purple",
+              "pink",
+              "red",
+              "cyan",
+              "yellow"
+            ],
+            "type": "string"
+          },
+          "custom_accent_hex": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "panel_effect": {
+            "enum": [
+              "solid",
+              "translucent",
+              "blur",
+              "opaque"
+            ],
+            "type": "string"
+          },
+          "theme": {
+            "enum": [
+              "dark",
+              "light",
+              "system"
+            ],
+            "type": "string"
+          },
+          "workspace_folder_tone": {
+            "enum": [
+              "amber",
+              "teal",
+              "sky",
+              "coral",
+              "frost"
+            ],
+            "type": "string"
+          },
+          "workspace_view": {
+            "enum": [
+              "grid",
+              "list"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "theme",
+          "accent",
+          "custom_accent_hex",
+          "panel_effect",
+          "workspace_view",
+          "workspace_folder_tone"
+        ],
+        "type": "object"
+      },
+      "UiAppearancePreferencesPatchDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accent": {
+            "enum": [
+              "monochrome",
+              "warm",
+              "dynamic",
+              "custom",
+              "blue",
+              "green",
+              "orange",
+              "purple",
+              "pink",
+              "red",
+              "cyan",
+              "yellow"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "custom_accent_hex": {
+            "nullable": true,
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "panel_effect": {
+            "enum": [
+              "solid",
+              "translucent",
+              "blur",
+              "opaque"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "theme": {
+            "enum": [
+              "dark",
+              "light",
+              "system"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace_folder_tone": {
+            "enum": [
+              "amber",
+              "teal",
+              "sky",
+              "coral",
+              "frost"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace_view": {
+            "enum": [
+              "grid",
+              "list"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UiInteractionPreferencesDto": {
+        "additionalProperties": false,
+        "properties": {
+          "reduced_motion": {
+            "enum": [
+              "system",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
+          "spatial_promote_mode": {
+            "enum": [
+              "merge",
+              "split",
+              "parent_children"
+            ],
+            "type": "string"
+          },
+          "workspace_drop_action": {
+            "enum": [
+              "link",
+              "copy",
+              "ask"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_drop_action",
+          "spatial_promote_mode",
+          "reduced_motion"
+        ],
+        "type": "object"
+      },
+      "UiInteractionPreferencesInputDto": {
+        "additionalProperties": false,
+        "properties": {
+          "reduced_motion": {
+            "enum": [
+              "system",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          },
+          "spatial_promote_mode": {
+            "enum": [
+              "merge",
+              "split",
+              "parent_children",
+              "merge_single",
+              "split_many",
+              "parent_with_children"
+            ],
+            "type": "string"
+          },
+          "workspace_drop_action": {
+            "enum": [
+              "link",
+              "copy",
+              "ask"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_drop_action",
+          "spatial_promote_mode",
+          "reduced_motion"
+        ],
+        "type": "object"
+      },
+      "UiInteractionPreferencesPatchDto": {
+        "additionalProperties": false,
+        "properties": {
+          "reduced_motion": {
+            "enum": [
+              "system",
+              "on",
+              "off"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "spatial_promote_mode": {
+            "enum": [
+              "merge",
+              "split",
+              "parent_children",
+              "merge_single",
+              "split_many",
+              "parent_with_children"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace_drop_action": {
+            "enum": [
+              "link",
+              "copy",
+              "ask"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UiPreferencesDocumentDto": {
+        "additionalProperties": false,
+        "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/UiAppearancePreferencesDto"
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "interaction": {
+            "$ref": "#/components/schemas/UiInteractionPreferencesDto"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "file_path",
+          "content_hash",
+          "updated_at",
+          "appearance",
+          "interaction"
+        ],
+        "type": "object"
+      },
+      "UiPreferencesPatchRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "appearance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UiAppearancePreferencesPatchDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UiInteractionPreferencesPatchDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UiPreferencesPutRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "appearance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UiAppearancePreferencesInputDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_content_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UiInteractionPreferencesInputDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reset_defaults": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "UpdateContextMemoryPolicyRequest": {
         "additionalProperties": true,
         "properties": {
@@ -20367,6 +20777,207 @@
         "summary": "Update model settings",
         "tags": [
           "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/preferences": {
+      "get": {
+        "operationId": "getApiV1Preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiPreferencesDocumentDto"
+                }
+              }
+            },
+            "description": "Current user-level UI preferences document with file path and content hash."
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable."
+          }
+        },
+        "summary": "Get user UI preferences",
+        "tags": [
+          "System"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1Preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiPreferencesPatchRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiPreferencesDocumentDto"
+                }
+              }
+            },
+            "description": "Updated user-level UI preferences document."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid UI preferences payload or unknown keys."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Preferences content_hash concurrency conflict."
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Preferences precondition failed (expected_content_hash mismatch)."
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable."
+          }
+        },
+        "summary": "Partially update user UI preferences",
+        "tags": [
+          "System"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiPreferencesPutRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiPreferencesDocumentDto"
+                }
+              }
+            },
+            "description": "Updated user-level UI preferences document."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid UI preferences payload or unknown keys."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Preferences content_hash concurrency conflict."
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Preferences precondition failed (expected_content_hash mismatch)."
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable."
+          }
+        },
+        "summary": "Replace or reset user UI preferences",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/preferences/events": {
+      "get": {
+        "description": "Unbuffered SSE stream emitting preferences.updated events with UiPreferencesDocumentDto payloads and 15s keepalive comments.",
+        "operationId": "getApiV1PreferencesEvents",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unbuffered SSE stream of UI preferences updates (event: preferences.updated)."
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Upstream Core unreachable."
+          }
+        },
+        "summary": "Stream UI preferences updates",
+        "tags": [
+          "System"
         ]
       }
     },

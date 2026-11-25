@@ -816,6 +816,21 @@ export interface paths {
     /** Update model settings */
     put: operations["putApiV1Model-settings"];
   };
+  "/api/v1/preferences": {
+    /** Get user UI preferences */
+    get: operations["getApiV1Preferences"];
+    /** Replace or reset user UI preferences */
+    put: operations["putApiV1Preferences"];
+    /** Partially update user UI preferences */
+    patch: operations["patchApiV1Preferences"];
+  };
+  "/api/v1/preferences/events": {
+    /**
+     * Stream UI preferences updates
+     * @description Unbuffered SSE stream emitting preferences.updated events with UiPreferencesDocumentDto payloads and 15s keepalive comments.
+     */
+    get: operations["getApiV1PreferencesEvents"];
+  };
   "/api/v1/projects": {
     /** List projects */
     get: operations["getApiV1Projects"];
@@ -5194,6 +5209,89 @@ export interface components {
       path: string;
       removed_lines: number;
     };
+    UiAppearancePreferencesDto: {
+      /** @enum {string} */
+      accent: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow";
+      custom_accent_hex: string;
+      /** @enum {string} */
+      panel_effect: "solid" | "translucent" | "blur";
+      /** @enum {string} */
+      theme: "dark" | "light" | "system";
+      /** @enum {string} */
+      workspace_folder_tone: "amber" | "teal" | "sky" | "coral" | "frost";
+      /** @enum {string} */
+      workspace_view: "grid" | "list";
+    };
+    UiAppearancePreferencesInputDto: {
+      /** @enum {string} */
+      accent: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow";
+      custom_accent_hex: string;
+      /** @enum {string} */
+      panel_effect: "solid" | "translucent" | "blur" | "opaque";
+      /** @enum {string} */
+      theme: "dark" | "light" | "system";
+      /** @enum {string} */
+      workspace_folder_tone: "amber" | "teal" | "sky" | "coral" | "frost";
+      /** @enum {string} */
+      workspace_view: "grid" | "list";
+    };
+    UiAppearancePreferencesPatchDto: {
+      /** @enum {string|null} */
+      accent?: "monochrome" | "warm" | "dynamic" | "custom" | "blue" | "green" | "orange" | "purple" | "pink" | "red" | "cyan" | "yellow" | null;
+      custom_accent_hex?: string | null;
+      /** @enum {string|null} */
+      panel_effect?: "solid" | "translucent" | "blur" | "opaque" | null;
+      /** @enum {string|null} */
+      theme?: "dark" | "light" | "system" | null;
+      /** @enum {string|null} */
+      workspace_folder_tone?: "amber" | "teal" | "sky" | "coral" | "frost" | null;
+      /** @enum {string|null} */
+      workspace_view?: "grid" | "list" | null;
+    };
+    UiInteractionPreferencesDto: {
+      /** @enum {string} */
+      reduced_motion: "system" | "on" | "off";
+      /** @enum {string} */
+      spatial_promote_mode: "merge" | "split" | "parent_children";
+      /** @enum {string} */
+      workspace_drop_action: "link" | "copy" | "ask";
+    };
+    UiInteractionPreferencesInputDto: {
+      /** @enum {string} */
+      reduced_motion: "system" | "on" | "off";
+      /** @enum {string} */
+      spatial_promote_mode: "merge" | "split" | "parent_children" | "merge_single" | "split_many" | "parent_with_children";
+      /** @enum {string} */
+      workspace_drop_action: "link" | "copy" | "ask";
+    };
+    UiInteractionPreferencesPatchDto: {
+      /** @enum {string|null} */
+      reduced_motion?: "system" | "on" | "off" | null;
+      /** @enum {string|null} */
+      spatial_promote_mode?: "merge" | "split" | "parent_children" | "merge_single" | "split_many" | "parent_with_children" | null;
+      /** @enum {string|null} */
+      workspace_drop_action?: "link" | "copy" | "ask" | null;
+    };
+    UiPreferencesDocumentDto: {
+      appearance: components["schemas"]["UiAppearancePreferencesDto"];
+      content_hash: string;
+      file_path: string;
+      interaction: components["schemas"]["UiInteractionPreferencesDto"];
+      /** Format: date-time */
+      updated_at: string;
+      version: number;
+    };
+    UiPreferencesPatchRequestDto: {
+      appearance?: components["schemas"]["UiAppearancePreferencesPatchDto"] | null;
+      expected_content_hash?: string | null;
+      interaction?: components["schemas"]["UiInteractionPreferencesPatchDto"] | null;
+    };
+    UiPreferencesPutRequestDto: {
+      appearance?: components["schemas"]["UiAppearancePreferencesInputDto"] | null;
+      expected_content_hash?: string | null;
+      interaction?: components["schemas"]["UiInteractionPreferencesInputDto"] | null;
+      reset_defaults?: boolean;
+    };
     UpdateContextMemoryPolicyRequest: {
       allow_cross_session_recall?: boolean | null;
       auto_tune_low_risk_context_policy?: boolean | null;
@@ -8492,6 +8590,123 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** Get user UI preferences */
+  getApiV1Preferences: {
+    responses: {
+      /** @description Current user-level UI preferences document with file path and content hash. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["UiPreferencesDocumentDto"];
+        };
+      };
+      /** @description Upstream Core unreachable. */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** Replace or reset user UI preferences */
+  putApiV1Preferences: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UiPreferencesPutRequestDto"];
+      };
+    };
+    responses: {
+      /** @description Updated user-level UI preferences document. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["UiPreferencesDocumentDto"];
+        };
+      };
+      /** @description Invalid UI preferences payload or unknown keys. */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Preferences content_hash concurrency conflict. */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Preferences precondition failed (expected_content_hash mismatch). */
+      412: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable. */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /** Partially update user UI preferences */
+  patchApiV1Preferences: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UiPreferencesPatchRequestDto"];
+      };
+    };
+    responses: {
+      /** @description Updated user-level UI preferences document. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["UiPreferencesDocumentDto"];
+        };
+      };
+      /** @description Invalid UI preferences payload or unknown keys. */
+      400: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Preferences content_hash concurrency conflict. */
+      409: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Preferences precondition failed (expected_content_hash mismatch). */
+      412: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Upstream Core unreachable. */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  /**
+   * Stream UI preferences updates
+   * @description Unbuffered SSE stream emitting preferences.updated events with UiPreferencesDocumentDto payloads and 15s keepalive comments.
+   */
+  getApiV1PreferencesEvents: {
+    responses: {
+      /** @description Unbuffered SSE stream of UI preferences updates (event: preferences.updated). */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+      /** @description Upstream Core unreachable. */
+      502: {
+        content: {
+          "application/problem+json": components["schemas"]["ProblemDetails"];
+        };
       };
     };
   };

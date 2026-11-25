@@ -103,6 +103,38 @@ test('openapi external contract — serves valid document with host security sch
   assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/{approvalId}/decision', 'post'), 'POST /api/v1/approvals/{approvalId}/decision must exist');
   assert.ok(valueAt(doc, 'paths', '/api/v1/approvals/{approvalId}/gates', 'get'), 'GET /api/v1/approvals/{approvalId}/gates must remain registered');
 
+  // UI Preferences (#57) schemas and paths.
+  for (const name of [
+    'UiAppearancePreferencesDto',
+    'UiInteractionPreferencesDto',
+    'UiPreferencesDocumentDto',
+    'UiAppearancePreferencesInputDto',
+    'UiInteractionPreferencesInputDto',
+    'UiPreferencesPutRequestDto',
+    'UiAppearancePreferencesPatchDto',
+    'UiInteractionPreferencesPatchDto',
+    'UiPreferencesPatchRequestDto',
+  ]) {
+    assert.ok(name in schemas, `${name} schema must exist`);
+    assert.equal(valueAt(schemas, name, 'additionalProperties'), false, `${name} must fail-closed on unknown keys`);
+  }
+  assert.deepEqual(valueAt(schemas, 'UiAppearancePreferencesDto', 'properties', 'workspace_folder_tone', 'enum'), [
+    'amber',
+    'teal',
+    'sky',
+    'coral',
+    'frost',
+  ]);
+  assert.deepEqual(valueAt(schemas, 'UiInteractionPreferencesDto', 'properties', 'spatial_promote_mode', 'enum'), [
+    'merge',
+    'split',
+    'parent_children',
+  ]);
+  assert.ok(valueAt(doc, 'paths', '/api/v1/preferences', 'get'), 'GET /api/v1/preferences must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/preferences', 'put'), 'PUT /api/v1/preferences must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/preferences', 'patch'), 'PATCH /api/v1/preferences must exist');
+  assert.ok(valueAt(doc, 'paths', '/api/v1/preferences/events', 'get'), 'GET /api/v1/preferences/events must exist');
+
   const snapshotPath = resolve(import.meta.dir, '../tests/__snapshots__/openapi.external.json');
   const committedSnapshot = readFileSync(snapshotPath, 'utf8').replace(/\r\n/g, '\n');
   const liveSerialized = JSON.stringify(sortKeysRecursively(doc), null, 2) + '\n';
