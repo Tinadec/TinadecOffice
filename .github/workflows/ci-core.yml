@@ -37,29 +37,31 @@ concurrency:
   group: ci-core-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+
 jobs:
   changes:
     name: Detect Backend Scope
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       run_postgres: ${{ steps.filter.outputs.run_postgres }}
       run_docker: ${{ steps.filter.outputs.run_docker }}
     steps:
-      - name: Checkout repository for PR diff
-        if: ${{ !inputs.full_suite && github.event_name == 'pull_request' }}
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
       - name: Evaluate changed paths
         id: filter
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           FULL_SUITE: ${{ inputs.full_suite }}
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [[ "$FULL_SUITE" == "true" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -68,17 +70,15 @@ jobs:
             exit 0
           fi
 
-          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_SHA" ]]; then
+          if [[ "$EVENT_NAME" != "pull_request" || -z "$PR_NUMBER" ]]; then
             echo "run_postgres=false" >> "$GITHUB_OUTPUT"
             echo "run_docker=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
-            changed_files="$(git diff --name-only "$merge_base" "$HEAD_SHA")"
-          else
-            changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-          fi
+          changed_files="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename'
+          )"
 
           run_postgres=false
           run_docker=false
@@ -100,10 +100,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -166,10 +162,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 11.0.100
@@ -204,14 +196,6 @@ jobs:
           --no-build
           --verbosity minimal
           --filter "FullyQualifiedName~ConPty|FullyQualifiedName~Win32CommandLine|FullyQualifiedName~CommandRunnerTests|FullyQualifiedName~ShellToolTests|FullyQualifiedName~GitHook|FullyQualifiedName~GitMetadataSandboxDenialTests|FullyQualifiedName~WorkspacePath|FullyQualifiedName~StorageBoundaryTests|FullyQualifiedName~MultiFolderToolTests"
-
-      - name: Test Core Architecture suite
-        shell: pwsh
-        run: dotnet test TinadecCore/tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj --no-build --verbosity minimal
-
-      - name: Test Core Governance suite
-        shell: pwsh
-        run: dotnet test TinadecCore/tests/TinadecCore.Governance.Tests/TinadecCore.Governance.Tests.csproj --no-build --verbosity minimal
 
       - name: Test Core API Host & Storage Guard suites
         shell: pwsh

@@ -10,6 +10,17 @@ on:
       - '.github/workflows/ci-app.yml'
   workflow_dispatch:
   workflow_call:
+    inputs:
+      upload_dist_artifact:
+        description: "Upload built apps/desktop/dist artifact for downstream packaging"
+        type: boolean
+        required: false
+        default: false
+      dist_artifact_name:
+        description: "Artifact name when upload_dist_artifact is true"
+        type: string
+        required: false
+        default: 'desktop-dist'
 
 permissions:
   contents: read
@@ -45,23 +56,60 @@ jobs:
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify lockfile dependency parity
-        run: bun scripts/check-dependencies.mjs
+      - name: Run App Layer checks and builds in parallel
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_dir="${RUNNER_TEMP}/ci-app"
+          mkdir -p "$log_dir"
 
-      - name: Test root scripts
-        run: bun run test:scripts
+          names=()
+          pids=()
 
-      - name: Test TinadecUI
-        run: bun run --cwd apps/TinadecUI test
+          run_task() {
+            local name="$1"
+            shift
+            names+=("$name")
+            (
+              "$@"
+            ) >"${log_dir}/${name}.log" 2>&1 &
+            pids+=("$!")
+          }
 
-      - name: Test Desktop
-        run: bun run --cwd apps/desktop test
+          run_task "check-dependencies" bun scripts/check-dependencies.mjs
+          run_task "test:scripts" bun run test:scripts
+          run_task "TinadecUI-test" bun run --cwd apps/TinadecUI test
+          run_task "desktop-test" bun run --cwd apps/desktop test
+          run_task "desktop-typecheck" bun run --cwd apps/desktop typecheck
+          run_task "desktop-build-vite" bun run --cwd apps/desktop build:vite
+          run_task "web-build" bun run --cwd apps/web build
 
-      - name: Typecheck Desktop
-        run: bun run --cwd apps/desktop typecheck
+          failed=()
+          for i in "${!names[@]}"; do
+            name="${names[$i]}"
+            pid="${pids[$i]}"
+            log_file="${log_dir}/${name}.log"
+            status=0
+            wait "$pid" || status=$?
+            echo "::group::${name} (exit ${status})"
+            cat "$log_file"
+            echo "::endgroup::"
+            if (( status != 0 )); then
+              echo "::error::Task '${name}' failed with exit code ${status}."
+              failed+=("${name}(${status})")
+            fi
+          done
 
-      - name: Build Desktop
-        run: bun run --cwd apps/desktop build
+          if (( ${#failed[@]} > 0 )); then
+            echo "::error::App Layer failed tasks: ${failed[*]}"
+            exit 1
+          fi
 
-      - name: Build Web
-        run: bun run --cwd apps/web build
+      - name: Upload Desktop frontend dist
+        if: inputs.upload_dist_artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.dist_artifact_name }}
+          path: apps/desktop/dist
+          retention-days: 1
+          if-no-files-found: error

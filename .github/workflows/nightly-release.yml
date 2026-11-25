@@ -38,12 +38,6 @@ jobs:
       package_version: ${{ steps.meta.outputs.package_version }}
       previous_tag: ${{ steps.meta.outputs.previous_tag }}
     steps:
-      - name: Check out main
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          fetch-depth: 0
-
       - name: Resolve Nightly release state
         id: meta
         env:
@@ -52,9 +46,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --tags --force origin
-
-          full_sha="$(git rev-parse HEAD)"
+          full_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
+          if [[ ! "$full_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Failed to resolve valid 40-char commit SHA for main: ${full_sha}"
+            exit 1
+          fi
           short_sha="${full_sha:0:7}"
           release_tag="nightly-${short_sha}"
           artifact_label="nightly-${short_sha}"
@@ -73,7 +69,18 @@ jobs:
           latest_tag="$(jq -r '.[0] // empty' <<< "$nightly_tags_json")"
           latest_sha=""
           if [[ -n "$latest_tag" ]]; then
-            latest_sha="$(git rev-parse "${latest_tag}^{commit}" 2>/dev/null || true)"
+            if ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${latest_tag}" 2>/dev/null)"; then
+              obj_type="$(jq -r '.object.type // empty' <<< "$ref_json")"
+              obj_sha="$(jq -r '.object.sha // empty' <<< "$ref_json")"
+              while [[ "$obj_type" == "tag" && -n "$obj_sha" ]]; do
+                tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${obj_sha}")"
+                obj_type="$(jq -r '.object.type // empty' <<< "$tag_json")"
+                obj_sha="$(jq -r '.object.sha // empty' <<< "$tag_json")"
+              done
+              if [[ "$obj_type" == "commit" ]]; then
+                latest_sha="$obj_sha"
+              fi
+            fi
           fi
 
           if [[ "$FORCE_RELEASE" != "true" && ( "$latest_sha" == "$full_sha" || "$latest_tag" == "$release_tag" ) ]]; then
