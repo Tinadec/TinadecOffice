@@ -40,6 +40,8 @@ export interface DiagnosticDraftInput {
   diagnostics?: RunContextDiagnosticsDto | null
   proposal?: ContextEvolutionProposalDto | null
   staleSnapshot?: StaleSnapshotNotice | null
+  /** Optional pre-built Markdown draft (e.g. from `buildEvalCompareDraft`). */
+  customDraft?: string | null
 }
 
 export interface DiagnoseInComposerOptions {
@@ -99,6 +101,9 @@ export function escapeHtml(value: unknown): string {
  * evidence-based root-cause analysis.
  */
 export function buildDiagnosticDraft(input: DiagnosticDraftInput): string {
+  if (input.customDraft && input.customDraft.trim().length > 0) {
+    return input.customDraft
+  }
   if (input.proposal?.composer_prompt && !input.selectedNode && !input.selectedTreemapSegment && !input.selectedOverlapPair) {
     return input.proposal.composer_prompt
   }
@@ -509,82 +514,120 @@ export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
 <title>${escapeHtml(title)}</title>
 <style>
   :root {
-    --bg: #ffffff;
-    --surface: #fafafa;
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --surface: #ffffff;
     --surface-subtle: #f4f4f5;
-    --ink: #111111;
+    --ink: #171717;
     --ink-secondary: #52525b;
-    --ink-muted: #71717a;
-    --hairline: #e4e4e7;
-    --hairline-strong: #d4d4d8;
-    --danger-bg: #fef2f2;
-    --danger-ink: #991b1b;
-    --danger-border: #fecaca;
+    --ink-muted: #737373;
+    --hairline: #e5e5e5;
+    --hairline-strong: #d4d4d4;
+    --accent: #0068d6;
+    --danger-bg: #fff0f0;
+    --danger-ink: #c72b31;
+    --danger-border: #f8c9cb;
     --warn-bg: #fffbeb;
-    --warn-ink: #92400e;
+    --warn-ink: #9a6700;
     --warn-border: #fde68a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --surface-subtle: #1a1a1a;
+      --ink: #ededed;
+      --ink-secondary: #a1a1aa;
+      --ink-muted: #737373;
+      --hairline: #262626;
+      --hairline-strong: #404040;
+      --accent: #58a6ff;
+      --danger-bg: #3b181b;
+      --danger-ink: #ff7b82;
+      --danger-border: #6e292e;
+      --warn-bg: #36280f;
+      --warn-ink: #f5b942;
+      --warn-border: #694c19;
+    }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: 32px 24px 56px;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-  .page { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-  .mono { font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
-  .muted { color: var(--ink-muted); }
-  .num { text-align: right; white-space: nowrap; }
-  header {
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    padding: 18px 20px;
+    padding: 36px 28px 64px;
     background: var(--surface);
+    color: var(--ink);
+    font-family: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+    text-rendering: optimizeLegibility;
+  }
+  .page { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 0; }
+  .mono { font-family: "Geist Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--ink-muted); }
+  .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  header {
+    border: 0;
+    border-bottom: 1px solid var(--hairline);
+    padding: 0 0 20px;
+    background: transparent;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: 16px;
     flex-wrap: wrap;
   }
-  header h1 { margin: 0 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-  .meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-secondary); font-size: 12px; }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-  .kpi { border: 1px solid var(--hairline); border-radius: 8px; padding: 12px 14px; background: var(--bg); }
-  .kpi-label { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .kpi-val { font-size: 16px; font-weight: 600; margin-top: 4px; }
-  section.card {
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    padding: 16px 18px;
-    background: var(--bg);
+  header h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; letter-spacing: -0.03em; }
+  .meta { display: flex; gap: 6px 16px; flex-wrap: wrap; color: var(--ink-secondary); font-size: 12px; }
+  .meta code { color: var(--ink); }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    border-bottom: 1px solid var(--hairline);
+    background: transparent;
   }
+  .kpi {
+    padding: 14px 16px 14px 0;
+    margin-right: 16px;
+    border: 0;
+    background: transparent;
+  }
+  .kpi-label { font-size: 11px; color: var(--ink-muted); letter-spacing: 0.01em; }
+  .kpi-val { font-size: 18px; font-weight: 600; letter-spacing: -0.025em; margin-top: 3px; }
+  section.card {
+    border: 0;
+    border-bottom: 1px solid var(--hairline);
+    padding: 22px 0;
+    background: transparent;
+  }
+  section.card:last-child { border-bottom: 0; }
   section.card h2 {
     margin: 0 0 12px;
     font-size: 14px;
     font-weight: 600;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--hairline);
+    letter-spacing: -0.015em;
+    padding-bottom: 0;
+    border-bottom: 0;
   }
   ul.conclusions { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
-  th { color: var(--ink-secondary); font-weight: 600; background: var(--surface); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  th:first-child, td:first-child { padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  th { color: var(--ink-muted); font-weight: 500; background: transparent; font-size: 11px; border-top: 1px solid var(--hairline); }
   tr.is-empty td { color: var(--ink-muted); }
-  .bar-track { width: 100%; min-width: 80px; height: 8px; background: var(--surface-subtle); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; }
-  .bar-fill { height: 100%; background: var(--ink); }
+  .bar-track { width: 100%; min-width: 80px; height: 6px; background: var(--surface-subtle); border: 0; border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); }
   .pill {
     display: inline-block;
     padding: 1px 6px;
-    border-radius: 999px;
+    border-radius: 4px;
     border: 1px solid var(--hairline-strong);
-    background: var(--surface);
+    background: var(--bg);
     color: var(--ink);
     font-size: 11px;
     line-height: 1.4;
-    margin: 1px 2px 1px 0;
+    margin: 1px 3px 1px 0;
   }
   .pill-danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-border); }
   .pill-warn { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-border); }
@@ -593,8 +636,8 @@ export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
     padding: 0 5px;
     margin-right: 6px;
     border: 1px solid var(--hairline);
-    border-radius: 4px;
-    background: var(--surface);
+    border-radius: 3px;
+    background: var(--bg);
     color: var(--ink-secondary);
     font-size: 10px;
     text-transform: uppercase;
@@ -604,17 +647,17 @@ export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
     margin-top: 6px;
     padding: 6px 8px;
     border: 1px solid var(--hairline);
-    border-radius: 6px;
-    background: var(--surface);
+    border-radius: 4px;
+    background: var(--bg);
     color: var(--ink-secondary);
     font-size: 11px;
   }
   .code-frame {
     margin-top: 6px;
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: 4px;
     overflow: hidden;
-    background: var(--surface);
+    background: var(--bg);
   }
   .cf-head {
     padding: 4px 8px;
@@ -624,10 +667,10 @@ export function buildOfflineDiagnosticHtml(input: OfflineReportInput): string {
     background: var(--surface-subtle);
   }
   .code-frame pre { margin: 0; padding: 6px 8px; font-size: 11px; overflow-x: auto; }
-  .cf-line { white-space: pre-wrap; word-break: break-word; padding: 1px 4px; border-radius: 3px; }
+  .cf-line { white-space: pre-wrap; word-break: break-word; padding: 1px 4px; border-radius: 2px; }
   .cf-line.is-hi { background: var(--danger-bg); color: var(--danger-ink); }
   @media print {
-    body { padding: 0; }
+    body { padding: 0; background: #ffffff; color: #111111; }
     section.card { break-inside: avoid; }
   }
 </style>

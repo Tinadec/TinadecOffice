@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { describe, expect, it, vi } from 'vitest'
 import en from '@/locales/en'
@@ -27,6 +27,7 @@ import {
   extractErrorCodeFrames,
   extractFileEditStats,
 } from './trajectoryBuilder'
+import * as offlineDiagnosticReport from './offlineDiagnosticReport'
 import {
   buildDiagnosticDraft,
   buildOfflineDiagnosticHtml,
@@ -34,7 +35,18 @@ import {
   exportOfflineDiagnosticHtml,
   triggerDiagnoseInComposer,
 } from './offlineDiagnosticReport'
+import {
+  aggregateTrajectoryEval,
+  buildEvalCompareDraft,
+  buildEvalLogScale,
+  computeEvalCompareDelta,
+  EVAL_DURATION_TICK_CANDIDATES,
+  EVAL_TOKEN_TICK_CANDIDATES,
+  formatEvalTokensWithHonesty,
+  pickDefaultEvalComparePair,
+} from './trajectoryEval'
 import TrajectoryTreePanel from '@/components/trajectory/TrajectoryTreePanel.vue'
+import TrajectoryEvalPanel from '@/components/trajectory/TrajectoryEvalPanel.vue'
 import ContextWindowBucketChart from '@/components/trajectory/ContextWindowBucketChart.vue'
 import ContextTreemap from '@/components/trajectory/ContextTreemap.vue'
 import ContextOverlapPanel from '@/components/trajectory/ContextOverlapPanel.vue'
@@ -709,5 +721,338 @@ describe('Stage-1 Vue Components', () => {
     expect(wrapper.find('[data-testid="context-overlap-body"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="overlap-line-range"]').text()).toContain('L2 <-> L3')
     expect(wrapper.find('[data-testid="overlap-remediation"]').text()).toContain('SKILL.md')
+  })
+})
+
+describe('Wave-2 Run Eval Pure Helpers & TrajectoryEvalPanel', () => {
+  it('computes log-compressed scatter ticks, honest ≈ token flags, summary KPIs, and A/B compare drafts', () => {
+    const tokenScale = buildEvalLogScale(3500, 1000, EVAL_TOKEN_TICK_CANDIDATES)
+    expect(tokenScale.ticks).toEqual([0, 300, 1000, 3000])
+    expect(tokenScale.place(0)).toBe(0)
+    expect(tokenScale.place(300)).toBeLessThan(tokenScale.place(1000))
+    expect(tokenScale.place(1000)).toBeLessThan(tokenScale.place(3000))
+
+    const durationScale = buildEvalLogScale(41_190, 10_000, EVAL_DURATION_TICK_CANDIDATES)
+    expect(durationScale.ticks).toEqual([0, 3000, 10000, 30000])
+
+    // Multi-turn aggregation with exact vs estimated output tokens
+    const invocations: ModelInvocationDto[] = [
+      makeInvocation({
+        id: 'inv-t1',
+        turn_id: 'turn-1',
+        agent_instance_id: 'agent-t1',
+        output_tokens: 1346,
+        started_at: '2026-11-22T01:00:00.000Z',
+        completed_at: '2026-11-22T01:00:04.000Z',
+      }),
+      makeInvocation({
+        id: 'inv-t2',
+        turn_id: 'turn-2',
+        agent_instance_id: 'agent-t2',
+        output_tokens: 1374,
+        started_at: '2026-11-22T01:01:00.000Z',
+        completed_at: '2026-11-22T01:01:06.190Z',
+      }),
+      {
+        ...makeInvocation({
+          id: 'inv-t3',
+          turn_id: 'turn-3',
+          agent_instance_id: 'agent-t3',
+          total_tokens: 2000,
+          started_at: '2026-11-22T01:02:00.000Z',
+          completed_at: '2026-11-22T01:02:03.000Z',
+        }),
+        input_tokens: null,
+        output_tokens: null,
+      },
+    ]
+
+    const toolExecs: ToolExecutionTimelineItemDto[] = [
+      makeToolExec({
+        id: 'tx-1',
+        requested_seq: 10,
+        updated_seq: 11,
+        tool_id: 'edit_file',
+        status: 'failed',
+        tool_success: false,
+        error_category: 'fs_stale_version',
+        duration_ms: 7180,
+        requested_at: '2026-11-22T01:00:04.000Z',
+        updated_at: '2026-11-22T01:00:11.180Z',
+        task_id: undefined,
+        agent_instance_id: 'agent-t1',
+      }),
+      makeToolExec({
+        id: 'tx-2',
+        requested_seq: 209,
+        updated_seq: 210,
+        tool_id: 'pwsh',
+        status: 'completed',
+        tool_success: true,
+        duration_ms: 35000,
+        requested_at: '2026-11-22T01:01:06.190Z',
+        updated_at: '2026-11-22T01:01:41.190Z',
+        task_id: undefined,
+        agent_instance_id: 'agent-t2',
+      }),
+      {
+        ...makeToolExec({
+          id: 'tx-3',
+          requested_seq: 220,
+          updated_seq: 0,
+          tool_id: 'read_file',
+          status: 'running',
+          duration_ms: 500,
+          requested_at: '2026-11-22T01:02:01.000Z',
+          updated_at: '2026-11-22T01:02:01.500Z',
+          agent_instance_id: 'agent-t3',
+        }),
+        task_id: null,
+        tool_success: undefined,
+      },
+    ]
+
+    const trajectory = buildTrajectoryTree({
+      snapshot: null,
+      toolExecutions: toolExecs,
+      modelInvocations: invocations,
+    })
+    const buckets = buildContextWindowBuckets({
+      modelInvocations: invocations,
+      contextWindowTokens: 100000,
+    })
+
+    const evalRes = aggregateTrajectoryEval({
+      trajectory,
+      modelInvocations: invocations,
+      toolExecutions: toolExecs,
+      buckets,
+      runId: 'run-eval-1',
+      sessionId: 'sess-eval-1',
+    })
+
+    expect(evalRes.points).toHaveLength(3)
+    expect(evalRes.hasAnyEstimatedTokens).toBe(true)
+
+    const p1 = evalRes.points.find((p) => p.turnNo === 1)!
+    const p2 = evalRes.points.find((p) => p.turnNo === 2)!
+    const p3 = evalRes.points.find((p) => p.turnNo === 3)!
+
+    expect(p1.outputTokens).toBe(1346)
+    expect(p1.estimatedTokens).toBe(false)
+    expect(p1.hasToolError).toBe(true)
+
+    expect(p2.outputTokens).toBe(1374)
+    expect(p2.estimatedTokens).toBe(false)
+    expect(p2.hasToolError).toBe(false)
+    expect(p2.slowestTool).toMatchObject({ toolId: 'pwsh', durationMs: 35000, seq: 209 })
+
+    // Turn 3 lacked explicit output_tokens -> must honestly flag estimatedTokens: true
+    expect(p3.estimatedTokens).toBe(true)
+    expect(formatEvalTokensWithHonesty(p3.outputTokens, p3.estimatedTokens)).toMatch(/^≈/)
+    expect(formatEvalTokensWithHonesty(p2.outputTokens, p2.estimatedTokens)).toBe('1,374')
+
+    expect(evalRes.summary.totalCalls).toBe(3)
+    expect(evalRes.summary.okCalls).toBe(1)
+    expect(evalRes.summary.errorCalls).toBe(1)
+    expect(evalRes.summary.unrecordedCalls).toBe(1)
+    expect(evalRes.summary.errorTurnCount).toBe(1)
+    expect(evalRes.summary.comparableTurnCount).toBe(3)
+    expect(evalRes.summary.errorOutputSharePct).toBeGreaterThan(0)
+
+    const pair = pickDefaultEvalComparePair(evalRes.points)!
+    expect(pair[0].turnNo).toBe(2) // slowest turn
+    expect(pair[1].turnNo).toBe(1) // error turn with closest output
+
+    const delta = computeEvalCompareDelta(p2, p1)
+    expect(delta.tokenDiff).toBe(28)
+    expect(delta.anyEstimatedTokens).toBe(false)
+
+    const singleDraft = buildEvalCompareDraft({
+      turnA: p3,
+      runId: 'run-eval-1',
+      sessionId: 'sess-eval-1',
+    })
+    expect(singleDraft).toContain('tinadec_inspect')
+    expect(singleDraft).toContain('Turn #3')
+    expect(singleDraft).toContain('≈')
+
+    const compareDraft = buildEvalCompareDraft({
+      turnA: p2,
+      turnB: p1,
+      runId: 'run-eval-1',
+      sessionId: 'sess-eval-1',
+    })
+    expect(compareDraft).toContain('Turn #2 vs Turn #1')
+    expect(compareDraft).toContain('28 tokens')
+    expect(compareDraft).toContain('pwsh')
+  })
+
+  it('mounts TrajectoryEvalPanel, swaps Side A/B on scatter clicks, triggers Composer diagnostics for 问这轮 / 对照这两轮, and exports Geist HTML', async () => {
+    const invocations: ModelInvocationDto[] = [
+      makeInvocation({
+        id: 'm1',
+        run_id: 'run-panel-1',
+        turn_id: 'turn-1',
+        agent_instance_id: 'ag-1',
+        output_tokens: 400,
+        started_at: '2026-11-22T02:00:00.000Z',
+        completed_at: '2026-11-22T02:00:02.000Z',
+      }),
+      makeInvocation({
+        id: 'm2',
+        run_id: 'run-panel-1',
+        turn_id: 'turn-2',
+        agent_instance_id: 'ag-2',
+        output_tokens: 1100,
+        started_at: '2026-11-22T02:01:00.000Z',
+        completed_at: '2026-11-22T02:01:05.000Z',
+      }),
+      {
+        ...makeInvocation({
+          id: 'm3',
+          run_id: 'run-panel-1',
+          turn_id: 'turn-3',
+          agent_instance_id: 'ag-3',
+          total_tokens: 3000,
+          started_at: '2026-11-22T02:02:00.000Z',
+          completed_at: '2026-11-22T02:02:18.000Z',
+        }),
+        output_tokens: null,
+        input_tokens: null,
+      },
+    ]
+    const toolExecs: ToolExecutionTimelineItemDto[] = [
+      makeToolExec({
+        id: 'te-1',
+        requested_seq: 1,
+        updated_seq: 2,
+        tool_id: 'read_file',
+        status: 'completed',
+        tool_success: true,
+        duration_ms: 800,
+        requested_at: '2026-11-22T02:00:02.000Z',
+        updated_at: '2026-11-22T02:00:02.800Z',
+        task_id: undefined,
+        agent_instance_id: 'ag-1',
+      }),
+      makeToolExec({
+        id: 'te-2',
+        requested_seq: 5,
+        updated_seq: 6,
+        tool_id: 'pwsh',
+        status: 'failed',
+        tool_success: false,
+        error_category: 'timeout',
+        duration_ms: 9000,
+        requested_at: '2026-11-22T02:01:05.000Z',
+        updated_at: '2026-11-22T02:01:14.000Z',
+        task_id: undefined,
+        agent_instance_id: 'ag-2',
+      }),
+      makeToolExec({
+        id: 'te-3',
+        requested_seq: 9,
+        updated_seq: 10,
+        tool_id: 'bash',
+        status: 'completed',
+        tool_success: true,
+        duration_ms: 22000,
+        requested_at: '2026-11-22T02:02:18.000Z',
+        updated_at: '2026-11-22T02:02:40.000Z',
+        task_id: undefined,
+        agent_instance_id: 'ag-3',
+      }),
+    ]
+
+    const trajectory = buildTrajectoryTree({
+      snapshot: null,
+      toolExecutions: toolExecs,
+      modelInvocations: invocations,
+    })
+    const buckets = buildContextWindowBuckets({
+      modelInvocations: invocations,
+      contextWindowTokens: 100000,
+    })
+
+    const diagnoseSpy = vi.spyOn(offlineDiagnosticReport, 'triggerDiagnoseInComposer')
+    const composerDrafts: string[] = []
+    const onComposerFocus = (e: Event) => {
+      composerDrafts.push((e as CustomEvent<{ draft: string }>).detail.draft)
+    }
+    window.addEventListener('tinadec:focus-composer', onComposerFocus)
+
+    const wrapper = mount(TrajectoryEvalPanel, {
+      props: {
+        trajectory,
+        buckets,
+        runId: 'run-panel-1',
+        sessionId: 'sess-panel-1',
+        modelInvocations: invocations,
+        toolExecutions: toolExecs,
+      },
+      global: { plugins: [makeI18n()] },
+    })
+
+    expect(wrapper.find('[data-testid="eval-summary-strip"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="eval-scatter-svg"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="eval-pair-link"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="eval-compare-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="eval-estimated-note"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="bucket-peak"]').exists()).toBe(true)
+
+    // Default pair starts with Turn #3 (slowest, estimated tokens prefixed with ≈) vs Turn #2 (error)
+    expect(wrapper.get('[data-testid="eval-compare-slot-a"]').text()).toContain('≈')
+    expect(wrapper.get('[data-testid="eval-compare-slot-b"]').text()).toContain('1,100')
+
+    // Click scatter point 1 then scatter point 2 to swap A/B comparison pair to Turn #1 vs Turn #2
+    await wrapper.get('[data-testid="eval-scatter-point-1"]').trigger('click')
+    await wrapper.get('[data-testid="eval-scatter-point-2"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="eval-compare-slot-a"]').text()).toContain('400 token')
+    expect(wrapper.get('[data-testid="eval-compare-slot-b"]').text()).toContain('1,100 token')
+    expect(wrapper.get('[data-testid="eval-compare-delta"]').text()).toContain('700')
+
+    // Click 问这轮 -> calls triggerDiagnoseInComposer & emits diagnose-draft
+    await wrapper.get('[data-testid="eval-ask-turn"]').trigger('click')
+    await vi.waitFor(
+      () => {
+        expect(diagnoseSpy).toHaveBeenCalledTimes(1)
+        expect(composerDrafts[0]).toContain('Turn #1')
+        expect(wrapper.emitted('diagnose-draft')?.[0]?.[0]).toContain('Turn #1')
+      },
+      { timeout: 5000 },
+    )
+
+    // Click 对照这两轮 -> calls triggerDiagnoseInComposer with A/B delta & emits diagnose-draft
+    await wrapper.get('[data-testid="eval-ask-compare"]').trigger('click')
+    await vi.waitFor(
+      () => {
+        expect(diagnoseSpy).toHaveBeenCalledTimes(2)
+        expect(composerDrafts[1]).toContain('Turn #1 vs Turn #2')
+        expect(composerDrafts[1]).toContain('700 tokens')
+        expect(wrapper.emitted('diagnose-draft')?.[1]?.[0]).toContain('Turn #1 vs Turn #2')
+      },
+      { timeout: 5000 },
+    )
+
+    // Jump links & offline report export
+    await wrapper.get('[data-testid="eval-jump-turn"]').trigger('click')
+    expect(wrapper.emitted('jump-turn')?.[0]).toEqual([1])
+
+    await wrapper.get('[data-testid="eval-jump-code"]').trigger('click')
+    expect(wrapper.emitted('jump-code')?.[0]).toEqual([{ turnNo: 1, runId: 'run-panel-1' }])
+
+    const createUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:eval-report')
+    const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    await wrapper.get('[data-testid="eval-export-report-btn"]').trigger('click')
+    const exported = wrapper.emitted('export-report')?.[0]?.[0] as offlineDiagnosticReport.ExportOfflineHtmlResult
+    expect(exported.filename).toContain('run-panel-1')
+    expect(exported.html).toContain('prefers-color-scheme: dark')
+
+    window.removeEventListener('tinadec:focus-composer', onComposerFocus)
+    createUrlSpy.mockRestore()
+    revokeUrlSpy.mockRestore()
+    diagnoseSpy.mockRestore()
   })
 })

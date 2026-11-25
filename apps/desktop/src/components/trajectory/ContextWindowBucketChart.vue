@@ -237,18 +237,23 @@ function formatPct(rate: number): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-card, 10px);
-  background: var(--bg-secondary);
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bucket-card.is-compact {
+  padding: 8px 10px;
 }
 
 .bucket-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 12px;
   flex-wrap: wrap;
 }
 
@@ -256,14 +261,16 @@ function formatPct(rate: number): string {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--text-primary);
 }
 
 .bucket-kpis {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px 10px;
   flex-wrap: wrap;
 }
 
@@ -271,29 +278,34 @@ function formatPct(rate: number): string {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 21px;
-  padding: 0 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 10.5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .bucket-pill.is-warn {
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
   background: var(--bg-status-warn);
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted));
 }
 
 .bucket-pill.is-stale {
-  background: var(--bg-tertiary);
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px dashed var(--border-muted);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  border-style: dashed;
 }
 
 .bucket-empty {
-  padding: 12px;
+  padding: 14px 0;
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
@@ -301,10 +313,10 @@ function formatPct(rate: number): string {
 
 .bucket-svg-wrap {
   width: 100%;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  padding: 6px 6px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 0 2px;
 }
 
 .bucket-svg {
@@ -316,7 +328,7 @@ function formatPct(rate: number): string {
 .grid-line {
   stroke: var(--border-muted);
   stroke-width: 1;
-  stroke-dasharray: 2 2;
+  stroke-dasharray: 3 3;
 }
 
 .axis-line {
@@ -328,6 +340,7 @@ function formatPct(rate: number): string {
   fill: var(--text-muted);
   font-size: 8.5px;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .bucket-slot {
@@ -344,20 +357,20 @@ function formatPct(rate: number): string {
 }
 
 .sample-bar {
-  fill: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+  fill: color-mix(in srgb, var(--text-secondary) 22%, transparent);
   stroke: var(--border-muted);
   stroke-width: 0.75;
 }
 
 .error-bar {
-  fill: color-mix(in srgb, var(--accent-danger) 72%, transparent);
+  fill: color-mix(in srgb, var(--accent-danger) 74%, transparent);
   stroke: var(--accent-danger);
   stroke-width: 0.75;
 }
 
 .latency-line {
   stroke: var(--accent-primary);
-  stroke-width: 1.25;
+  stroke-width: 1.3;
 }
 
 .latency-dot {
@@ -369,14 +382,16 @@ function formatPct(rate: number): string {
 .bucket-readout {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px 14px;
   flex-wrap: wrap;
-  padding: 6px 9px;
-  border: 1px solid var(--border-muted);
-  border-radius: 7px;
-  background: var(--bg-primary);
+  padding: 7px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-muted);
+  border-radius: 0;
+  background: transparent;
   font-size: 11px;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .bucket-readout__range {

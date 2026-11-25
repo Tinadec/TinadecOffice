@@ -6,7 +6,6 @@ import {
   Download,
   Loader2,
   Sparkles,
-  Terminal,
 } from '@lucide/vue'
 import {
   api,
@@ -50,18 +49,18 @@ import {
 } from '@/lib/offlineDiagnosticReport'
 import {
   buildTrajectoryTree,
-  flattenTrajectoryNodes,
   resolveContextWindowBuckets,
   resolveTrajectoryCopy,
-  type TrajectoryCodeFrame,
   type TrajectoryNode,
 } from '@/lib/trajectoryBuilder'
 import ContextCompositionBar, { type ContextCompositionCategoryKey } from './ContextCompositionBar.vue'
 import ContextOverlapPanel from './ContextOverlapPanel.vue'
 import ContextTreemap from './ContextTreemap.vue'
-import ContextWindowBucketChart from './ContextWindowBucketChart.vue'
+import TrajectoryCodeExecutionPanel from './TrajectoryCodeExecutionPanel.vue'
 import TrajectoryDiagnosisPopover from './TrajectoryDiagnosisPopover.vue'
+import TrajectoryEvalPanel from './TrajectoryEvalPanel.vue'
 import TrajectoryPathCanvas from './TrajectoryPathCanvas.vue'
+import { aggregateCodeExecutionSignals } from './trajectoryCodeSignals'
 
 export type TrajectorySubTab = 'path' | 'context' | 'eval' | 'code'
 
@@ -127,7 +126,6 @@ const selectedTreemapSegment = ref<ContextTreemapNode | null>(null)
 const selectedTreemapPackId = ref<string | null>(null)
 const showOverlapSection = ref<boolean>(false)
 const headerDiagnosisOpen = ref<boolean>(false)
-const codeDiagnosisNode = ref<TrajectoryNode | null>(null)
 
 // Historical / remote run data loader state
 const historicalSnapshot = ref<OrchestrationSnapshotDto | null>(null)
@@ -549,40 +547,40 @@ const compositionTurnLabel = computed<string | null>(() => {
   return tr('trajectoryWorkbench.turnBadge', '回合 #{n}', { n: turn.turnNo })
 })
 
-// Wave 1 Code Execution Frame List Fallback
-interface CodeExecutionEntry {
-  node: TrajectoryNode
-  frames: TrajectoryCodeFrame[]
-  command: string | null
-  isError: boolean
+const codeSignalsSummary = computed(() =>
+  aggregateCodeExecutionSignals({
+    trajectory: trajectorySummary.value,
+    toolExecutions: filteredToolExecutions.value,
+    diagnostics: effectiveCoreDiagnostics.value,
+    runId: effectiveRunId.value,
+    sessionId: effectiveSessionId.value,
+  }),
+)
+
+const codeErrorCount = computed(() => codeSignalsSummary.value.errorCount)
+
+function handleEvalJumpTurn(turnNo: number): void {
+  if (
+    trajectorySummary.value.root.children.length <= 1
+    && selection.turns.value.some((tItem) => tItem.turnNo === turnNo)
+  ) {
+    selection.selectTurnByNo(turnNo)
+  }
+  focusedTurnNo.value = turnNo
+  focusSignalNonce.value += 1
+  activeSubTab.value = 'path'
 }
 
-const codeExecutionEntries = computed<CodeExecutionEntry[]>(() => {
-  const all = flattenTrajectoryNodes(trajectorySummary.value.root)
-  const out: CodeExecutionEntry[] = []
-  for (const n of all) {
-    if (n.kind !== 'tool_call' && n.codeFrames.length === 0) continue
-    const idLower = (n.toolId || n.label || '').toLowerCase()
-    const isCmd =
-      Boolean(n.command)
-      || n.codeFrames.length > 0
-      || /(bash|pwsh|powershell|cmd|sh|exec|terminal|run_command|python|node|test)/.test(idLower)
-    if (isCmd) {
-      out.push({
-        node: n,
-        frames: n.codeFrames,
-        command: n.command ?? n.argumentsSummary ?? null,
-        isError: n.isError,
-      })
-    }
+function handleEvalJumpCode(payload: { turnNo?: number; runId?: string | null }): void {
+  if (payload.runId && payload.runId !== effectiveRunId.value) {
+    selection.selectRun(payload.runId)
   }
-  return out
-})
-
-const codeErrorCount = computed(() => codeExecutionEntries.value.filter((e) => e.isError).length)
-const codeFrameCount = computed(() =>
-  codeExecutionEntries.value.reduce((acc, e) => acc + e.frames.length, 0),
-)
+  if (payload.turnNo !== undefined) {
+    focusedTurnNo.value = payload.turnNo ?? null
+  }
+  focusSignalNonce.value += 1
+  activeSubTab.value = 'code'
+}
 
 function clearNodeFilter(): void {
   activeNodeFilterId.value = null
@@ -648,12 +646,6 @@ function handleExportHtml(): void {
         : null,
   })
   emit('export-report', result)
-}
-
-function formatDurationMs(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0ms'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(1)}s`
 }
 </script>
 
@@ -869,126 +861,37 @@ function formatDurationMs(ms: number): string {
         />
       </div>
 
-      <!-- View 3: Run Eval (Wave 1 Geist Summary + 20-Bucket Occupancy Chart) -->
+      <!-- View 3: Run Eval (Wave 2 Log Scatter + Two-Turn Compare + 20-Bucket Occupancy Chart) -->
       <div v-else-if="activeSubTab === 'eval'" class="twb-pane" data-testid="trajectory-pane-eval">
-        <div class="twb-kpi-strip mono">
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryEval.summary.duration', '总耗时') }}</span>
-            <strong>{{ formatDurationMs(trajectorySummary.totalDurationMs) }}</strong>
-          </div>
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryEval.summary.calls', '模型 / 工具') }}</span>
-            <strong>{{ trajectorySummary.totalModelCalls }} / {{ trajectorySummary.totalToolCalls }}</strong>
-          </div>
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryEval.summary.errors', '异常调用') }}</span>
-            <strong :class="{ 'is-danger': trajectorySummary.errorCount > 0 }">
-              {{ trajectorySummary.errorCount }}
-            </strong>
-          </div>
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryEval.summary.peakWindow', '峰值窗口') }}</span>
-            <strong>{{ contextWindowBuckets.peakOccupancyPct }}%</strong>
-          </div>
-        </div>
-
-        <div class="twb-eval-chart-wrap">
-          <ContextWindowBucketChart
-            :report="contextWindowBuckets"
-            :diagnostics="effectiveCoreDiagnostics"
-            :stale="diagnosticsStale"
-          />
-        </div>
+        <TrajectoryEvalPanel
+          :trajectory="trajectorySummary"
+          :buckets="contextWindowBuckets"
+          :run-id="effectiveRunId"
+          :session-id="effectiveSessionId"
+          :model-invocations="filteredModelInvocations"
+          :tool-executions="filteredToolExecutions"
+          :turns="selection.turns.value"
+          :diagnostics="effectiveCoreDiagnostics"
+          :treemap="contextTreemapModel"
+          :stale="diagnosticsStale"
+          @diagnose-draft="emit('diagnose-draft', $event)"
+          @export-report="emit('export-report', $event)"
+          @jump-turn="handleEvalJumpTurn"
+          @jump-code="handleEvalJumpCode"
+        />
       </div>
 
-      <!-- View 4: Code Execution (Wave 1 Geist Frame List Fallback) -->
+      <!-- View 4: Code Execution (Wave 2 Failure Signal Grouping + Highlighted Code Frame + Remediation) -->
       <div v-else class="twb-pane" data-testid="trajectory-pane-code">
-        <div class="twb-kpi-strip mono">
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryCode.kpi.commands', '命令与脚本调用') }}</span>
-            <strong>{{ codeExecutionEntries.length }}</strong>
-          </div>
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryCode.kpi.errors', '报错记录') }}</span>
-            <strong :class="{ 'is-danger': codeErrorCount > 0 }">{{ codeErrorCount }}</strong>
-          </div>
-          <div class="twb-kpi-cell">
-            <span class="twb-kpi-cell__label">{{ tr('trajectoryCode.kpi.frames', '定位代码帧') }}</span>
-            <strong>{{ codeFrameCount }}</strong>
-          </div>
-        </div>
-
-        <div v-if="codeDiagnosisNode" class="twb-header-popover">
-          <TrajectoryDiagnosisPopover
-            :open="Boolean(codeDiagnosisNode)"
-            :run-id="effectiveRunId"
-            :session-id="effectiveSessionId"
-            :node="codeDiagnosisNode"
-            :trajectory="trajectorySummary"
-            :diagnostics="effectiveCoreDiagnostics"
-            @close="codeDiagnosisNode = null"
-            @injected="emit('diagnose-draft', $event.draft)"
-          />
-        </div>
-
-        <div v-if="codeExecutionEntries.length === 0" class="twb-empty" data-testid="trajectory-code-empty">
-          <Terminal :size="15" aria-hidden="true" />
-          <span>{{ tr('trajectoryCode.empty', '当前回合未记录终端命令或报错代码帧') }}</span>
-        </div>
-
-        <div v-else class="twb-code-list" data-testid="trajectory-code-list">
-          <article
-            v-for="entry in codeExecutionEntries"
-            :key="entry.node.id"
-            class="twb-code-item"
-            :class="{ 'is-error': entry.isError }"
-            :data-testid="`code-exec-item-${entry.node.id}`"
-          >
-            <div class="twb-code-item__head">
-              <div class="twb-code-item__title mono">
-                <Terminal :size="12" aria-hidden="true" />
-                <strong>{{ entry.node.toolId || entry.node.label }}</strong>
-                <span class="twb-code-status" :class="{ 'is-error': entry.isError }">
-                  {{ entry.node.status }}
-                </span>
-                <span v-if="entry.node.durationMs !== null" class="twb-muted">
-                  {{ formatDurationMs(entry.node.durationMs) }}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                class="twb-code-diag-btn"
-                :data-testid="`code-diagnose-${entry.node.id}`"
-                @click="codeDiagnosisNode = entry.node"
-              >
-                <Sparkles :size="11" aria-hidden="true" />
-                <span>{{ tr('trajectoryPath.diagnoseBtn', '诊断') }}</span>
-              </button>
-            </div>
-
-            <p v-if="entry.command" class="twb-code-cmd mono">$ {{ entry.command }}</p>
-            <p v-if="entry.node.summary" class="twb-code-summary">{{ entry.node.summary }}</p>
-
-            <div
-              v-for="frame in entry.frames"
-              :key="frame.id"
-              class="twb-code-frame mono"
-              data-testid="code-exec-frame"
-            >
-              <div class="twb-code-frame__head">
-                <span>{{ frame.title }}</span>
-                <span v-if="frame.errorCategory" class="is-danger">{{ frame.errorCategory }}</span>
-              </div>
-              <pre class="twb-code-frame__pre"><div
-                v-for="(fl, idx) in frame.lines"
-                :key="idx"
-                class="twb-code-frame__line"
-                :class="{ 'is-hi': fl.highlight }"
-              ><span class="twb-code-frame__ln">{{ fl.lineNumber ?? '·' }}</span><span>{{ fl.text }}</span></div></pre>
-            </div>
-          </article>
-        </div>
+        <TrajectoryCodeExecutionPanel
+          :trajectory="trajectorySummary"
+          :run-id="effectiveRunId"
+          :session-id="effectiveSessionId"
+          :tool-executions="filteredToolExecutions"
+          :diagnostics="effectiveCoreDiagnostics"
+          :focus-turn-no="focusedTurnNo"
+          @diagnose-draft="emit('diagnose-draft', $event)"
+        />
       </div>
     </div>
   </section>
@@ -1199,187 +1102,6 @@ function formatDurationMs(ms: number): string {
 
 .twb-overlap-switch:hover {
   color: var(--text-primary);
-}
-
-/* Wave 1 Geist KPI Strip */
-.twb-kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
-}
-
-@container (min-width: 520px) {
-  .twb-kpi-strip {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-.twb-kpi-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 14px;
-  border-right: 1px solid var(--border-muted);
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.twb-kpi-cell:last-child {
-  border-right: 0;
-}
-
-.twb-kpi-cell__label {
-  font-size: 10.5px;
-  color: var(--text-muted);
-}
-
-.twb-kpi-cell strong {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.is-danger {
-  color: var(--text-error, #c72b31) !important;
-}
-
-.twb-eval-chart-wrap {
-  padding: 12px 14px;
-}
-
-/* Wave 1 Code Execution List */
-.twb-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 16px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.twb-code-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.twb-code-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
-}
-
-.twb-code-item__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.twb-code-item__title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-primary);
-}
-
-.twb-code-status {
-  padding: 1px 5px;
-  border: 1px solid var(--border-muted);
-  border-radius: 4px;
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.twb-code-status.is-error {
-  border-color: color-mix(in srgb, var(--accent-danger, #c72b31) 35%, var(--border-muted));
-  color: var(--text-error, #c72b31);
-  background: var(--bg-status-danger);
-}
-
-.twb-muted {
-  font-size: 10.5px;
-  color: var(--text-muted);
-}
-
-.twb-code-diag-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border-muted);
-  border-radius: 5px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.twb-code-diag-btn:hover {
-  border-color: var(--text-primary);
-  background: var(--bg-secondary);
-}
-
-.twb-code-cmd {
-  margin: 0;
-  font-size: 11.5px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.twb-code-summary {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-primary);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.twb-code-frame {
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--bg-secondary);
-}
-
-.twb-code-frame__head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-muted);
-  font-size: 10.5px;
-  color: var(--text-secondary);
-}
-
-.twb-code-frame__pre {
-  margin: 0;
-  padding: 5px 0;
-  font-size: 11px;
-  overflow-x: auto;
-}
-
-.twb-code-frame__line {
-  display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 8px;
-  padding: 1px 8px;
-}
-
-.twb-code-frame__line.is-hi {
-  background: var(--bg-status-danger);
-  color: var(--text-error, #c72b31);
-}
-
-.twb-code-frame__ln {
-  text-align: right;
-  color: var(--text-muted);
 }
 
 .mono {

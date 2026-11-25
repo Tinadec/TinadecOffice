@@ -517,4 +517,247 @@ describe('TrajectoryWorkbenchPanel & Wave 1 Trajectory Components', () => {
     await filterChip.trigger('click')
     expect(wrapper.find('[data-testid="observability-filter-chip"]').exists()).toBe(false)
   })
+
+  it('Wave 2 Code Execution: groups failure signals, highlights error code frame line, filters by executor, and triggers all 4 remediation drafts', async () => {
+    const diagnoseSpy = vi
+      .spyOn(offlineReport, 'triggerDiagnoseInComposer')
+      .mockResolvedValue({ draft: 'code-remediation-draft', navigated: false })
+
+    const snapshot = makeMultiTurnSnapshot('run-w2-code')
+    const execs: ToolExecutionTimelineItemDto[] = [
+      makeToolExec({
+        id: 'ex-pwsh-err-1',
+        run_id: 'run-w2-code',
+        task_id: 'task-1',
+        tool_id: 'pwsh',
+        tool_display_name: 'PowerShell',
+        status: 'failed',
+        tool_success: false,
+        requested_seq: 16,
+        updated_seq: 17,
+        command: 'rg -n total src/{invoice.ts,totals.ts}',
+        summary: 'Missing argument in parameter list.',
+        evidence: [
+          'ParserError:\nLine |\n   1 | rg -n total src/{invoice.ts,totals.ts}\n     | Missing argument in parameter list.',
+        ],
+      }),
+      makeToolExec({
+        id: 'ex-pwsh-err-2',
+        run_id: 'run-w2-code',
+        task_id: 'task-2',
+        tool_id: 'pwsh',
+        tool_display_name: 'PowerShell',
+        status: 'failed',
+        tool_success: false,
+        requested_seq: 340,
+        updated_seq: 341,
+        command: 'rg -n total src/{invoice.ts,totals.ts}',
+        summary: 'Missing argument in parameter list.',
+        evidence: [
+          'ParserError:\nLine |\n   1 | rg -n total src/{invoice.ts,totals.ts}\n     | Missing argument in parameter list.',
+        ],
+      }),
+      makeToolExec({
+        id: 'ex-bash-verify-err',
+        run_id: 'run-w2-code',
+        task_id: 'task-2',
+        tool_id: 'bash',
+        tool_display_name: 'Bash',
+        status: 'failed',
+        tool_success: false,
+        requested_seq: 350,
+        updated_seq: 351,
+        command: 'npx vitest run src/invoice.test.ts',
+        summary: 'FAIL src/invoice.test.ts > AssertionError: expected 10 to equal 20',
+        evidence: ['> 24 | expect(computeInvoiceTotal()).toBe(20)'],
+      }),
+      makeToolExec({
+        id: 'ex-bash-ok',
+        run_id: 'run-w2-code',
+        task_id: 'task-2',
+        tool_id: 'bash',
+        tool_display_name: 'Bash',
+        status: 'completed',
+        tool_success: true,
+        requested_seq: 360,
+        updated_seq: 361,
+        command: 'npx vitest run src/invoice.test.ts',
+        summary: '1 passed',
+        evidence: ['Test Files 1 passed (1)'],
+      }),
+    ]
+
+    const wrapper = mount(TrajectoryWorkbenchPanel, {
+      props: {
+        sessionId: 'sess-w2',
+        runs: [{ id: 'run-w2-code', status: 'failed', created_at: '2026-11-25T07:00:00.000Z' }],
+        activeRunId: 'run-w2-code',
+        orchestration: snapshot,
+        toolExecutions: execs,
+      },
+      global: { plugins: [makeI18n()] },
+    })
+    await flushPromises()
+
+    // Code tab shows red error indicator dot from aggregateCodeExecutionSignals
+    const codeTabBtn = wrapper.get('[data-testid="trajectory-tab-code"]')
+    expect(codeTabBtn.find('.twb-subnav__err-dot').exists()).toBe(true)
+    await codeTabBtn.trigger('click')
+
+    const codePane = wrapper.get('[data-testid="trajectory-pane-code"]')
+    expect(codePane.get('[data-testid="code-kpi-total"]').text()).toBe('4')
+    expect(codePane.get('[data-testid="code-kpi-errors"]').text()).toBe('3')
+    expect(codePane.get('[data-testid="code-kpi-signals"]').text()).toBe('3')
+
+    // Signal groups render with accurate counts
+    const parserGroupBtn = codePane.get('[data-testid="code-signal-group-parser_error"]')
+    const verifyGroupBtn = codePane.get('[data-testid="code-signal-group-verification_failed"]')
+    expect(parserGroupBtn.text()).toContain('脚本语法错误')
+    expect(parserGroupBtn.text()).toContain('2')
+    expect(verifyGroupBtn.text()).toContain('验证未通过')
+    expect(verifyGroupBtn.text()).toContain('1')
+
+    // Default active group is parser_error (count 2); verify highlighted code frame line + raw blocks
+    const frameView = codePane.get('[data-testid="code-frame-view"]')
+    const hiLine = frameView.get('[data-testid="code-frame-highlight-line"]')
+    expect(hiLine.text()).toContain('rg -n total src/{invoice.ts,totals.ts}')
+    expect(codePane.get('[data-testid="code-raw-script"]').text()).toContain('rg -n total src/{invoice.ts,totals.ts}')
+    expect(codePane.get('[data-testid="code-raw-feedback"]').text()).toContain('ParserError:')
+
+    // Click all 4 remediation direction cards -> each invokes triggerDiagnoseInComposer and emits diagnose-draft
+    const remediationKeys = ['fix_impl', 'recover_observe', 'add_capability', 'keep_reusable'] as const
+    for (const key of remediationKeys) {
+      await codePane.get(`[data-testid="code-remediation-${key}"]`).trigger('click')
+      await flushPromises()
+    }
+
+    expect(diagnoseSpy).toHaveBeenCalledTimes(4)
+    for (let i = 0; i < remediationKeys.length; i++) {
+      const prompt = diagnoseSpy.mock.calls[i]![0].proposal?.composer_prompt ?? ''
+      expect(prompt).toContain('run-w2-code')
+      expect(prompt).toContain('PowerShell')
+      expect(prompt).toContain('L1')
+      expect(prompt).toContain('rg -n total src/{invoice.ts,totals.ts}')
+    }
+    expect(wrapper.emitted('diagnose-draft')?.length).toBe(4)
+
+    // Filter by executor = Bash -> narrows KPIs to 2 calls / 1 error and switches group to verification_failed
+    await codePane.get('[data-testid="code-executor-filter"]').setValue('Bash')
+    expect(codePane.get('[data-testid="code-kpi-total"]').text()).toBe('2')
+    expect(codePane.get('[data-testid="code-kpi-errors"]').text()).toBe('1')
+    expect(codePane.get('[data-testid="code-frame-highlight-line"]').text()).toContain('expect(computeInvoiceTotal()).toBe(20)')
+  })
+
+  it('Wave 2 Run Eval: renders scatter SVG, supports two-turn A/B comparison & Composer ask, keeps bucket chart, and exports offline HTML', async () => {
+    const diagnoseSpy = vi
+      .spyOn(offlineReport, 'triggerDiagnoseInComposer')
+      .mockResolvedValue({ draft: 'eval-compare-draft', navigated: false })
+    const createUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:eval-report')
+    const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    const snapshot = makeMultiTurnSnapshot('run-w2-eval')
+    const modelInvocations: ModelInvocationDto[] = [
+      {
+        id: 'inv-1',
+        run_id: 'run-w2-eval',
+        session_id: 'sess-w2',
+        call_id: 'call-1',
+        agent_instance_id: 'agent-1',
+        protocol: 'openai_responses',
+        model: 'gpt-5',
+        status: 'completed',
+        attempt: 1,
+        input_tokens: 4200,
+        output_tokens: 380,
+        total_tokens: 4580,
+        started_at: '2026-11-25T07:00:01.000Z',
+        completed_at: '2026-11-25T07:00:03.200Z',
+      } as ModelInvocationDto,
+      {
+        id: 'inv-2',
+        run_id: 'run-w2-eval',
+        session_id: 'sess-w2',
+        call_id: 'call-2',
+        agent_instance_id: 'agent-2',
+        protocol: 'openai_responses',
+        model: 'gpt-5',
+        status: 'completed',
+        attempt: 1,
+        input_tokens: 6800,
+        output_tokens: 1450,
+        total_tokens: 8250,
+        started_at: '2026-11-25T07:00:06.500Z',
+        completed_at: '2026-11-25T07:00:11.800Z',
+      } as ModelInvocationDto,
+    ]
+    const execs: ToolExecutionTimelineItemDto[] = [
+      makeToolExec({
+        id: 'ex-eval-ok',
+        run_id: 'run-w2-eval',
+        task_id: 'task-1',
+        agent_instance_id: 'agent-1',
+        tool_id: 'read_file',
+        duration_ms: 320,
+      }),
+      makeToolExec({
+        id: 'ex-eval-err',
+        run_id: 'run-w2-eval',
+        task_id: 'task-2',
+        agent_instance_id: 'agent-2',
+        tool_id: 'pwsh',
+        status: 'failed',
+        tool_success: false,
+        duration_ms: 2400,
+        command: 'pnpm test',
+        summary: '1 test failed',
+      }),
+    ]
+
+    const wrapper = mount(TrajectoryWorkbenchPanel, {
+      props: {
+        sessionId: 'sess-w2',
+        runs: [{ id: 'run-w2-eval', status: 'failed', created_at: '2026-11-25T07:00:00.000Z' }],
+        activeRunId: 'run-w2-eval',
+        orchestration: snapshot,
+        toolExecutions: execs,
+        modelInvocations,
+      },
+      global: { plugins: [makeI18n()] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="trajectory-tab-eval"]').trigger('click')
+    const evalPane = wrapper.get('[data-testid="trajectory-pane-eval"]')
+
+    expect(evalPane.find('[data-testid="eval-summary-strip"]').exists()).toBe(true)
+    expect(evalPane.find('[data-testid="eval-scatter-svg"]').exists()).toBe(true)
+    expect(evalPane.find('[data-testid="eval-compare-card"]').exists()).toBe(true)
+
+    // Scatter points exist and support click selection
+    const pt1 = evalPane.find('[data-testid="eval-scatter-point-1"]')
+    const pt2 = evalPane.find('[data-testid="eval-scatter-point-2"]')
+    expect(pt1.exists()).toBe(true)
+    expect(pt2.exists()).toBe(true)
+    await pt1.trigger('click')
+
+    // Compare diagnostic action injects into Composer & bubbles diagnose-draft
+    await evalPane.get('[data-testid="eval-ask-compare"]').trigger('click')
+    await flushPromises()
+    expect(diagnoseSpy).toHaveBeenCalled()
+    expect(wrapper.emitted('diagnose-draft')).toBeTruthy()
+
+    // 5% context window bucket chart remains intact inside Eval pane
+    expect(evalPane.find('[data-testid="bucket-peak"]').exists()).toBe(true)
+
+    // Export offline HTML report from Eval pane
+    await evalPane.get('[data-testid="eval-export-report-btn"]').trigger('click')
+    const exportEvents = wrapper.emitted('export-report')
+    expect(exportEvents).toBeTruthy()
+    expect(exportEvents![0]![0]).toMatchObject({
+      filename: expect.stringContaining('run-w2-eval'),
+    })
+
+    createUrlSpy.mockRestore()
+    revokeUrlSpy.mockRestore()
+  })
 })
