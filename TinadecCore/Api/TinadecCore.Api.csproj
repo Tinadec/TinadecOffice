@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AspNetCore\TinadecCore.AspNetCore.csproj" />
+    <ProjectReference Include="..\AcpServer\TinadecCore.AcpServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

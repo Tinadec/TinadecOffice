@@ -1,10 +1,17 @@
 using Microsoft.Extensions.Options;
+using TinadecCore.AcpServer;
 using TinadecCore.AspNetCore;
 using TinadecCore.AspNetCore.Auth;
 using TinadecCore.AspNetCore.Endpoints;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 using TinadecCore.Abstractions.Ports;
+
+if (AcpCliOptions.ContainsAcpFlag(args))
+{
+    Environment.ExitCode = await AcpHostRunner.RunFromCliAsync(args);
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 var scopesEnabled = builder.Configuration.GetValue<bool?>("TinadecStorage:Enabled") ?? !builder.Environment.IsEnvironment("Testing");

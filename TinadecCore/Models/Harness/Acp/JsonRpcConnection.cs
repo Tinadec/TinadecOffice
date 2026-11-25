@@ -25,25 +25,35 @@ namespace TinadecCore.Models.Harness.Acp;
 internal sealed class JsonRpcConnection
 {
     public const int MethodNotFoundError = -32601;
+    public const int InvalidParamsError = -32602;
     public const int InternalError = -32603;
 
     private readonly IAcpTransport _transport;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ConcurrentDictionary<long, PendingRequest> _pending = new();
+    private readonly ConcurrentDictionary<long, Task> _inFlightRequests = new();
     private readonly Action<string>? _onDiagnostic;
     private readonly ILogger? _logger;
+    private readonly bool _dispatchRequestsConcurrently;
     private long _nextId;
+    private long _nextInFlightKey;
     private volatile Exception? _fault;
 
     /// <summary>
-    /// Handler for agent→client requests. Returning a value sends it as the result; throwing
-    /// <see cref="AcpMethodNotFoundException"/> sends a -32601 error, which is how a router declines
-    /// a vendor-specific method it does not understand while still letting the turn finish.
+    /// Handler for agent→client (or client→server) requests. Returning a value sends it as the result; throwing
+    /// <see cref="AcpMethodNotFoundException"/> sends a -32601 error, <see cref="AcpInvalidParamsException"/>
+    /// sends a -32602 error, and <see cref="AcpRpcErrorException"/> sends its explicit JSON-RPC error code.
     /// </summary>
     public Func<string, JsonElement, CancellationToken, Task<JsonElement>>? OnRequest { get; set; }
 
     /// <summary>Handler for <c>session/update</c> and every other notification. Exceptions are logged, never allowed to end the read loop.</summary>
     public Action<JsonElement>? OnNotification { get; set; }
+
+    /// <summary>Handler for notifications carrying both method name and parameters (e.g. <c>session/cancel</c>).</summary>
+    public Action<string, JsonElement>? OnMethodNotification { get; set; }
+
+    /// <summary>Invoked when the peer closes its output stream (EOF) before draining any in-flight request handlers.</summary>
+    public Action? OnInputClosed { get; set; }
 
     /// <summary>The error every pending request turned into, once the peer went away. Null while the peer is live.</summary>
     public Exception? Fault => _fault;
@@ -52,11 +62,16 @@ internal sealed class JsonRpcConnection
 
     public Task Exited => _transport.Exited;
 
-    public JsonRpcConnection(IAcpTransport transport, Action<string>? onDiagnostic = null, ILogger? logger = null)
+    public JsonRpcConnection(
+        IAcpTransport transport,
+        Action<string>? onDiagnostic = null,
+        ILogger? logger = null,
+        bool dispatchRequestsConcurrently = false)
     {
         _transport = transport;
         _onDiagnostic = onDiagnostic;
         _logger = logger;
+        _dispatchRequestsConcurrently = dispatchRequestsConcurrently;
 
         // A child that dies while its stdout handle stays inherited by a grandchild never produces
         // EOF, so end-of-stream alone cannot be the liveness signal.
@@ -123,23 +138,33 @@ internal sealed class JsonRpcConnection
         {
             await foreach (var frame in NdjsonFraming.ReadFramesAsync(_transport.Stdout, cancellationToken))
             {
-                await DispatchAsync(frame).ConfigureAwait(false);
+                await DispatchAsync(frame, cancellationToken).ConfigureAwait(false);
             }
 
+            // Fail outgoing requests waiting on a peer that already closed its output, notify the
+            // server so active turns can cancel, and drain in-flight request handlers BEFORE setting
+            // the connection-wide fault so fast piped requests still flush their replies cleanly.
+            FailPendingWithoutFaultingConnection(new AcpHarnessExitedException(_transport.Description));
+            InvokeInputClosed();
+            await DrainInFlightRequestsAsync(cancellationToken).ConfigureAwait(false);
             FailAllPending(new AcpHarnessExitedException(_transport.Description));
         }
         catch (OperationCanceledException)
         {
             FailAllPending(new AcpHarnessExitedException(_transport.Description));
+            await DrainInFlightRequestsAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or NotSupportedException)
         {
+            FailPendingWithoutFaultingConnection(new AcpHarnessExitedException(_transport.Description, ex.Message));
+            InvokeInputClosed();
+            await DrainInFlightRequestsAsync(CancellationToken.None).ConfigureAwait(false);
             FailAllPending(new AcpHarnessExitedException(_transport.Description, ex.Message));
         }
     }
 
-    private async Task DispatchAsync(string line)
+    private async Task DispatchAsync(string line, CancellationToken cancellationToken)
     {
         JsonDocument document;
         try
@@ -167,17 +192,40 @@ internal sealed class JsonRpcConnection
             long? id = null;
             if (root.TryGetProperty("id", out var idElement) && TryReadId(idElement, out var parsedId)) id = parsedId;
 
-            // 1. method AND id: the agent is asking us something and needs an answer.
+            // 1. method AND id: the peer is asking us something and needs an answer.
             if (hasMethod && id is { } requestId)
             {
-                await HandleIncomingRequestAsync(methodElement.GetString()!, requestId, root).ConfigureAwait(false);
+                var method = methodElement.GetString()!;
+                var @params = root.TryGetProperty("params", out var parameters) ? parameters.Clone() : AcpWire.EmptyObject;
+                if (_dispatchRequestsConcurrently)
+                {
+                    var key = Interlocked.Increment(ref _nextInFlightKey);
+                    var task = RunInFlightRequestAsync(key, method, requestId, @params, cancellationToken);
+                    if (!task.IsCompleted)
+                    {
+                        _inFlightRequests[key] = task;
+                        _ = task.ContinueWith(
+                            static (_, state) =>
+                            {
+                                var (self, inFlightKey) = ((JsonRpcConnection, long))state!;
+                                self._inFlightRequests.TryRemove(inFlightKey, out _);
+                            },
+                            (this, key),
+                            CancellationToken.None,
+                            TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
+                    }
+                    return;
+                }
+
+                await HandleIncomingRequestAsync(method, requestId, @params, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
-            // 2. method only: a notification, e.g. session/update.
+            // 2. method only: a notification, e.g. session/update or session/cancel.
             if (hasMethod)
             {
-                DeliverNotification(root);
+                DeliverNotification(methodElement.GetString()!, root);
                 return;
             }
 
@@ -192,10 +240,49 @@ internal sealed class JsonRpcConnection
         }
     }
 
-    private async Task HandleIncomingRequestAsync(string method, long id, JsonElement root)
+    private async Task RunInFlightRequestAsync(
+        long key,
+        string method,
+        long id,
+        JsonElement @params,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Yield();
+            await HandleIncomingRequestAsync(method, id, @params, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _inFlightRequests.TryRemove(key, out _);
+        }
+    }
+
+    private async Task DrainInFlightRequestsAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var active = _inFlightRequests.Values.Where(t => !t.IsCompleted).ToArray();
+            if (active.Length == 0) return;
+            await Task.WhenAll(active).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void InvokeInputClosed()
+    {
+        try
+        {
+            OnInputClosed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "ACP input-closed callback failed.");
+        }
+    }
+
+    private async Task HandleIncomingRequestAsync(string method, long id, JsonElement @params, CancellationToken cancellationToken)
     {
         var handler = OnRequest;
-        var @params = root.TryGetProperty("params", out var parameters) ? parameters.Clone() : AcpWire.EmptyObject;
 
         if (handler is null)
         {
@@ -205,13 +292,23 @@ internal sealed class JsonRpcConnection
 
         try
         {
-            var result = await handler(method, @params, CancellationToken.None).ConfigureAwait(false);
+            var result = await handler(method, @params, cancellationToken).ConfigureAwait(false);
             await ReplyAsync(id, result, error: null).ConfigureAwait(false);
         }
         catch (AcpMethodNotFoundException ex)
         {
-            _logger?.LogInformation("ACP agent requested unsupported method {Method}; answered -32601.", ex.Method);
+            _logger?.LogInformation("ACP peer requested unsupported method {Method}; answered -32601.", ex.Method);
             await ReplyAsync(id, result: null, error: new AcpRemoteError(MethodNotFoundError, ex.Message)).ConfigureAwait(false);
+        }
+        catch (AcpInvalidParamsException ex)
+        {
+            _logger?.LogInformation("ACP request {Method} had invalid parameters: {Detail}; answered -32602.", method, ex.Message);
+            await ReplyAsync(id, result: null, error: new AcpRemoteError(InvalidParamsError, ex.Message)).ConfigureAwait(false);
+        }
+        catch (AcpRpcErrorException ex)
+        {
+            _logger?.LogInformation("ACP request {Method} answered with RPC error {Code}: {Detail}.", method, ex.Code, ex.Message);
+            await ReplyAsync(id, result: null, error: new AcpRemoteError(ex.Code, ex.Message, ex.ErrorData)).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -220,21 +317,35 @@ internal sealed class JsonRpcConnection
         }
     }
 
-    private void DeliverNotification(JsonElement root)
+    private void DeliverNotification(string method, JsonElement root)
     {
-        var handler = OnNotification;
-        if (handler is null) return;
-        if (!root.TryGetProperty("params", out var parameters)) return;
+        var hasParams = root.TryGetProperty("params", out var parameters);
+        var cloned = hasParams ? parameters.Clone() : AcpWire.EmptyObject;
 
-        try
+        if (OnNotification is { } handler && hasParams)
         {
-            handler(parameters.Clone());
+            try
+            {
+                handler(cloned);
+            }
+            catch (Exception ex)
+            {
+                // A notification handler that throws must not end the read loop: the turn's remaining
+                // chunks would stop arriving and the answer would look truncated rather than broken.
+                _logger?.LogWarning(ex, "ACP notification handler failed for {Method}.", method);
+            }
         }
-        catch (Exception ex)
+
+        if (OnMethodNotification is { } methodHandler)
         {
-            // A notification handler that throws must not end the read loop: the turn's remaining
-            // chunks would stop arriving and the answer would look truncated rather than broken.
-            _logger?.LogWarning(ex, "ACP notification handler failed for {Method}.", root.GetProperty("method").GetString());
+            try
+            {
+                methodHandler(method, hasParams ? parameters.Clone() : AcpWire.EmptyObject);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "ACP method notification handler failed for {Method}.", method);
+            }
         }
     }
 
@@ -293,13 +404,18 @@ internal sealed class JsonRpcConnection
         }
     }
 
-    private void FailAllPending(Exception fault)
+    private void FailPendingWithoutFaultingConnection(Exception fault)
     {
-        _fault ??= fault;
         foreach (var id in _pending.Keys.ToArray())
         {
             if (_pending.TryRemove(id, out var pending)) pending.TrySetException(fault);
         }
+    }
+
+    private void FailAllPending(Exception fault)
+    {
+        _fault ??= fault;
+        FailPendingWithoutFaultingConnection(fault);
     }
 
     private static bool TryReadId(JsonElement element, out long id)
@@ -321,13 +437,35 @@ internal sealed class JsonRpcConnection
     }
 }
 
-/// <summary>An agent→client method this build does not implement. Answered as -32601 so the turn keeps running.</summary>
+/// <summary>An agent→client or client→server method this build does not implement. Answered as -32601.</summary>
 internal sealed class AcpMethodNotFoundException : InvalidOperationException
 {
     public string Method { get; }
 
-    public AcpMethodNotFoundException(string method) : base($"ACP agent requested method '{method}', which this build does not implement.")
+    public AcpMethodNotFoundException(string method) : base($"ACP method '{method}' is not implemented.")
         => Method = method;
+}
+
+/// <summary>Malformed or out-of-range ACP request parameters. Answered with JSON-RPC -32602 (Invalid params).</summary>
+internal sealed class AcpInvalidParamsException : ArgumentException
+{
+    public AcpInvalidParamsException(string message) : base(message)
+    {
+    }
+}
+
+/// <summary>Explicit JSON-RPC error response surfaced from an ACP request handler.</summary>
+internal sealed class AcpRpcErrorException : InvalidOperationException
+{
+    public int Code { get; }
+
+    public JsonElement? ErrorData { get; }
+
+    public AcpRpcErrorException(int code, string message, JsonElement? errorData = null) : base(message)
+    {
+        Code = code;
+        ErrorData = errorData;
+    }
 }
 
 /// <summary>The harness process went away while a request was outstanding. Callers use this to suppress retry loops.</summary>

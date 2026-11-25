@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <RootNamespace>TinadecCore.AcpServer</RootNamespace>
+    <Description>TinadecCore ACP v1 stdio Agent Server host and dual-mode backend (Embedded + Remote Core attach).</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>TinadecCore.AcpServer</PackageId>
+    <PackageTags>tinadec;agent;acp;stdio;jsonrpc</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AspNetCore\TinadecCore.AspNetCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
+</Project>
