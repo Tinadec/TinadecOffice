@@ -1,4 +1,6 @@
 import { hostAccessState, onHostAccessChanged } from './hostAccess'
+import { buildEndpointReadCacheKey, currentEndpointId, toEndpointId, type EndpointInput } from './endpointScope'
+import { activeStorageScopeId } from './storageScope'
 
 /**
  * Long enough to cover one interaction — open the command panel, switch a settings tab,
@@ -23,7 +25,34 @@ interface CacheEntry {
 
 const entries = new Map<string, CacheEntry>()
 const inFlight = new Map<string, Promise<unknown>>()
+const endpointGenerations = new Map<string, number>()
 let generation = 0
+
+function endpointPrefixOfKey(qualifiedKey: string): string {
+  if (qualifiedKey.startsWith('peer:')) {
+    const thirdColon = qualifiedKey.indexOf(':', 'peer:'.length)
+    return thirdColon > 0 ? qualifiedKey.slice(0, thirdColon) : qualifiedKey
+  }
+  const firstColon = qualifiedKey.indexOf(':')
+  return firstColon > 0 ? qualifiedKey.slice(0, firstColon) : 'local'
+}
+
+function currentEndpointGeneration(endpointId: string): number {
+  return endpointGenerations.get(endpointId) ?? 0
+}
+
+export function qualifyReadCacheKey(
+  key: string,
+  options?: { endpoint?: EndpointInput; storageId?: string },
+): string {
+  if (key.startsWith('local:') || key.startsWith('peer:')) {
+    return key
+  }
+  return buildEndpointReadCacheKey(key, {
+    endpoint: options?.endpoint ?? currentEndpointId(),
+    storageId: options?.storageId ?? activeStorageScopeId(),
+  })
+}
 
 /**
  * Writes change what these read-only projections describe, so nothing may outlive them —
@@ -32,8 +61,29 @@ let generation = 0
  */
 export function invalidateReadCache(): void {
   generation++
+  endpointGenerations.clear()
   entries.clear()
   inFlight.clear()
+}
+
+/**
+ * Invalidates cached reads and in-flight entries strictly for one endpoint (`local` or `peer:<deviceId>`),
+ * leaving all other endpoints untouched.
+ */
+export function invalidateEndpointReadCache(endpoint: EndpointInput): void {
+  const endpointId = toEndpointId(endpoint)
+  endpointGenerations.set(endpointId, currentEndpointGeneration(endpointId) + 1)
+  const prefix = `${endpointId}:`
+  for (const key of [...entries.keys()]) {
+    if (key.startsWith(prefix)) entries.delete(key)
+  }
+  for (const key of [...inFlight.keys()]) {
+    if (key.startsWith(prefix)) inFlight.delete(key)
+  }
+}
+
+export function peekReadCacheKeys(): string[] {
+  return [...entries.keys()]
 }
 
 /** A revoked host must never be served from memory; the gate state is part of a hit. */
@@ -62,22 +112,26 @@ export function cachedRead<T>(
   read: () => Promise<T>,
   signal?: AbortSignal,
   ttlMs: number = READ_CACHE_TTL_MS,
+  scopeOptions?: { endpoint?: EndpointInput; storageId?: string },
 ): Promise<T> {
-  const hit = cachedValue<T>(key)
+  const qualifiedKey = qualifyReadCacheKey(key, scopeOptions)
+  const hit = cachedValue<T>(qualifiedKey)
   if (hit !== undefined) return Promise.resolve(hit)
-  let request = inFlight.get(key) as Promise<T> | undefined
+  let request = inFlight.get(qualifiedKey) as Promise<T> | undefined
   if (!request) {
+    const endpointId = endpointPrefixOfKey(qualifiedKey)
     const startedIn = generation
+    const startedEndpointGen = currentEndpointGeneration(endpointId)
     const created = read().then((value) => {
-      if (startedIn === generation) {
-        entries.set(key, { expiresAt: Date.now() + ttlMs, hostState: hostAccessState(), value })
+      if (startedIn === generation && startedEndpointGen === currentEndpointGeneration(endpointId)) {
+        entries.set(qualifiedKey, { expiresAt: Date.now() + ttlMs, hostState: hostAccessState(), value })
       }
       return value
     }).finally(() => {
-      if (inFlight.get(key) === created) inFlight.delete(key)
+      if (inFlight.get(qualifiedKey) === created) inFlight.delete(qualifiedKey)
     })
     request = created
-    inFlight.set(key, created)
+    inFlight.set(qualifiedKey, created)
   }
   if (!signal) return request
   if (signal.aborted) return Promise.reject(signal.reason ?? abortError())

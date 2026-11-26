@@ -25,6 +25,7 @@
     <Project Path="Companion/TinadecCore.Companion.csproj" />
     <Project Path="AgentGraph/TinadecCore.AgentGraph.csproj" />
     <Project Path="Exploration/TinadecCore.Exploration.csproj" />
+    <Project Path="Peers/TinadecCore.Peers.csproj" />
   </Folder>
   <Folder Name="/src/host/">
     <Project Path="Runtime/TinadecCore.Runtime.csproj" />

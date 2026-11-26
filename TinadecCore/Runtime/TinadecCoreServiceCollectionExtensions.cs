@@ -17,6 +17,7 @@ using TinadecCore.Tenancy;
 using TinadecCore.AgentGraph;
 using TinadecCore.Companion;
 using TinadecCore.Exploration;
+using TinadecCore.Peers;
 using TinadecCore.Runtime.ProjectBoard;
 using TinadecCore.Runtime.SpatialBoard;
 using TinadecCore.TinaChat;
@@ -57,6 +58,7 @@ public static class TinadecCoreServiceCollectionExtensions
 
         new AgentGraphModuleRegistrar().Register(builder);
         new ExplorationModuleRegistrar().Register(builder);
+        new PeersModuleRegistrar().Register(builder);
         new TinaChatModuleRegistrar().Register(builder);
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();

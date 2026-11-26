@@ -53,6 +53,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapProjectOverviewEndpoints();
         endpoints.MapProjectBoardEndpoints();
         endpoints.MapUiPreferencesEndpoints();
+        endpoints.MapPeerDeviceEndpoints();
         endpoints.MapStubEndpoints();
         endpoints.MapAuthEndpoints();
         return endpoints;

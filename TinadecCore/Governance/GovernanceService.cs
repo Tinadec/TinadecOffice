@@ -662,11 +662,9 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Another approver won the request revision race. The durable winner
-            // is the only authorization fact callers should observe; re-read it
-            // from a fresh context instead of exposing a transient 500 or issuing
-            // a second grant/lease.
-            return await ReadConcurrentDecisionAsync(command.PermissionRequestId, cancellationToken).ConfigureAwait(false);
+            // Another approver won the request revision race. Re-read the durable winner:
+            // an identical decision returns idempotently; an opposite decision fails with 409 Conflict.
+            return await ReadConcurrentDecisionAsync(command.PermissionRequestId, command.Approve, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -677,6 +675,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         ArgumentNullException.ThrowIfNull(command);
         var scope = _tenantAccessor.Current;
         var now = UtcNow;
+        var deciderDeviceId = NormalizeDeciderDeviceId(command.DecidedByDeviceId);
+        var deciderDeviceName = NormalizeDeciderDeviceName(command.DecidedByDeviceName, deciderDeviceId);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var request = await db.PermissionRequests.SingleOrDefaultAsync(x =>
@@ -687,6 +687,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         if (IsTerminalRequest(request.Status))
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            AssertTerminalDecisionCompatible(request.Status, command.Approve);
             return await LoadResolutionAsync(db, request, cancellationToken).ConfigureAwait(false);
         }
 
@@ -801,7 +802,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         {
             return await DenyRequestAsync(db, transaction, request, scope, claim, RunErrorTaxonomy.ApproverRejected,
                 Truncate(command.Reason, 4096, "The approver rejected the request."), command.ApproverAgentInstanceId,
-                command.ApprovalDelegationId, now, cancellationToken, boundaryResult.Hash).ConfigureAwait(false);
+                command.ApprovalDelegationId, now, cancellationToken, boundaryResult.Hash,
+                deciderDeviceId, deciderDeviceName).ConfigureAwait(false);
         }
 
         if (delegation is not null)
@@ -851,6 +853,13 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             // columns empty so an auto approval can never masquerade as human.
             allowedDecision.DecidedByPrincipalId = Guid.Empty;
             allowedDecision.DecidedByAgentInstanceId = null;
+        }
+        else
+        {
+            request.DecidedByDeviceId = deciderDeviceId;
+            request.DecidedByDeviceName = deciderDeviceName;
+            allowedDecision.DecidedByDeviceId = deciderDeviceId;
+            allowedDecision.DecidedByDeviceName = deciderDeviceName;
         }
         db.AuthorizationDecisions.Add(allowedDecision);
         request.AuthorizationDecisionId = allowedDecision.Id;
@@ -917,6 +926,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
 
     private async Task<PermissionResolution> ReadConcurrentDecisionAsync(
         Guid permissionRequestId,
+        bool approve,
         CancellationToken cancellationToken)
     {
         var scope = _tenantAccessor.Current;
@@ -930,13 +940,119 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 x.Id == permissionRequestId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
                 cancellationToken).ConfigureAwait(false);
             if (request is not null && request.AuthorizationDecisionId is not null)
+            {
+                if (IsTerminalRequest(request.Status))
+                {
+                    AssertTerminalDecisionCompatible(request.Status, approve);
+                }
                 return await LoadResolutionAsync(db, request, cancellationToken).ConfigureAwait(false);
+            }
 
             if (attempt < 2)
                 await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
         }
 
         throw new DbUpdateConcurrencyException("The permission request changed concurrently and its final decision is not yet visible.");
+    }
+
+    public async Task<ApprovalDeviceAttributionSnapshot> RecordOrGetApprovalAttributionAsync(
+        Guid approvalId,
+        string decision,
+        string decidedByDeviceId,
+        string decidedByDeviceName,
+        DateTimeOffset decidedAt,
+        CancellationToken cancellationToken = default)
+    {
+        if (approvalId == Guid.Empty) throw new ArgumentException("approvalId is required.", nameof(approvalId));
+        var normalizedDecision = string.IsNullOrWhiteSpace(decision) ? "approved" : decision.Trim().ToLowerInvariant();
+        var deviceId = NormalizeDeciderDeviceId(decidedByDeviceId);
+        var deviceName = NormalizeDeciderDeviceName(decidedByDeviceName, deviceId);
+        var scope = _tenantAccessor.Current;
+
+        try
+        {
+            return await SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            {
+                await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                var existing = await db.ApprovalDeviceAttributions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ApprovalId == approvalId, ct)
+                    .ConfigureAwait(false);
+                if (existing is not null)
+                {
+                    return new ApprovalDeviceAttributionSnapshot(
+                        existing.ApprovalId,
+                        existing.Decision,
+                        existing.DecidedByDeviceId,
+                        existing.DecidedByDeviceName,
+                        existing.DecidedAt);
+                }
+
+                var created = new ApprovalDeviceAttributionRecord
+                {
+                    ApprovalId = approvalId,
+                    TenantId = scope.TenantId,
+                    WorkspaceId = scope.WorkspaceId,
+                    Decision = normalizedDecision,
+                    DecidedByDeviceId = deviceId,
+                    DecidedByDeviceName = deviceName,
+                    DecidedAt = decidedAt
+                };
+                db.ApprovalDeviceAttributions.Add(created);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                return new ApprovalDeviceAttributionSnapshot(
+                    created.ApprovalId,
+                    created.Decision,
+                    created.DecidedByDeviceId,
+                    created.DecidedByDeviceName,
+                    created.DecidedAt);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException)
+        {
+            await using var retryDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var winner = await retryDb.ApprovalDeviceAttributions.AsNoTracking()
+                .SingleAsync(x => x.ApprovalId == approvalId, cancellationToken)
+                .ConfigureAwait(false);
+            return new ApprovalDeviceAttributionSnapshot(
+                winner.ApprovalId,
+                winner.Decision,
+                winner.DecidedByDeviceId,
+                winner.DecidedByDeviceName,
+                winner.DecidedAt);
+        }
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, ApprovalDeviceAttributionSnapshot>> GetApprovalAttributionsAsync(
+        IReadOnlyCollection<Guid> approvalIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (approvalIds is null || approvalIds.Count == 0)
+        {
+            return new Dictionary<Guid, ApprovalDeviceAttributionSnapshot>();
+        }
+
+        var ids = approvalIds.Where(x => x != Guid.Empty).Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return new Dictionary<Guid, ApprovalDeviceAttributionSnapshot>();
+        }
+
+        return await SqliteTransientRetry.ReadAsync(async ct =>
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var rows = await db.ApprovalDeviceAttributions.AsNoTracking()
+                .Where(x => ids.Contains(x.ApprovalId))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            return (IReadOnlyDictionary<Guid, ApprovalDeviceAttributionSnapshot>)rows.ToDictionary(
+                x => x.ApprovalId,
+                x => new ApprovalDeviceAttributionSnapshot(
+                    x.ApprovalId,
+                    x.Decision,
+                    x.DecidedByDeviceId,
+                    x.DecidedByDeviceName,
+                    x.DecidedAt));
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<LeaseConsumptionResult> TryConsumeLeaseAsync(
@@ -1672,6 +1788,38 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private static bool IsTerminalRequest(string status) => status is PermissionRequestStatuses.Granted
         or PermissionRequestStatuses.Denied or PermissionRequestStatuses.Expired or PermissionRequestStatuses.Cancelled;
 
+    private static void AssertTerminalDecisionCompatible(string status, bool approve)
+    {
+        if (status == PermissionRequestStatuses.Granted && approve) return;
+        if (status == PermissionRequestStatuses.Denied && !approve) return;
+        throw new InvalidOperationException($"Permission request has already been decided ({status}) and cannot accept a conflicting decision.");
+    }
+
+    private static string NormalizeDeciderDeviceId(string? deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId)) return "local";
+        return Truncate(deviceId, 128, "local");
+    }
+
+    private static string NormalizeDeciderDeviceName(string? deviceName, string deviceId)
+    {
+        if (!string.IsNullOrWhiteSpace(deviceName)) return Truncate(deviceName, 256, deviceId);
+        if (string.Equals(deviceId, "local", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var machine = Environment.MachineName?.Trim();
+                if (!string.IsNullOrWhiteSpace(machine)) return Truncate(machine, 256, "local");
+            }
+            catch
+            {
+                // Ignore host name resolution errors.
+            }
+            return "local";
+        }
+        return Truncate(deviceId, 256, "local");
+    }
+
     private async Task<PermissionResolution> DenyRequestAsync(
         GovernanceDbContext db,
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
@@ -1684,15 +1832,21 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         Guid? approvalDelegationId,
         DateTimeOffset now,
         CancellationToken cancellationToken,
-        string? policyHash = null)
+        string? policyHash = null,
+        string? decidedByDeviceId = null,
+        string? decidedByDeviceName = null)
     {
         request.Status = PermissionRequestStatuses.Denied;
         request.Revision++;
         request.UpdatedAt = now;
+        request.DecidedByDeviceId = decidedByDeviceId;
+        request.DecidedByDeviceName = decidedByDeviceName;
         var decision = NewDecision(scope, request.SubjectPrincipalId, request.SubjectAgentInstanceId, claim,
             GovernanceOutcomes.Denied, reasonCode, reason, approvalDelegationId is null ? "user" : "delegation",
             policyHash ?? request.PolicySnapshotHash, request.RunId, request.TaskId, request.Id,
             decidedByAgentInstanceId: decidedByAgentInstanceId, approvalDelegationId: approvalDelegationId);
+        decision.DecidedByDeviceId = decidedByDeviceId;
+        decision.DecidedByDeviceName = decidedByDeviceName;
         db.AuthorizationDecisions.Add(decision);
         request.AuthorizationDecisionId = decision.Id;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1929,7 +2083,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         record.Id, record.TenantId, record.WorkspaceId, record.SubjectPrincipalId, record.SubjectAgentInstanceId,
         record.ParentAgentInstanceId, ClaimOf(record), record.RunId, record.TaskId, record.Risk, record.ExpectedCost,
         record.Status, record.AuthorizationDecisionId, record.CapabilityGrantId, record.CapabilityLeaseId,
-        record.ExpiresAt, record.CreatedAt, record.UpdatedAt);
+        record.ExpiresAt, record.CreatedAt, record.UpdatedAt,
+        record.DecidedByDeviceId, record.DecidedByDeviceName);
 
     private static AuthorizationDecisionSnapshot ToSnapshot(AuthorizationDecisionRecord record) => new(
         record.Id, record.TenantId, record.WorkspaceId, record.SubjectPrincipalId, record.SubjectAgentInstanceId,
@@ -1937,7 +2092,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         record.PermissionRequestId,
         record.CapabilityGrantId, record.CapabilityLeaseId, record.Outcome, record.ReasonCode, record.Reason,
         record.DecisionSource, record.PolicySnapshotHash, record.DecidedByPrincipalId,
-        record.DecidedByAgentInstanceId, record.CreatedAt);
+        record.DecidedByAgentInstanceId, record.CreatedAt,
+        record.DecidedByDeviceId, record.DecidedByDeviceName);
 
     private static CapabilityLeaseSnapshot ToSnapshot(CapabilityLeaseRecord record, string? nonce = null) => new(
         record.Id, record.TenantId, record.WorkspaceId, record.SubjectPrincipalId, record.SubjectAgentInstanceId,

@@ -378,3 +378,91 @@ export function createAgentTerminalBridgeSession(options: {
     },
   };
 }
+
+export interface PeerTunnelTerminalChannel {
+  sendText(text: string): void;
+  sendBinary(bytes: Uint8Array): void;
+  close(code?: number, reason?: string): void;
+}
+
+/**
+ * Bridge a local WebSocket terminal client (`/ws/peers/:deviceId/terminal`) across an
+ * authenticated mTLS peer tunnel while preserving the exact `wsTerminalProxy` JSON frame contract.
+ */
+export function createPeerTunnelTerminalBridgeSession(options: {
+  ws: WsTerminalClient;
+  openTunnel: (downstream: WsTerminalClient) => Promise<PeerTunnelTerminalChannel>;
+}): WsTerminalSession {
+  let closed = false;
+  let channel: PeerTunnelTerminalChannel | null = null;
+  const pendingFrames: Array<string | Uint8Array> = [];
+
+  void options
+    .openTunnel(options.ws)
+    .then((opened) => {
+      if (closed) {
+        opened.close(1000, 'Client disconnected before tunnel opened.');
+        return;
+      }
+      channel = opened;
+      while (pendingFrames.length > 0 && !closed) {
+        const next = pendingFrames.shift()!;
+        if (typeof next === 'string') {
+          channel.sendText(next);
+        } else {
+          channel.sendBinary(next);
+        }
+      }
+    })
+    .catch((err: unknown) => {
+      if (closed) return;
+      closed = true;
+      pendingFrames.length = 0;
+      const code =
+        err && typeof err === 'object' && 'code' in err && typeof (err as { code?: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : 'device_offline';
+      const message = err instanceof Error ? err.message : 'Failed to open remote peer terminal.';
+      sendJson(options.ws, { type: 'error', code, message });
+      try {
+        options.ws.close(code === 'policy_denied' ? 1008 : 1011, message.slice(0, 120));
+      } catch {
+        // ignore already closed socket
+      }
+    });
+
+  return {
+    onMessage(raw: unknown) {
+      if (closed) return;
+      let normalized: string;
+      if (typeof raw === 'string') {
+        normalized = raw;
+      } else if (raw instanceof ArrayBuffer) {
+        normalized = Buffer.from(raw).toString('utf8');
+      } else if (ArrayBuffer.isView(raw)) {
+        normalized = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString('utf8');
+      } else {
+        normalized = JSON.stringify(raw ?? {});
+      }
+      if (channel) {
+        try {
+          channel.sendText(normalized);
+        } catch {
+          // tunnel closed
+        }
+      } else if (pendingFrames.length < 128) {
+        pendingFrames.push(normalized);
+      }
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      pendingFrames.length = 0;
+      if (channel) {
+        const ch = channel;
+        channel = null;
+        ch.close(1000, 'Terminal closed');
+      }
+    },
+  };
+}

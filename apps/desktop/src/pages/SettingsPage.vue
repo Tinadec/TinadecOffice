@@ -11,6 +11,7 @@ import {
   KeyRound,
   MessagesSquare,
   Minus,
+  MonitorSmartphone,
   Palette,
   PawPrint,
   Settings2,
@@ -40,6 +41,7 @@ import TinaChatSection from '@/settings/sections/TinaChatSection.vue'
 import CompanionSection from '@/settings/sections/CompanionSection.vue'
 import MemoryContextSection from '@/settings/sections/MemoryContextSection.vue'
 import WebAccessSection from '@/settings/sections/WebAccessSection.vue'
+import PeerDevicesSection from '@/settings/sections/PeerDevicesSection.vue'
 import {
   api as baseApi,
   type AgentCenterOverviewDto,
@@ -90,7 +92,7 @@ import { patchAgentCenterUi, readCenterUiState } from '@/settings/drafts/uiState
 import { withoutRetiredModes } from '@/lib/retiredModes'
 import { graphSeedPackManifest } from '@/agentPacks/GraphSeedPack'
 
-type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'memoryContext' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'interaction' | 'companionAvatar' | 'webAccess' | 'apiDocs' | 'about'
+type SettingsSection = 'personal' | 'general' | 'storage' | 'model' | 'agentCenter' | 'memoryContext' | 'companions' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'interaction' | 'companionAvatar' | 'webAccess' | 'peers' | 'apiDocs' | 'about'
 
 type AgentCenterTab = AgentCenterTabKey
 
@@ -333,6 +335,7 @@ const navItems = computed(() => [
   { key: 'interaction' as const, icon: SlidersHorizontal, label: t('settings.interaction') },
   { key: 'companionAvatar' as const, icon: PawPrint, label: t('settings.pets') },
   { key: 'webAccess' as const, icon: Globe, label: t('settings.webAccess') },
+  { key: 'peers' as const, icon: MonitorSmartphone, label: t('settings.peers') },
   { key: 'apiDocs' as const, icon: FileText, label: t('settings.apiDocs') },
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
@@ -835,6 +838,10 @@ import '../settings/settings.css'
 
         <template v-if="activeSection === 'webAccess'">
           <WebAccessSection />
+        </template>
+
+        <template v-if="activeSection === 'peers'">
+          <PeerDevicesSection />
         </template>
 
         <template v-if="activeSection === 'apiDocs'">

@@ -15,6 +15,7 @@ public sealed class GovernanceDbContext : DbContext
     public DbSet<CapabilityLeaseRecord> CapabilityLeases => Set<CapabilityLeaseRecord>();
     public DbSet<LeaseConsumptionRecord> LeaseConsumptions => Set<LeaseConsumptionRecord>();
     public DbSet<DelegationUseRecord> DelegationUses => Set<DelegationUseRecord>();
+    public DbSet<ApprovalDeviceAttributionRecord> ApprovalDeviceAttributions => Set<ApprovalDeviceAttributionRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,6 +85,8 @@ public sealed class GovernanceDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.IdempotencyKey).HasMaxLength(256).IsRequired();
             entity.Property(x => x.RequestHash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.DecidedByDeviceId).HasMaxLength(128);
+            entity.Property(x => x.DecidedByDeviceName).HasMaxLength(256);
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Status, x.ExpiresAtUnixMilliseconds });
@@ -102,6 +105,8 @@ public sealed class GovernanceDbContext : DbContext
             entity.Property(x => x.PolicySnapshotHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.IdempotencyKey).HasMaxLength(256);
             entity.Property(x => x.EvaluationInputHash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.DecidedByDeviceId).HasMaxLength(128);
+            entity.Property(x => x.DecidedByDeviceName).HasMaxLength(256);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SubjectPrincipalId, x.CreatedAt });
             entity.HasIndex(x => new { x.PermissionRequestId, x.CreatedAt });
         });
@@ -136,6 +141,16 @@ public sealed class GovernanceDbContext : DbContext
             entity.ToTable("approval_delegation_uses");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ApprovalDelegationId, x.PermissionRequestId }).IsUnique();
+        });
+
+        modelBuilder.Entity<ApprovalDeviceAttributionRecord>(entity =>
+        {
+            entity.ToTable("approval_device_attributions");
+            entity.HasKey(x => x.ApprovalId);
+            entity.Property(x => x.Decision).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.DecidedByDeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.DecidedByDeviceName).HasMaxLength(256).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ApprovalId });
         });
 
         modelBuilder.UseTinadecSnakeCase();

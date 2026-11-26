@@ -5,12 +5,28 @@ import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 import type { components } from '@/generated/schema'
 import type { MessageAttachmentDto, MessageDto, SseChunk } from '@/generated/client'
 import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
-import { ApiError } from '@/lib/apiError'
+import { ApiError, toSubmissionUncertainError } from '@/lib/apiError'
 import { assertHostAccess } from '@/lib/hostAccess'
-import { captureStorageId, rememberStorageResult, normalizeStorageRequest, storageHeaders, storageFetch, projectStorageId, sessionStorageId, selectionIdentity, selectedStorageId, type StorageRequestOptions } from '@/lib/storageScope'
-import { cachedRead, invalidateReadCache, CATALOG_READ_CACHE_TTL_MS } from '@/lib/readCache'
+import { activeStorageScopeId, captureStorageId, rememberStorageResult, normalizeStorageRequest, storageHeaders, storageFetch, projectStorageId, sessionStorageId, selectionIdentity, selectedStorageId, type StorageRequestOptions } from '@/lib/storageScope'
+import { cachedRead, invalidateEndpointReadCache, invalidateReadCache, CATALOG_READ_CACHE_TTL_MS } from '@/lib/readCache'
+import {
+  buildEndpointReadCacheKey,
+  currentEndpointScope,
+  endpointScopedApi,
+  newClientRequestId,
+  resolveEndpointHttpUrl,
+  resolveEndpointTerminalWsUrl,
+  rewriteApiPathForEndpoint,
+  toEndpointId,
+  type EndpointId,
+  type EndpointInput,
+  type EndpointScope,
+} from '@/lib/endpointScope'
 import type { StorageScopeDto, StorageStatsDto, StorageCleanupPreviewDto, StorageContentPreviewDto, StorageDeletePreviewDto, SessionTransferDto, ConfigurationDocumentDto, StorageConfigureInput } from '@/settings/storage'
 import { ScopedEventSource } from '@/lib/scopedEventSource'
+
+export { endpointScopedApi }
+export type { EndpointScope, EndpointId, EndpointInput }
 type StorageDiagnosticResult = { storage_id: string; scope: StorageScopeDto; diagnostics: Array<Record<string, unknown>>; configuration: { content_hash: string; documents: Record<string, string> } }
 import type { ToolSettingsDocument, ToolSettingsSchema, ToolSettingsEffective, ToolMcpResource, ToolMcpInput, ToolSkillResource, ToolCapabilities } from '@/settings/toolSettings'
 export type { ToolSettingsDocument, ToolSettingsSchema, ToolSettingsEffective, ToolMcpResource, ToolMcpInput, ToolSkillResource, ToolCapabilities } from '@/settings/toolSettings'
@@ -148,6 +164,8 @@ export interface ApprovalDto {
   decided_at?: string | null;
   decision?: string | null;
   decision_reason?: string | null;
+  decided_by_device_id?: string | null;
+  decided_by_device_name?: string | null;
   run_id?: string | null;
 }
 
@@ -197,6 +215,8 @@ export interface ApprovalDecisionResultDto {
   capability_grant_id?: string | null;
   created_rule_id?: string | null;
   decision_reason?: string | null;
+  decided_by_device_id?: string | null;
+  decided_by_device_name?: string | null;
 }
 
 export interface BatchApprovalDecisionInput {
@@ -3553,8 +3573,40 @@ function querySuffix(params: Record<string, string | number | boolean | undefine
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730';
 
-/** Catalog reads describe one storage scope; a switch must never be answered from another. */
-function catalogKey(name: string): string { return `${selectedStorageId()}:${name}` }
+/** Catalog reads describe one endpoint + storage scope; switching either must never serve another. */
+function catalogKey(name: string): string {
+  return buildEndpointReadCacheKey(name, {
+    endpoint: currentEndpointScope(),
+    storageId: activeStorageScopeId(),
+  })
+}
+
+function shouldMarkSubmissionUncertain(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.code === 'submission_uncertain' || error.code === 'backend_write_outcome_unknown' || error.code === 'timeout') {
+    return true
+  }
+  return error.status === 0 || error.status === 502 || error.status === 504
+}
+
+async function submitWithUncertainGuard<T>(
+  clientRequestId: string,
+  endpointId: EndpointId,
+  send: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await send()
+  } catch (error) {
+    if (shouldMarkSubmissionUncertain(error)) {
+      throw toSubmissionUncertainError(error, {
+        clientRequestId,
+        endpointId,
+        storageId: error instanceof ApiError ? error.storageId : undefined,
+      })
+    }
+    throw error
+  }
+}
 
 interface JsonRequestResult<T> {
   data: T
@@ -3562,13 +3614,17 @@ interface JsonRequestResult<T> {
 }
 
 async function requestResult<T>(path: string, init?: StorageRequestOptions): Promise<JsonRequestResult<T>> {
-  const storageId = captureStorageId(path, init)
-  const normalized = normalizeStorageRequest(path, init)
-  const headers = storageHeaders(path, { ...init, storageId })
+  const endpointScope = currentEndpointScope(init?.endpointId)
+  const endpointId = toEndpointId(endpointScope)
+  const scopedInit: StorageRequestOptions = { ...init, endpointId: endpointScope }
+  const storageId = captureStorageId(path, scopedInit)
+  const normalized = normalizeStorageRequest(path, scopedInit)
+  const routedPath = rewriteApiPathForEndpoint(normalized.path, endpointScope, { gatewayBase: gatewayUrl })
+  const headers = storageHeaders(path, { ...scopedInit, storageId })
   if (!headers.has('accept')) headers.set('accept', 'application/json')
   if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
-  const { response, text } = await readBackendResponse(`${gatewayUrl}${normalized.path}`, path,
-    { ...init, body: normalized.body, headers }, { storageId })
+  const { response, text } = await readBackendResponse(`${gatewayUrl}${routedPath}`, routedPath,
+    { ...scopedInit, body: normalized.body, headers }, { storageId })
   let data: unknown = null;
   if (text.length > 0) {
     try {
@@ -3581,12 +3637,16 @@ async function requestResult<T>(path: string, init?: StorageRequestOptions): Pro
 
   if (!response.ok) {
     const message = extractErrorMessage(data, response.statusText);
-    throw new ApiError(message, response.status, data, { storageId });
+    throw new ApiError(message, response.status, data, { storageId, endpointId });
   }
 
-  rememberStorageResult(path, data, storageId)
-  // A completed write makes every cached catalog stale, whatever it touched.
-  if (init?.method && init.method !== 'GET' && init.method !== 'HEAD') invalidateReadCache()
+  rememberStorageResult(path, data, storageId, endpointScope)
+  // A completed write makes cached catalogs of that endpoint stale without evicting other endpoints.
+  // Peer management-plane mutations (/api/v1/peers/*, excluding /proxy/) never mutate local workspace catalogs.
+  const isPeerMgmtWrite = /^\/api\/v1\/peers(?:\/|\?|$)/.test(normalized.path) && !normalized.path.includes('/proxy/')
+  if (init?.method && init.method !== 'GET' && init.method !== 'HEAD' && !isPeerMgmtWrite) {
+    invalidateEndpointReadCache(endpointScope)
+  }
   return { data: data as T, headers: response.headers };
 }
 
@@ -3639,13 +3699,15 @@ export async function createUserToolActionForPath(
   params?: Record<string, unknown> | null,
   idempotencyKey?: string,
 ): Promise<UserToolActionDto> {
-  const capturedStorage = captureStorageId('/api/v1/user/tool-actions')
-  const projects = await request<ProjectDto[]>('/api/v1/projects');
+  const capturedEndpoint = currentEndpointScope()
+  const capturedStorage = captureStorageId('/api/v1/user/tool-actions', { endpointId: capturedEndpoint })
+  const projects = await request<ProjectDto[]>('/api/v1/projects', { endpointId: capturedEndpoint });
   const normalized = path.replace(/[\\/]+$/, '').toLowerCase();
   const project = projects.find((item) => item.path.replace(/[\\/]+$/, '').toLowerCase() === normalized);
   if (!project) throw new Error(i18n.global.t('errors.workspaceNotRegistered'));
   return request<UserToolActionDto>('/api/v1/user/tool-actions', {
     method: 'POST',
+    endpointId: capturedEndpoint,
     storageId: project.storage_id ?? capturedStorage,
     body: JSON.stringify({ project_id: project.id, tool_id: toolId, params, idempotency_key: idempotencyKey }),
   });
@@ -3762,7 +3824,8 @@ function streamAdmittedInteraction(
   onChunk: (chunk: ModelStreamChunkDto) => void,
   onError?: (error: Error) => void,
 ): AbortController {
-  const storageId = sessionStorageId(sessionId)
+  const endpointScope = currentEndpointScope()
+  const storageId = sessionStorageId(sessionId, endpointScope)
   const controller = new AbortController()
   let handle: RunStreamHandle | null = null
   controller.signal.addEventListener('abort', () => handle?.disconnect())
@@ -3779,14 +3842,34 @@ function streamAdmittedInteraction(
       if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
       const receipt = await request<{ run_id?: string; stream_cursor?: number }>(
         `/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`,
-        { method: 'POST', body: JSON.stringify(interactionBody), signal: controller.signal, storageId },
+        {
+          method: 'POST',
+          body: JSON.stringify(interactionBody),
+          headers: { 'x-tinadec-client-request-id': body.client_message_id },
+          signal: controller.signal,
+          storageId,
+          endpointId: endpointScope,
+        },
       )
       const runId = receipt.run_id
       if (!runId) throw new Error('Interaction admission did not return a run_id.')
+      const peerStreamFetch: typeof fetch | undefined = endpointScope.kind === 'peer'
+        ? ((input: RequestInfo | URL, init?: RequestInit) => {
+            const rawUrl = String(input)
+            const parsed = new URL(rawUrl)
+            const rewritten = rewriteApiPathForEndpoint(`${parsed.pathname}${parsed.search}`, endpointScope, {
+              gatewayBase: parsed.origin,
+            })
+            const headers = new Headers(init?.headers)
+            headers.set('x-tinadec-endpoint-id', toEndpointId(endpointScope))
+            return fetch(`${parsed.origin}${rewritten}`, { ...init, headers })
+          }) as typeof fetch
+        : undefined
       handle = createRunStream({
         storageId,
         runId,
         cursor: receipt.stream_cursor ?? 0,
+        fetchImpl: peerStreamFetch,
         // One-shot on purpose: these callers generate a commit message, and a
         // backoff-retry loop is not what a cancelled generation should become.
         autoReconnect: false,
@@ -4032,10 +4115,24 @@ export const api = {
     method: 'PATCH', body: JSON.stringify(settings),
   }),
   listMessages: (sessionId: string, signal?: AbortSignal) => request<MessageDto[]>(`/api/v1/sessions/${sessionId}/messages`, { signal, cache: 'no-store' }),
-  postMessage: (sessionId: string, content: string) => request<MessageDto>(`/api/v1/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content })
-  }),
+  postMessage: (
+    sessionId: string,
+    content: string,
+    options?: { client_request_id?: string; storageId?: string; endpointId?: EndpointInput },
+  ) => {
+    const endpointScope = currentEndpointScope(options?.endpointId)
+    const endpointId = toEndpointId(endpointScope)
+    const clientRequestId = options?.client_request_id || newClientRequestId()
+    return submitWithUncertainGuard(clientRequestId, endpointId, () =>
+      request<MessageDto>(`/api/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        storageId: options?.storageId,
+        endpointId: endpointScope,
+        headers: { 'x-tinadec-client-request-id': clientRequestId },
+        body: JSON.stringify({ content, client_request_id: clientRequestId }),
+      }),
+    )
+  },
   revertSessionMessage: (sessionId: string, messageId: string) => request<SessionHistoryRevertDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/revert`, { method: 'POST' }),
   getOrchestrationSnapshot: (sessionId: string, signal?: AbortSignal) => request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`, { signal, cache: 'no-store' }),
   // Session organization + graph (Core OrganizationEndpoints, proxied verbatim by the Gateway).
@@ -4427,7 +4524,20 @@ export const api = {
   /** Effective policy ceilings of this scope (read-only; edited through the runtime document). */
   getAgentRuntimePolicy: () => request<AgentRuntimePolicyDto>('/api/v1/agent-runtime-policy'),
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; clear_meeting_model_override?: boolean; expected_settings_revision?: number; space_options?: SpaceOptionsDto | null; attachment_ids?: string[]; interrupt?: boolean; interface_locale?: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; clear_meeting_model_override?: boolean; expected_settings_revision?: number; space_options?: SpaceOptionsDto | null; attachment_ids?: string[]; interrupt?: boolean; interface_locale?: string }) => {
+    const endpointScope = currentEndpointScope()
+    const endpointId = toEndpointId(endpointScope)
+    const clientMessageId = body.client_message_id || newClientRequestId()
+    const payload = body.client_message_id ? body : { ...body, client_message_id: clientMessageId }
+    return submitWithUncertainGuard(clientMessageId, endpointId, () =>
+      request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
+        method: 'POST',
+        endpointId: endpointScope,
+        headers: { 'x-tinadec-client-request-id': clientMessageId },
+        body: JSON.stringify(payload),
+      }),
+    )
+  },
   getCorrection: (runId: string) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction`),
   answerCorrectionQuestion: (runId: string, questionId: string, body: { answer: string; option_id?: string | null; client_request_id: string }) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction/questions/${encodeURIComponent(questionId)}/answer`, { method: 'POST', body: JSON.stringify(body) }),
   submitCorrectionFeedback: (runId: string, body: { kind: 'reproduced' | 'resolved'; note?: string | null; client_request_id: string; interface_locale?: string }) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction/feedback`, { method: 'POST', body: JSON.stringify(body) }),
@@ -4468,8 +4578,17 @@ export const api = {
    * fetch-then-objectURL: Core decides inline vs attachment per media type, and a browser
    * navigating this URL inherits that decision. Never build a filesystem path here.
    */
-  attachmentContentUrl: (attachmentId: string) =>
-    `${gatewayUrl}/api/v1/attachments/${encodeURIComponent(attachmentId)}/content`,
+  attachmentContentUrl: (attachmentId: string, options?: { endpoint?: EndpointInput }) =>
+    resolveEndpointHttpUrl(`/api/v1/attachments/${encodeURIComponent(attachmentId)}/content`, {
+      endpoint: options?.endpoint,
+      gatewayBase: gatewayUrl,
+    }),
+  terminalWsUrl: (options?: { path?: string; endpoint?: EndpointInput }) =>
+    resolveEndpointTerminalWsUrl({
+      path: options?.path,
+      endpoint: options?.endpoint,
+      gatewayBase: gatewayUrl,
+    }),
 
   listTools: async (options?: { signal?: AbortSignal }) =>
     (await request<(ToolDescriptorDto | ToolManifestEntryDto)[]>('/api/v1/tools', { signal: options?.signal })).map(normalizeToolDescriptor),
@@ -4810,9 +4929,29 @@ export const api = {
    * initial durable replay and then every 15s, so the first one marks "history is loaded".
    * It is not an EventEnvelope and is deliberately not in CORE_EVENT_TYPES.
    */
-  connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void, onHeartbeat?: () => void): EventSource {
+  connectEvents(
+    sessionId: string | null,
+    onEvent: (event: EventEnvelope) => void,
+    onHeartbeat?: () => void,
+    options?: { endpoint?: EndpointInput; afterSeq?: number | null },
+  ): EventSource {
+    const endpointScope = currentEndpointScope(options?.endpoint);
     const params = sessionId ? `?session_id=${encodeURIComponent(selectionIdentity(sessionId).id)}` : '';
-    const source = new ScopedEventSource(`${gatewayUrl}/api/v1/events${params}`, sessionStorageId(sessionId));
+    const streamUrl = resolveEndpointHttpUrl(`/api/v1/events${params}`, {
+      endpoint: endpointScope,
+      gatewayBase: gatewayUrl,
+    });
+    const source = new ScopedEventSource(
+      streamUrl,
+      sessionStorageId(sessionId, endpointScope),
+      undefined,
+      undefined,
+      {
+        endpoint: endpointScope,
+        ...(options?.afterSeq !== undefined ? { afterSeq: options.afterSeq } : {}),
+        persistCursor: true,
+      },
+    );
     const handle = (message: MessageEvent) => {
       try {
         onEvent(normalizeEventEnvelope(JSON.parse(message.data), message.lastEventId));
@@ -5582,6 +5721,196 @@ export const api = {
         body: JSON.stringify(input),
       },
     ).then((raw) => normalizeProjectAutopilotStateDto(raw, projectId));
+  },
+
+  // --- Multi-Device Peer Management Plane (Task #63 · Always Local Loopback) ---
+  getPeerInboundSettings(signal?: AbortSignal): Promise<PeerInboundSettingsDto> {
+    return request<Record<string, unknown>>('/api/v1/peers/inbound', {
+      endpointId: 'local',
+      storageId: 'user',
+      signal,
+      cache: 'no-store',
+    }).then(normalizePeerInboundSettingsDto);
+  },
+
+  updatePeerInboundSettings(input: UpdatePeerInboundInput): Promise<PeerInboundSettingsDto> {
+    return request<Record<string, unknown>>('/api/v1/peers/inbound', {
+      method: 'PUT',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(input),
+    }).then(normalizePeerInboundSettingsDto);
+  },
+
+  async getPeerPairingCode(signal?: AbortSignal): Promise<PeerPairingCodeDto> {
+    try {
+      const raw = await request<Record<string, unknown>>('/api/v1/peers/pairing-code', {
+        endpointId: 'local',
+        storageId: 'user',
+        signal,
+        cache: 'no-store',
+      });
+      return normalizePeerPairingCodeDto(raw);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return { active: false, pairing_code: null, code: null, expires_at_ms: null, remaining_attempts: null };
+      }
+      throw error;
+    }
+  },
+
+  generatePeerPairingCode(options?: { ttl_seconds?: number; relay_enrolled?: boolean }): Promise<PeerPairingCodeDto> {
+    return request<Record<string, unknown>>('/api/v1/peers/pairing-code', {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(options ?? {}),
+    }).then(normalizePeerPairingCodeDto);
+  },
+
+  revokePeerPairingCode(): Promise<void> {
+    return request<void>('/api/v1/peers/pairing-code', {
+      method: 'DELETE',
+      endpointId: 'local',
+      storageId: 'user',
+    });
+  },
+
+  listPeerDevices(signal?: AbortSignal): Promise<PeerDeviceDto[]> {
+    return request< unknown >('/api/v1/peers/devices', {
+      endpointId: 'local',
+      storageId: 'user',
+      signal,
+      cache: 'no-store',
+    }).then(extractPeerDeviceList);
+  },
+
+  probePeerDevice(addressOrDeviceId: string, options?: { byDeviceId?: boolean }): Promise<PeerProbeResultDto> {
+    const path = options?.byDeviceId
+      ? `/api/v1/peers/devices/${encodeURIComponent(addressOrDeviceId)}/probe`
+      : '/api/v1/peers/devices/probe';
+    const body = options?.byDeviceId ? {} : { address: addressOrDeviceId };
+    return request<Record<string, unknown>>(path, {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(body),
+    }).then((raw) => normalizePeerProbeResultDto(raw, options?.byDeviceId ? '' : addressOrDeviceId));
+  },
+
+  pairPeerDevice(input: PairPeerDeviceInput): Promise<PeerDeviceDto> {
+    return request<Record<string, unknown>>('/api/v1/peers/devices/pair', {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(input),
+    }).then(unwrapAndNormalizePeerDevice);
+  },
+
+  connectPeerDevice(deviceId: string): Promise<PeerDeviceDto> {
+    return request<Record<string, unknown>>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/connect`, {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify({}),
+    }).then(unwrapAndNormalizePeerDevice);
+  },
+
+  disconnectPeerDevice(deviceId: string): Promise<PeerDeviceDto> {
+    return request<Record<string, unknown>>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/disconnect`, {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify({}),
+    }).then(unwrapAndNormalizePeerDevice);
+  },
+
+  updatePeerDevice(deviceId: string, patch: UpdatePeerDeviceInput): Promise<PeerDeviceDto> {
+    return request<Record<string, unknown>>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'PATCH',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(patch),
+    }).then(unwrapAndNormalizePeerDevice);
+  },
+
+  deletePeerDevice(deviceId: string): Promise<void> {
+    return request<void>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+      endpointId: 'local',
+      storageId: 'user',
+    });
+  },
+
+  listPeerRemoteWorkspaces(deviceId: string, signal?: AbortSignal): Promise<PeerRemoteWorkspaceDto[]> {
+    return request<unknown>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/workspaces`, {
+      endpointId: 'local',
+      storageId: 'user',
+      signal,
+      cache: 'no-store',
+    }).then(extractPeerRemoteWorkspaceList);
+  },
+
+  mountPeerRemoteWorkspaces(deviceId: string, mounts: PeerWorkspaceMountInput[]): Promise<PeerRemoteWorkspaceDto[]> {
+    const normalizedMounts = mounts.map((item) => ({
+      remote_project_id: item.remote_project_id,
+      ...(item.name !== undefined ? { name: item.name } : {}),
+      ...(item.remote_root_path !== undefined ? { remote_root_path: item.remote_root_path } : {}),
+      mounted: item.mounted ?? item.visible ?? true,
+      visible: item.visible ?? item.mounted ?? true,
+    }));
+    return request<unknown>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/workspaces/mount`, {
+      method: 'PUT',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify({ mounts: normalizedMounts, workspaces: normalizedMounts }),
+    }).then(extractPeerRemoteWorkspaceList);
+  },
+
+  clearPeerDeviceLocalCache(deviceId: string): Promise<void> {
+    return request<void>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/local-cache`, {
+      method: 'DELETE',
+      endpointId: 'local',
+      storageId: 'user',
+    });
+  },
+
+  listPeerGrants(signal?: AbortSignal): Promise<PeerGrantDto[]> {
+    return request<unknown>('/api/v1/peers/grants', {
+      endpointId: 'local',
+      storageId: 'user',
+      signal,
+      cache: 'no-store',
+    }).then(extractPeerGrantList);
+  },
+
+  updatePeerGrantPolicy(controllerDeviceId: string, policy: UpdatePeerGrantPolicyInput): Promise<PeerGrantDto> {
+    return request<Record<string, unknown>>(`/api/v1/peers/grants/${encodeURIComponent(controllerDeviceId)}/policy`, {
+      method: 'PUT',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify({
+        role: policy.role,
+        workspace_mode: policy.workspace_mode,
+        workspace_ids: policy.workspace_mode === 'selected' ? (policy.workspace_ids ?? []) : [],
+        ...(policy.allow_non_workspace_sessions !== undefined
+          ? { allow_non_workspace_sessions: policy.allow_non_workspace_sessions }
+          : {}),
+        ...(policy.sync_all_sessions !== undefined ? { sync_all_sessions: policy.sync_all_sessions } : {}),
+        ...(policy.allow_agent_delegation !== undefined
+          ? { allow_agent_delegation: policy.allow_agent_delegation }
+          : {}),
+        ...(policy.allow_provider_proxy !== undefined ? { allow_provider_proxy: policy.allow_provider_proxy } : {}),
+      }),
+    }).then(unwrapAndNormalizePeerGrant);
+  },
+
+  revokePeerGrant(controllerDeviceId: string): Promise<void> {
+    return request<void>(`/api/v1/peers/grants/${encodeURIComponent(controllerDeviceId)}`, {
+      method: 'DELETE',
+      endpointId: 'local',
+      storageId: 'user',
+    });
   },
 };
 
@@ -6377,6 +6706,7 @@ export interface ProjectBoardSseEventDto {
 export interface BoardEventStreamOptions {
   afterSeq?: number;
   storageId?: string;
+  endpointId?: EndpointInput;
   fetchImpl?: typeof fetch;
   idleTimeoutMs?: number;
   reconnectDelayMs?: number;
@@ -6500,7 +6830,8 @@ function openBoardEventStream(
   onEvent: (event: ProjectBoardSseEventDto) => void,
   options: BoardEventStreamOptions = {},
 ): BoardEventStreamHandle {
-  const storageId = options.storageId ?? captureStorageId(path);
+  const endpointScope = currentEndpointScope(options.endpointId);
+  const storageId = options.storageId ?? captureStorageId(path, { endpointId: endpointScope });
   const fetchImpl = options.fetchImpl ?? fetch;
   const idleTimeoutMs = options.idleTimeoutMs ?? 45_000;
   const baseReconnectDelayMs = options.reconnectDelayMs ?? 1_000;
@@ -6607,16 +6938,17 @@ function openBoardEventStream(
     if (closed) return;
     const controller = new AbortController();
     abortController = controller;
-    const normalized = normalizeStorageRequest(path, { storageId });
+    const normalized = normalizeStorageRequest(path, { storageId, endpointId: endpointScope });
     const querySep = normalized.path.includes('?') ? '&' : '?';
     const pathWithCursor = lastSeq > 0 ? `${normalized.path}${querySep}after_seq=${lastSeq}` : normalized.path;
-    const fullUrl = `${gatewayUrl}${pathWithCursor}`;
+    const routedPath = rewriteApiPathForEndpoint(pathWithCursor, endpointScope, { gatewayBase: gatewayUrl });
+    const fullUrl = `${gatewayUrl}${routedPath}`;
 
     try {
-      await assertHostAccess(pathWithCursor, controller.signal);
+      await assertHostAccess(routedPath, controller.signal);
       if (closed || controller.signal.aborted) return;
 
-      const headers = storageHeaders(pathWithCursor, { storageId });
+      const headers = storageHeaders(pathWithCursor, { storageId, endpointId: endpointScope });
       headers.set('accept', 'text/event-stream');
       if (lastSeq > 0) headers.set('last-event-id', String(lastSeq));
 
@@ -6873,4 +7205,385 @@ export const getUiPreferences = api.getUiPreferences;
 export const putUiPreferences = api.putUiPreferences;
 export const patchUiPreferences = api.patchUiPreferences;
 export const uiPreferencesEventsUrl = api.uiPreferencesEventsUrl;
+
+// ---------------------------------------------------------------------------
+// Multi-Device Peer Management Types & Normalizers (Task #63)
+// ---------------------------------------------------------------------------
+
+export type PeerTransportKind = 'lan' | 'relay';
+export type PeerRole = 'observer' | 'operator' | 'owner';
+export type PeerWorkspaceMode = 'all' | 'selected';
+export type PeerConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'handshaking'
+  | 'ready'
+  | 'version_incompatible'
+  | 'unauthorized'
+  | 'fingerprint_mismatch'
+  | 'error';
+
+export interface PeerInboundSettingsDto {
+  enabled: boolean;
+  listening?: boolean;
+  display_name: string;
+  listen_port: number;
+  configured_port?: number | null;
+  port_conflict?: boolean;
+  local_device_id: string;
+  local_fingerprint: string;
+  reachable_addresses: string[];
+  firewall_hint: string | null;
+}
+
+export interface UpdatePeerInboundInput {
+  enabled?: boolean;
+  display_name?: string;
+  listen_port?: number;
+}
+
+export interface PeerPairingCodeDto {
+  active: boolean;
+  pairing_code: string | null;
+  code?: string | null;
+  expires_at_ms: number | null;
+  remaining_attempts: number | null;
+  relay_enrolled?: boolean;
+}
+
+export interface PeerProbeResultDto {
+  reachable: boolean;
+  address: string;
+  remote_device_id: string;
+  display_name: string;
+  certificate_fingerprint: string;
+  protocol_major: number;
+  protocol_minor: number;
+  capabilities: string[];
+}
+
+export interface PairPeerDeviceInput {
+  address: string;
+  pairing_code: string;
+  expected_fingerprint: string;
+  display_name?: string;
+  connection_desired?: boolean;
+  adopt_sessions?: boolean;
+}
+
+export interface UpdatePeerDeviceInput {
+  display_name?: string;
+  address?: string;
+  connection_desired?: boolean;
+  adopt_sessions?: boolean;
+}
+
+export interface PeerDeviceDto {
+  device_id: string;
+  display_name: string;
+  transport: PeerTransportKind;
+  address: string;
+  remote_device_id: string;
+  certificate_fingerprint: string;
+  protocol_major: number;
+  protocol_minor: number;
+  account_identity?: string | null;
+  organization_id?: string | null;
+  paired_at: number;
+  last_connected_at: number | null;
+  connection_desired: boolean;
+  adopt_sessions: boolean;
+  last_state: PeerConnectionState;
+  last_failure_code: string | null;
+  access_revision: string | null;
+  mounted_workspaces?: PeerRemoteWorkspaceDto[];
+}
+
+export interface PeerRemoteWorkspaceDto {
+  remote_project_id: string;
+  name: string;
+  remote_root_path: string | null;
+  mounted: boolean;
+  visible?: boolean;
+  alias_workspace_id?: string | null;
+  synced_at?: number;
+}
+
+export interface PeerWorkspaceMountInput {
+  remote_project_id: string;
+  name?: string;
+  remote_root_path?: string | null;
+  mounted?: boolean;
+  visible?: boolean;
+}
+
+export interface PeerMountedWorkspaceDto {
+  alias_workspace_id: string;
+  peer_device_id: string;
+  device_display_name: string;
+  device_state: PeerConnectionState;
+  offline_readonly: boolean;
+  remote_project_id: string;
+  name: string;
+  remote_root_path: string | null;
+  visible: boolean;
+  synced_at: number;
+}
+
+export interface PeerAccessPolicyDto {
+  controller_device_id: string;
+  role: PeerRole;
+  workspace_mode: PeerWorkspaceMode;
+  workspace_ids: string[];
+  allow_non_workspace_sessions: boolean;
+  sync_all_sessions: boolean;
+  allow_agent_delegation: boolean;
+  allow_provider_proxy: boolean;
+  revision: string;
+  updated_at?: number;
+}
+
+export interface UpdatePeerGrantPolicyInput {
+  role: PeerRole;
+  workspace_mode: PeerWorkspaceMode;
+  workspace_ids?: string[];
+  allow_non_workspace_sessions?: boolean;
+  sync_all_sessions?: boolean;
+  allow_agent_delegation?: boolean;
+  allow_provider_proxy?: boolean;
+}
+
+export interface PeerGrantDto {
+  grant_id: string;
+  controller_device_id: string;
+  display_name: string;
+  transport: PeerTransportKind;
+  certificate_fingerprint: string;
+  account_identity?: string | null;
+  organization_id?: string | null;
+  granted_at: number;
+  last_controlled_at: number | null;
+  revoked_at: number | null;
+  policy: PeerAccessPolicyDto;
+}
+
+function peerBool(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  return fallback;
+}
+
+function peerNum(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function peerNullableNum(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizePeerInboundSettingsDto(raw: Record<string, unknown> | null | undefined): PeerInboundSettingsDto {
+  const listenPort = peerNum(raw?.listen_port, 48735);
+  const configuredPort = peerNullableNum(raw?.configured_port);
+  return {
+    enabled: peerBool(raw?.enabled, false),
+    listening: raw?.listening !== undefined ? peerBool(raw.listening, false) : peerBool(raw?.enabled, false),
+    display_name: typeof raw?.display_name === 'string' ? raw.display_name : '',
+    listen_port: listenPort,
+    configured_port: configuredPort,
+    port_conflict: raw?.port_conflict !== undefined
+      ? peerBool(raw.port_conflict, false)
+      : configuredPort !== null && configuredPort !== listenPort,
+    local_device_id: typeof raw?.local_device_id === 'string' ? raw.local_device_id : '',
+    local_fingerprint: typeof raw?.local_fingerprint === 'string' ? raw.local_fingerprint : '',
+    reachable_addresses: Array.isArray(raw?.reachable_addresses)
+      ? raw.reachable_addresses.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : [],
+    firewall_hint: typeof raw?.firewall_hint === 'string' && raw.firewall_hint.length > 0 ? raw.firewall_hint : null,
+  };
+}
+
+function normalizePeerPairingCodeDto(raw: Record<string, unknown> | null | undefined): PeerPairingCodeDto {
+  const code = typeof raw?.pairing_code === 'string' && raw.pairing_code.length > 0
+    ? raw.pairing_code
+    : typeof raw?.code === 'string' && raw.code.length > 0
+      ? raw.code
+      : null;
+  const expiresAt = peerNullableNum(raw?.expires_at_ms);
+  const active = raw?.active !== undefined ? peerBool(raw.active, false) : Boolean(code);
+  return {
+    active,
+    pairing_code: code,
+    code,
+    expires_at_ms: expiresAt,
+    remaining_attempts: peerNullableNum(raw?.remaining_attempts),
+    ...(raw?.relay_enrolled !== undefined ? { relay_enrolled: peerBool(raw.relay_enrolled, false) } : {}),
+  };
+}
+
+function normalizePeerProbeResultDto(raw: Record<string, unknown> | null | undefined, fallbackAddress = ''): PeerProbeResultDto {
+  return {
+    reachable: raw?.reachable !== undefined ? peerBool(raw.reachable, true) : true,
+    address: typeof raw?.address === 'string' && raw.address ? raw.address : fallbackAddress,
+    remote_device_id: typeof raw?.remote_device_id === 'string' ? raw.remote_device_id : '',
+    display_name: typeof raw?.display_name === 'string' ? raw.display_name : '',
+    certificate_fingerprint: typeof raw?.certificate_fingerprint === 'string' ? raw.certificate_fingerprint : '',
+    protocol_major: peerNum(raw?.protocol_major, 1),
+    protocol_minor: peerNum(raw?.protocol_minor, 0),
+    capabilities: Array.isArray(raw?.capabilities)
+      ? raw.capabilities.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function normalizePeerRemoteWorkspaceDto(raw: Record<string, unknown> | null | undefined): PeerRemoteWorkspaceDto {
+  const mounted = raw?.mounted !== undefined
+    ? peerBool(raw.mounted, false)
+    : raw?.visible !== undefined
+      ? peerBool(raw.visible, true)
+      : Boolean(raw?.alias_workspace_id);
+  const visible = raw?.visible !== undefined ? peerBool(raw.visible, mounted) : mounted;
+  return {
+    remote_project_id: typeof raw?.remote_project_id === 'string'
+      ? raw.remote_project_id
+      : typeof raw?.id === 'string'
+        ? raw.id
+        : '',
+    name: typeof raw?.name === 'string' ? raw.name : '',
+    remote_root_path: typeof raw?.remote_root_path === 'string'
+      ? raw.remote_root_path
+      : typeof raw?.path === 'string'
+        ? raw.path
+        : null,
+    mounted,
+    visible,
+    alias_workspace_id: typeof raw?.alias_workspace_id === 'string' ? raw.alias_workspace_id : null,
+    ...(typeof raw?.synced_at === 'number' ? { synced_at: raw.synced_at } : {}),
+  };
+}
+
+function extractPeerRemoteWorkspaceList(raw: unknown): PeerRemoteWorkspaceDto[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as Record<string, unknown> | null)?.workspaces)
+      ? ((raw as Record<string, unknown>).workspaces as unknown[])
+      : Array.isArray((raw as Record<string, unknown> | null)?.mounts)
+        ? ((raw as Record<string, unknown>).mounts as unknown[])
+        : [];
+  return list
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map(normalizePeerRemoteWorkspaceDto)
+    .filter((item) => Boolean(item.remote_project_id));
+}
+
+function normalizePeerDeviceDto(raw: Record<string, unknown> | null | undefined): PeerDeviceDto {
+  const rawWorkspaces = raw?.mounted_workspaces ?? raw?.workspaces;
+  return {
+    device_id: typeof raw?.device_id === 'string' ? raw.device_id : '',
+    display_name: typeof raw?.display_name === 'string' ? raw.display_name : '',
+    transport: raw?.transport === 'relay' ? 'relay' : 'lan',
+    address: typeof raw?.address === 'string' ? raw.address : '',
+    remote_device_id: typeof raw?.remote_device_id === 'string' ? raw.remote_device_id : '',
+    certificate_fingerprint: typeof raw?.certificate_fingerprint === 'string' ? raw.certificate_fingerprint : '',
+    protocol_major: peerNum(raw?.protocol_major, 1),
+    protocol_minor: peerNum(raw?.protocol_minor, 0),
+    account_identity: typeof raw?.account_identity === 'string' ? raw.account_identity : null,
+    organization_id: typeof raw?.organization_id === 'string' ? raw.organization_id : null,
+    paired_at: peerNum(raw?.paired_at, Date.now()),
+    last_connected_at: peerNullableNum(raw?.last_connected_at),
+    connection_desired: peerBool(raw?.connection_desired, true),
+    adopt_sessions: peerBool(raw?.adopt_sessions, true),
+    last_state: (typeof raw?.last_state === 'string' ? raw.last_state : 'disconnected') as PeerConnectionState,
+    last_failure_code: typeof raw?.last_failure_code === 'string' ? raw.last_failure_code : null,
+    access_revision: typeof raw?.access_revision === 'string' ? raw.access_revision : null,
+    ...(rawWorkspaces !== undefined ? { mounted_workspaces: extractPeerRemoteWorkspaceList(rawWorkspaces) } : {}),
+  };
+}
+
+function unwrapAndNormalizePeerDevice(raw: Record<string, unknown> | null | undefined): PeerDeviceDto {
+  const inner = raw?.device && typeof raw.device === 'object'
+    ? (raw.device as Record<string, unknown>)
+    : raw;
+  return normalizePeerDeviceDto(inner);
+}
+
+function extractPeerDeviceList(raw: unknown): PeerDeviceDto[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as Record<string, unknown> | null)?.devices)
+      ? ((raw as Record<string, unknown>).devices as unknown[])
+      : [];
+  return list
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map(normalizePeerDeviceDto)
+    .filter((item) => Boolean(item.device_id));
+}
+
+function normalizePeerAccessPolicyDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackControllerId = '',
+): PeerAccessPolicyDto {
+  let workspaceIds: string[] = [];
+  if (Array.isArray(raw?.workspace_ids)) {
+    workspaceIds = raw.workspace_ids.filter((id): id is string => typeof id === 'string');
+  } else if (typeof raw?.workspace_ids_json === 'string' && raw.workspace_ids_json) {
+    try {
+      const parsed = JSON.parse(raw.workspace_ids_json);
+      if (Array.isArray(parsed)) workspaceIds = parsed.filter((id): id is string => typeof id === 'string');
+    } catch { /* ignore malformed json */ }
+  }
+  const role: PeerRole = raw?.role === 'observer' || raw?.role === 'owner' ? raw.role : 'operator';
+  const workspaceMode: PeerWorkspaceMode = raw?.workspace_mode === 'selected' ? 'selected' : 'all';
+  return {
+    controller_device_id: typeof raw?.controller_device_id === 'string' ? raw.controller_device_id : fallbackControllerId,
+    role,
+    workspace_mode: workspaceMode,
+    workspace_ids: workspaceMode === 'selected' ? workspaceIds : [],
+    allow_non_workspace_sessions: peerBool(raw?.allow_non_workspace_sessions, false),
+    sync_all_sessions: peerBool(raw?.sync_all_sessions, false),
+    allow_agent_delegation: peerBool(raw?.allow_agent_delegation, false),
+    allow_provider_proxy: peerBool(raw?.allow_provider_proxy, false),
+    revision: typeof raw?.revision === 'string' ? raw.revision : '1',
+    ...(typeof raw?.updated_at === 'number' ? { updated_at: raw.updated_at } : {}),
+  };
+}
+
+function normalizePeerGrantDto(raw: Record<string, unknown> | null | undefined): PeerGrantDto {
+  const controllerId = typeof raw?.controller_device_id === 'string' ? raw.controller_device_id : '';
+  const policySource = raw?.policy && typeof raw.policy === 'object'
+    ? (raw.policy as Record<string, unknown>)
+    : raw;
+  return {
+    grant_id: typeof raw?.grant_id === 'string' ? raw.grant_id : controllerId,
+    controller_device_id: controllerId,
+    display_name: typeof raw?.display_name === 'string' ? raw.display_name : '',
+    transport: raw?.transport === 'relay' ? 'relay' : 'lan',
+    certificate_fingerprint: typeof raw?.certificate_fingerprint === 'string' ? raw.certificate_fingerprint : '',
+    account_identity: typeof raw?.account_identity === 'string' ? raw.account_identity : null,
+    organization_id: typeof raw?.organization_id === 'string' ? raw.organization_id : null,
+    granted_at: peerNum(raw?.granted_at, Date.now()),
+    last_controlled_at: peerNullableNum(raw?.last_controlled_at),
+    revoked_at: peerNullableNum(raw?.revoked_at),
+    policy: normalizePeerAccessPolicyDto(policySource, controllerId),
+  };
+}
+
+function unwrapAndNormalizePeerGrant(raw: Record<string, unknown> | null | undefined): PeerGrantDto {
+  const inner = raw?.grant && typeof raw.grant === 'object'
+    ? (raw.grant as Record<string, unknown>)
+    : raw;
+  return normalizePeerGrantDto(inner);
+}
+
+function extractPeerGrantList(raw: unknown): PeerGrantDto[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as Record<string, unknown> | null)?.grants)
+      ? ((raw as Record<string, unknown>).grants as unknown[])
+      : [];
+  return list
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map(normalizePeerGrantDto)
+    .filter((item) => Boolean(item.controller_device_id) && item.revoked_at === null);
+}
+
 

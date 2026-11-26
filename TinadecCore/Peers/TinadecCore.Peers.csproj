@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>TinadecCore.Peers</RootNamespace>
+    <Description>Zero-trust multi-device peer identity, pairing, durable grants, and access policy governance.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Contracts\TinadecCore.Contracts.csproj" />
+    <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
+    <ProjectReference Include="..\Tenancy\TinadecCore.Tenancy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
+</Project>

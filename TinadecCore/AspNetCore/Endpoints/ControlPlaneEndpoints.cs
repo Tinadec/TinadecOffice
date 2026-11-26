@@ -118,13 +118,23 @@ public static class ControlPlaneEndpoints
 
         app.MapGet("/api/v1/approvals/policy", (ControlPlaneService service) => service.GetApprovalPolicy())
             .Produces<ApprovalPolicySummaryDto>();
-        app.MapPost("/api/v1/approvals/batch-decision", (BatchApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.BatchDecideApprovals(input, ct))
-            .Produces<BatchApprovalDecisionResponseDto>();
+        app.MapPost("/api/v1/approvals/batch-decision", async (BatchApprovalDecisionRequestDto input, HttpContext ctx, ControlPlaneService service, CancellationToken ct) =>
+        {
+            if (PeerDeviceEndpoints.IsObserverPeerRequest(ctx))
+                return PeerDeviceEndpoints.Problem(ctx, StatusCodes.Status403Forbidden, TinadecCore.Abstractions.Ports.PeerErrorCodes.PolicyDenied, "Observer peer role is not permitted to decide approvals.");
+            var (deviceId, deviceName) = await ResolveApprovalDeciderAsync(ctx, ct).ConfigureAwait(false);
+            return await service.BatchDecideApprovals(input, ct, deviceId, deviceName).ConfigureAwait(false);
+        }).Produces<BatchApprovalDecisionResponseDto>();
         app.MapPost("/api/v1/approvals/pre-authorizations", (PreAuthorizationRequestDto input, ControlPlaneService service, CancellationToken ct) => service.CreatePreAuthorization(input, ct));
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
         app.MapGet("/api/v1/approvals/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.GetApproval(id, ct));
-        app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct))
-            .Produces<ApprovalDecisionResponseDto>();
+        app.MapPost("/api/v1/approvals/{id:guid}/decision", async (Guid id, ApprovalDecisionRequestDto input, HttpContext ctx, ControlPlaneService service, CancellationToken ct) =>
+        {
+            if (PeerDeviceEndpoints.IsObserverPeerRequest(ctx))
+                return PeerDeviceEndpoints.Problem(ctx, StatusCodes.Status403Forbidden, TinadecCore.Abstractions.Ports.PeerErrorCodes.PolicyDenied, "Observer peer role is not permitted to decide approvals.");
+            var (deviceId, deviceName) = await ResolveApprovalDeciderAsync(ctx, ct).ConfigureAwait(false);
+            return await service.DecideApproval(id, input, ct, deviceId, deviceName).ConfigureAwait(false);
+        }).Produces<ApprovalDecisionResponseDto>();
         // The delegated gates of one approval (delegate-* permission modes): who was asked, what each
         // decided and what each was shown. 404 when the approval was never delegated.
         // (Named approvalId, not id: the Gateway's approval routes already bind that segment by this name.)
@@ -135,6 +145,25 @@ public static class ControlPlaneEndpoints
                 : Results.NotFound(new { code = "NOT_FOUND", message = "This approval has no delegated gates." }))
             .Produces<ApprovalGatesDto>();
         return app;
+    }
+
+    private static async Task<(string DeviceId, string DeviceName)> ResolveApprovalDeciderAsync(HttpContext context, CancellationToken ct)
+    {
+        var origin = PeerDeviceEndpoints.ResolveApprovalDeciderOrigin(context);
+        if (string.Equals(origin.DeviceId, "local", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(context.Request.Headers[PeerDeviceEndpoints.PeerControllerNameHeader].FirstOrDefault()))
+        {
+            var peerIdentity = context.RequestServices.GetService<TinadecCore.Abstractions.Ports.IPeerIdentityService>();
+            if (peerIdentity is not null)
+            {
+                var local = await peerIdentity.EnsureLocalIdentityAsync(ct).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(local.DisplayName))
+                {
+                    return ("local", local.DisplayName);
+                }
+            }
+        }
+        return origin;
     }
 
     private static bool ParseForce(HttpRequest request)

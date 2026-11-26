@@ -37,6 +37,7 @@
     <ProjectReference Include="..\Companion\TinadecCore.Companion.csproj" />
     <ProjectReference Include="..\AgentGraph\TinadecCore.AgentGraph.csproj" />
     <ProjectReference Include="..\Exploration\TinadecCore.Exploration.csproj" />
+    <ProjectReference Include="..\Peers\TinadecCore.Peers.csproj" />
     <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <ProjectReference Include="..\Storage.Migrations.PostgreSql\TinadecCore.Storage.Migrations.PostgreSql.csproj" />
   </ItemGroup>

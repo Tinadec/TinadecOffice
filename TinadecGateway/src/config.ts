@@ -41,6 +41,10 @@ export interface GatewayConfig {
   trustProxy: boolean;
   /** 反向代理信任模式：false | true | cloudflare */
   trustProxyMode: TrustProxyMode;
+  /** Peer mTLS 监听绑定地址（默认 0.0.0.0，仅在 inbound 开启时生效） */
+  peerBindHost: string;
+  /** 可选覆盖 Peer mTLS 起始监听端口（TINADEC_PEER_LISTEN_PORT） */
+  peerListenPortOverride?: number;
 }
 
 export interface AuthConfig {
@@ -131,6 +135,10 @@ export function loadConfig(): GatewayConfig {
     trustProxyMode,
     // 默认 0：观测不能以日志 IO 为代价。排查性能时再显式打开（0.05 = 5%）。
     perfSampleRate: clampRate(getEnvNumber('TINADEC_GATEWAY_PERF_SAMPLE', 0)),
+    peerBindHost: getEnv('TINADEC_PEER_BIND_HOST', '0.0.0.0'),
+    ...(process.env.TINADEC_PEER_LISTEN_PORT?.trim()
+      ? { peerListenPortOverride: getEnvNumber('TINADEC_PEER_LISTEN_PORT', 48735) }
+      : {}),
   };
 }
 

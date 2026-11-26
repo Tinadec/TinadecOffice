@@ -116,6 +116,11 @@ function onKeydown(event: KeyboardEvent) {
     <header class="conversation-approval-head">
       <span class="conversation-approval-title">{{ t('conversation.approval.title') }}</span>
       <span v-if="requesterName" class="conversation-approval-requester">{{ t('conversation.approval.requestedBy', { name: requesterName }) }}</span>
+      <span
+        v-if="liveApproval?.decided_by_device_name"
+        class="conversation-approval-requester"
+        data-testid="approval-decided-by-device"
+      >{{ t('conversation.approval.decidedByDevice', { device: liveApproval.decided_by_device_name }) }}</span>
     </header>
     <p class="conversation-approval-question">{{ question }}</p>
     <dl class="conversation-approval-facts">
@@ -147,10 +152,25 @@ function onKeydown(event: KeyboardEvent) {
       </button>
     </div>
   </section>
+  <p
+    v-else-if="liveApproval?.decided_by_device_name"
+    class="conversation-approval-decided"
+    data-testid="approval-decided-by-device"
+  >
+    {{
+      t(
+        liveApproval.decision === 'rejected' || liveApproval.status === 'rejected'
+          ? 'conversation.approval.rejectedByDevice'
+          : 'conversation.approval.approvedByDevice',
+        { device: liveApproval.decided_by_device_name },
+      )
+    }}
+  </p>
 </template>
 
 <style scoped>
 .conversation-approval { display: flex; flex-direction: column; gap: 6px; }
+.conversation-approval-decided { margin: 2px 0; font-size: 11.5px; color: var(--text-muted); }
 .conversation-approval-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 12px; }
 .conversation-approval-title { font-weight: 600; color: var(--text-primary); white-space: nowrap; flex-shrink: 0; }
 .conversation-approval-requester { min-width: 0; color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -445,6 +445,13 @@ function openRecoveryCheck(actionId: string) {
           <strong>{{ isSpecProposal(approval) ? t('approval.specConfirmation') : kindLabel(approval.kind) }}</strong>
           <code v-if="approval.tool_id && !isSpecProposal(approval)" class="approval-tool">{{ approval.tool_id }}</code>
           <span v-if="approval.risk" class="approval-risk" :data-risk="approval.risk">{{ riskLabel(approval.risk) }}</span>
+          <span
+            v-if="approval.decided_by_device_name"
+            class="approval-decided-device"
+            data-testid="approval-decided-by-device"
+          >
+            {{ t('approval.decidedByDevice', { device: approval.decided_by_device_name }) }}
+          </span>
         </div>
 
         <p class="approval-summary">
@@ -808,6 +815,13 @@ function openRecoveryCheck(actionId: string) {
               </strong>
               <span class="approval-history-status" :data-status="approval.status">
                 {{ approvalStatusLabel(approval.status) }}
+              </span>
+              <span
+                v-if="approval.decided_by_device_name"
+                class="approval-decided-device"
+                data-testid="approval-decided-by-device"
+              >
+                {{ t('approval.decidedByDevice', { device: approval.decided_by_device_name }) }}
               </span>
             </div>
             <span class="approval-history-summary">{{ approvalSummary(approval, { t, te }) }}</span>
@@ -1288,7 +1302,8 @@ function openRecoveryCheck(actionId: string) {
 }
 
 .approval-rule-badge,
-.approval-rule-scope {
+.approval-rule-scope,
+.approval-decided-device {
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--surface-section);

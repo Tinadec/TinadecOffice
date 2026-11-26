@@ -115,7 +115,39 @@ public interface IAuthorizationService
         Guid policyBundleId,
         string reason,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Atomically records the winning decider device attribution for a tool approval decision,
+    /// returning the existing winner if another concurrent caller already recorded one.
+    /// </summary>
+    Task<ApprovalDeviceAttributionSnapshot> RecordOrGetApprovalAttributionAsync(
+        Guid approvalId,
+        string decision,
+        string decidedByDeviceId,
+        string decidedByDeviceName,
+        DateTimeOffset decidedAt,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ApprovalDeviceAttributionSnapshot(
+            approvalId,
+            decision,
+            string.IsNullOrWhiteSpace(decidedByDeviceId) ? "local" : decidedByDeviceId,
+            string.IsNullOrWhiteSpace(decidedByDeviceName) ? "local" : decidedByDeviceName,
+            decidedAt));
+
+    /// <summary>Batch-reads persisted device attribution for decided approvals.</summary>
+    Task<IReadOnlyDictionary<Guid, ApprovalDeviceAttributionSnapshot>> GetApprovalAttributionsAsync(
+        IReadOnlyCollection<Guid> approvalIds,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, ApprovalDeviceAttributionSnapshot>>(
+            new Dictionary<Guid, ApprovalDeviceAttributionSnapshot>());
 }
+
+public sealed record ApprovalDeviceAttributionSnapshot(
+    Guid ApprovalId,
+    string Decision,
+    string DecidedByDeviceId,
+    string DecidedByDeviceName,
+    DateTimeOffset DecidedAt);
 
 public static class GovernanceOutcomes
 {
@@ -330,14 +362,18 @@ public sealed record PermissionRequestSnapshot(
     Guid? CapabilityLeaseId,
     DateTimeOffset ExpiresAt,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? DecidedByDeviceId = null,
+    string? DecidedByDeviceName = null);
 
 public sealed record PermissionDecisionCommand(
     Guid PermissionRequestId,
     bool Approve,
     Guid? ApproverAgentInstanceId,
     Guid? ApprovalDelegationId,
-    string Reason);
+    string Reason,
+    string? DecidedByDeviceId = null,
+    string? DecidedByDeviceName = null);
 
 public sealed record PermissionResolution(
     PermissionRequestSnapshot Request,
@@ -372,7 +408,9 @@ public sealed record AuthorizationDecisionSnapshot(
     string PolicySnapshotHash,
     Guid DecidedByPrincipalId,
     Guid? DecidedByAgentInstanceId,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? DecidedByDeviceId = null,
+    string? DecidedByDeviceName = null);
 
 public sealed record CapabilityLeaseSnapshot(
     Guid Id,

@@ -120,6 +120,8 @@ public sealed class PermissionRequestRecord
     public Guid? AuthorizationDecisionId { get; set; }
     public Guid? CapabilityGrantId { get; set; }
     public Guid? CapabilityLeaseId { get; set; }
+    public string? DecidedByDeviceId { get; set; }
+    public string? DecidedByDeviceName { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public long ExpiresAtUnixMilliseconds { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -151,7 +153,20 @@ public sealed class AuthorizationDecisionRecord
     public string EvaluationInputHash { get; set; } = string.Empty;
     public Guid DecidedByPrincipalId { get; set; }
     public Guid? DecidedByAgentInstanceId { get; set; }
+    public string? DecidedByDeviceId { get; set; }
+    public string? DecidedByDeviceName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class ApprovalDeviceAttributionRecord
+{
+    public Guid ApprovalId { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public string Decision { get; set; } = string.Empty;
+    public string DecidedByDeviceId { get; set; } = "local";
+    public string DecidedByDeviceName { get; set; } = string.Empty;
+    public DateTimeOffset DecidedAt { get; set; }
 }
 
 public sealed class LeaseConsumptionRecord

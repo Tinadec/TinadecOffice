@@ -1790,7 +1790,10 @@ public sealed class ControlPlaneService
         var rows = await q.ToListAsync(ct);
         rows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
         var retries = await RetryExecutionIdsAsync(db, rows, ct);
-        var result = rows.Select(row => ToResponse(row, retries)).Cast<object>().ToList();
+        var attributions = await _authorization.GetApprovalAttributionsAsync(
+            rows.Where(r => r.DecidedAt is not null || r.Status is not "pending").Select(r => r.Id).ToArray(),
+            ct).ConfigureAwait(false);
+        var result = rows.Select(row => ToResponse(row, retries, attributions.GetValueOrDefault(row.Id))).Cast<object>().ToList();
         if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
         {
             // A policy park carries a run id, never a session id, so `session_id` above cannot
@@ -1938,7 +1941,13 @@ public sealed class ControlPlaneService
     {
         await using var db = await _lifecycle.CreateDbContextAsync(ct);
         var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
-        if (row is not null) return Results.Ok(ToResponse(row, await RetryExecutionIdsAsync(db, [row], ct)));
+        if (row is not null)
+        {
+            var attributions = row.DecidedAt is not null || row.Status is not "pending"
+                ? await _authorization.GetApprovalAttributionsAsync([row.Id], ct).ConfigureAwait(false)
+                : new Dictionary<Guid, ApprovalDeviceAttributionSnapshot>();
+            return Results.Ok(ToResponse(row, await RetryExecutionIdsAsync(db, [row], ct), attributions.GetValueOrDefault(row.Id)));
+        }
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
         if (permission is null) return Results.NotFound();
         // The session a park belongs to is what makes this read usable for an ownership check:
@@ -1950,9 +1959,9 @@ public sealed class ControlPlaneService
                 .SingleOrDefaultAsync(ct).ConfigureAwait(false)
             : null;
         if (permission.Request.Status is not (PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser))
-            return Results.Ok(ToPermissionResponse(permission.Request, evidence: null, parkSessionId));
+            return Results.Ok(ToPermissionResponse(permission.Request, evidence: null, parkSessionId, permission.Decision));
         var parkEvidence = await LoadParkEvidenceAsync(db, [id], ct);
-        return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id), parkSessionId));
+        return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id), parkSessionId, permission.Decision));
     }
 
     private sealed record SingleApprovalDecisionResult(
@@ -1962,9 +1971,14 @@ public sealed class ControlPlaneService
         string? ErrorMessage,
         IReadOnlySet<Guid>? ReleasedSiblingIds = null);
 
-    public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
+    public async Task<IResult> DecideApproval(
+        Guid id,
+        ApprovalDecisionRequestDto input,
+        CancellationToken ct,
+        string? decidedByDeviceId = null,
+        string? decidedByDeviceName = null)
     {
-        var outcome = await DecideApprovalCoreAsync(id, input, ct).ConfigureAwait(false);
+        var outcome = await DecideApprovalCoreAsync(id, input, ct, decidedByDeviceId, decidedByDeviceName).ConfigureAwait(false);
         if (outcome.Response is not null)
         {
             return outcome.StatusCode == StatusCodes.Status200OK
@@ -1980,7 +1994,11 @@ public sealed class ControlPlaneService
         };
     }
 
-    public async Task<IResult> BatchDecideApprovals(BatchApprovalDecisionRequestDto input, CancellationToken ct)
+    public async Task<IResult> BatchDecideApprovals(
+        BatchApprovalDecisionRequestDto input,
+        CancellationToken ct,
+        string? decidedByDeviceId = null,
+        string? decidedByDeviceName = null)
     {
         if (input?.ApprovalIds is not { Count: >= 1 and <= 50 })
         {
@@ -2040,7 +2058,7 @@ public sealed class ControlPlaneService
                 Decision = input.Decision,
                 Reason = input.Reason,
                 Scope = input.Scope
-            }, ct).ConfigureAwait(false);
+            }, ct, decidedByDeviceId, decidedByDeviceName).ConfigureAwait(false);
 
             if (itemOutcome.Response is { } response)
             {
@@ -2070,7 +2088,12 @@ public sealed class ControlPlaneService
         return Results.Ok(new BatchApprovalDecisionResponseDto { Results = results });
     }
 
-    private async Task<SingleApprovalDecisionResult> DecideApprovalCoreAsync(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
+    private async Task<SingleApprovalDecisionResult> DecideApprovalCoreAsync(
+        Guid id,
+        ApprovalDecisionRequestDto input,
+        CancellationToken ct,
+        string? decidedByDeviceId = null,
+        string? decidedByDeviceName = null)
     {
         if (input is null || !TryParseDecision(input.Decision, out var approve))
         {
@@ -2088,6 +2111,11 @@ public sealed class ControlPlaneService
                 "invalid_scope",
                 "scope must be 'once' or 'run'.");
         }
+
+        var effectiveDeviceId = string.IsNullOrWhiteSpace(decidedByDeviceId) ? "local" : decidedByDeviceId.Trim();
+        var effectiveDeviceName = !string.IsNullOrWhiteSpace(decidedByDeviceName)
+            ? decidedByDeviceName.Trim()
+            : (string.Equals(effectiveDeviceId, "local", StringComparison.OrdinalIgnoreCase) ? DefaultLocalDeviceName() : effectiveDeviceId);
 
         var trimmedReason = string.IsNullOrWhiteSpace(input.Reason) ? null : input.Reason.Trim();
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
@@ -2227,8 +2255,41 @@ public sealed class ControlPlaneService
 
         if (permission is not null)
         {
-            var resolved = await _authorization.DecidePermissionAsync(
-                new PermissionDecisionCommand(id, approve, null, null, trimmedReason ?? string.Empty), ct).ConfigureAwait(false);
+            var wasTerminalPermission = permission.Request.Status is PermissionRequestStatuses.Granted
+                or PermissionRequestStatuses.Denied
+                or PermissionRequestStatuses.Expired
+                or PermissionRequestStatuses.Cancelled;
+            PermissionResolution resolved;
+            try
+            {
+                resolved = await _authorization.DecidePermissionAsync(
+                    new PermissionDecisionCommand(id, approve, null, null, trimmedReason ?? string.Empty, effectiveDeviceId, effectiveDeviceName),
+                    ct).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new SingleApprovalDecisionResult(StatusCodes.Status409Conflict, null, "conflict", ex.Message);
+            }
+
+            var permDecidedById = resolved.Decision.DecidedByDeviceId ?? resolved.Request.DecidedByDeviceId ?? effectiveDeviceId;
+            var permDecidedByName = resolved.Decision.DecidedByDeviceName ?? resolved.Request.DecidedByDeviceName ?? effectiveDeviceName;
+            if (wasTerminalPermission)
+            {
+                return new SingleApprovalDecisionResult(
+                    StatusCodes.Status200OK,
+                    new ApprovalDecisionResponseDto
+                    {
+                        Id = id,
+                        Status = resolved.Request.Status,
+                        DecidedAt = resolved.Decision.CreatedAt,
+                        Scope = approve && requestedRunScope ? "run" : "once",
+                        DecisionReason = resolved.Decision.Reason,
+                        DecidedByDeviceId = permDecidedById,
+                        DecidedByDeviceName = permDecidedByName
+                    },
+                    null,
+                    null);
+            }
 
             // User actions have no run/task graph. A permission decision must
             // wake the Core-owned action directly; never manufacture a run for
@@ -2255,6 +2316,8 @@ public sealed class ControlPlaneService
                             DecidedAt = resolved.Decision.CreatedAt,
                             CreatedRuleId = createdActionRuleId,
                             DecisionReason = trimmedReason,
+                            DecidedByDeviceId = permDecidedById,
+                            DecidedByDeviceName = permDecidedByName,
                             UserToolActionId = userAction.Id,
                             Action = resumed
                         },
@@ -2285,7 +2348,14 @@ public sealed class ControlPlaneService
                             linkedApprovalId = actionApproval;
                             try
                             {
-                                await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", trimmedReason, ct).ConfigureAwait(false);
+                                var linkedDecided = await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", trimmedReason, ct).ConfigureAwait(false);
+                                await _authorization.RecordOrGetApprovalAttributionAsync(
+                                    actionApproval,
+                                    linkedDecided.Status,
+                                    permDecidedById,
+                                    permDecidedByName,
+                                    linkedDecided.DecidedAt,
+                                    ct).ConfigureAwait(false);
                             }
                             catch (InvalidOperationException)
                             {
@@ -2306,7 +2376,9 @@ public sealed class ControlPlaneService
                             resolved.Request.Risk,
                             excludedPermissionId: id,
                             excludedApprovalId: linkedApprovalId,
-                            ct).ConfigureAwait(false);
+                            ct,
+                            permDecidedById,
+                            permDecidedByName).ConfigureAwait(false);
                     }
                 }
 
@@ -2319,7 +2391,9 @@ public sealed class ControlPlaneService
                     execution_id = executionId,
                     outcome = resolved.Decision.Outcome,
                     reason_code = resolved.Decision.ReasonCode,
-                    reason = trimmedReason
+                    reason = trimmedReason,
+                    decided_by_device_id = permDecidedById,
+                    decided_by_device_name = permDecidedByName
                 }, "Permission decision committed; run resumed.", cancellationToken: ct).ConfigureAwait(false);
                 await _runs.SetRunStatusAsync(permissionRun.ToString(), "executing", "Legacy approval decision committed; resuming run.", ct).ConfigureAwait(false);
                 await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
@@ -2349,7 +2423,9 @@ public sealed class ControlPlaneService
                             authorization_decision_id = resolved.Decision.Id,
                             outcome = resolved.Decision.Outcome,
                             reason_code = resolved.Decision.ReasonCode,
-                            reason = trimmedReason
+                            reason = trimmedReason,
+                            decided_by_device_id = permDecidedById,
+                            decided_by_device_name = permDecidedByName
                         }, deniedSummary, cancellationToken: ct).ConfigureAwait(false);
                     }
                     await _engine.EnqueueAsync(deniedRun, ct).ConfigureAwait(false);
@@ -2372,14 +2448,21 @@ public sealed class ControlPlaneService
                     PreAuthorizationId = runScopeOutcome?.PreAuthorizationId,
                     CapabilityGrantId = runScopeOutcome?.GrantId,
                     CreatedRuleId = createdRuleId,
-                    DecisionReason = trimmedReason
+                    DecisionReason = trimmedReason,
+                    DecidedByDeviceId = permDecidedById,
+                    DecidedByDeviceName = permDecidedByName
                 },
                 null,
                 null,
                 runScopeOutcome?.ReleasedIds);
         }
 
-        if (approvalRow!.UserToolActionId is { } userActionId)
+        if (approvalRow!.Status != "pending")
+        {
+            return await ReconcileNonPendingApprovalAsync(id, approve, requestedRunScope, ct).ConfigureAwait(false);
+        }
+
+        if (approvalRow.UserToolActionId is { } userActionId)
         {
             ToolApprovalDecision actionDecision;
             try
@@ -2390,10 +2473,17 @@ public sealed class ControlPlaneService
             {
                 return new SingleApprovalDecisionResult(StatusCodes.Status404NotFound, null, "not_found", "Approval was not found.");
             }
-            catch (InvalidOperationException ex)
+            catch (InvalidOperationException)
             {
-                return new SingleApprovalDecisionResult(StatusCodes.Status409Conflict, null, "conflict", ex.Message);
+                return await ReconcileNonPendingApprovalAsync(id, approve, requestedRunScope, ct).ConfigureAwait(false);
             }
+            var actionAttr = await _authorization.RecordOrGetApprovalAttributionAsync(
+                id,
+                actionDecision.Status,
+                effectiveDeviceId,
+                effectiveDeviceName,
+                actionDecision.DecidedAt,
+                ct).ConfigureAwait(false);
             var createdActionRuleId = approve
                 ? await CreateOrReuseRememberRuleAsync(validatedRememberRule, ct).ConfigureAwait(false)
                 : null;
@@ -2410,6 +2500,8 @@ public sealed class ControlPlaneService
                     DecidedAt = actionDecision.DecidedAt,
                     CreatedRuleId = createdActionRuleId,
                     DecisionReason = trimmedReason,
+                    DecidedByDeviceId = actionAttr.DecidedByDeviceId,
+                    DecidedByDeviceName = actionAttr.DecidedByDeviceName,
                     UserToolActionId = userActionId,
                     Action = resumed
                 },
@@ -2430,10 +2522,18 @@ public sealed class ControlPlaneService
         {
             return new SingleApprovalDecisionResult(StatusCodes.Status400BadRequest, null, "invalid_request", ex.Message);
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return new SingleApprovalDecisionResult(StatusCodes.Status409Conflict, null, "conflict", ex.Message);
+            return await ReconcileNonPendingApprovalAsync(id, approve, requestedRunScope, ct).ConfigureAwait(false);
         }
+
+        var attribution = await _authorization.RecordOrGetApprovalAttributionAsync(
+            id,
+            decision.Status,
+            effectiveDeviceId,
+            effectiveDeviceName,
+            decision.DecidedAt,
+            ct).ConfigureAwait(false);
 
         var toolRunScope = approve && requestedRunScope && string.Equals(approvalRow.Kind, "tool", StringComparison.OrdinalIgnoreCase);
         RunScopeOutcome? toolRunScopeOutcome = null;
@@ -2446,7 +2546,9 @@ public sealed class ControlPlaneService
                 resolvedRisk,
                 excludedPermissionId: null,
                 excludedApprovalId: id,
-                ct).ConfigureAwait(false);
+                ct,
+                attribution.DecidedByDeviceId,
+                attribution.DecidedByDeviceName).ConfigureAwait(false);
         }
 
         var createdToolRuleId = approve
@@ -2468,7 +2570,9 @@ public sealed class ControlPlaneService
                     task_id = decision.TaskId,
                     decision = decision.Status,
                     scope = toolRunScope ? "run" : "once",
-                    reason = trimmedReason
+                    reason = trimmedReason,
+                    decided_by_device_id = attribution.DecidedByDeviceId,
+                    decided_by_device_name = attribution.DecidedByDeviceName
                 },
                 decidedSummary,
                 decision.Status == "approved" ? "info" : "warning",
@@ -2526,11 +2630,76 @@ public sealed class ControlPlaneService
                 PreAuthorizationId = toolRunScopeOutcome?.PreAuthorizationId,
                 CapabilityGrantId = toolRunScopeOutcome?.GrantId,
                 CreatedRuleId = createdToolRuleId,
-                DecisionReason = trimmedReason
+                DecisionReason = trimmedReason,
+                DecidedByDeviceId = attribution.DecidedByDeviceId,
+                DecidedByDeviceName = attribution.DecidedByDeviceName
             },
             null,
             null,
             toolRunScopeOutcome?.ReleasedIds);
+    }
+
+    private async Task<SingleApprovalDecisionResult> ReconcileNonPendingApprovalAsync(
+        Guid id,
+        bool approve,
+        bool requestedRunScope,
+        CancellationToken ct)
+    {
+        await using var db = await _lifecycle.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var fresh = await db.ApprovalRequests.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct)
+            .ConfigureAwait(false);
+        if (fresh is null)
+        {
+            return new SingleApprovalDecisionResult(StatusCodes.Status404NotFound, null, "not_found", "Approval was not found.");
+        }
+
+        var alreadyApproved = string.Equals(fresh.Decision, "approved", StringComparison.OrdinalIgnoreCase)
+            || fresh.Status is "approved" or "consumed";
+        var alreadyRejected = string.Equals(fresh.Decision, "rejected", StringComparison.OrdinalIgnoreCase)
+            || fresh.Status == "rejected";
+
+        if ((approve && alreadyApproved) || (!approve && alreadyRejected))
+        {
+            var attrs = await _authorization.GetApprovalAttributionsAsync([id], ct).ConfigureAwait(false);
+            var attr = attrs.GetValueOrDefault(id);
+            return new SingleApprovalDecisionResult(
+                StatusCodes.Status200OK,
+                new ApprovalDecisionResponseDto
+                {
+                    Id = fresh.Id,
+                    Status = approve ? "approved" : "rejected",
+                    DecidedAt = fresh.DecidedAt ?? fresh.UpdatedAt,
+                    Scope = approve && requestedRunScope ? "run" : "once",
+                    DecisionReason = fresh.DecisionReason,
+                    DecidedByDeviceId = attr?.DecidedByDeviceId ?? "local",
+                    DecidedByDeviceName = attr?.DecidedByDeviceName ?? DefaultLocalDeviceName(),
+                    UserToolActionId = fresh.UserToolActionId
+                },
+                null,
+                null);
+        }
+
+        return new SingleApprovalDecisionResult(
+            StatusCodes.Status409Conflict,
+            null,
+            "conflict",
+            $"Approval has already been decided ({fresh.Status}) and cannot accept a conflicting decision.");
+    }
+
+    private static string DefaultLocalDeviceName()
+    {
+        try
+        {
+            var machine = Environment.MachineName?.Trim();
+            if (!string.IsNullOrWhiteSpace(machine))
+                return machine.Length <= 256 ? machine : machine[..256];
+        }
+        catch
+        {
+            // Ignore OS hostname failure.
+        }
+        return "local";
     }
 
     private static bool TryParseDecision(string? decision, out bool approve)
@@ -2709,7 +2878,9 @@ public sealed class ControlPlaneService
         string? risk,
         Guid? excludedPermissionId,
         Guid? excludedApprovalId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? decidedByDeviceId = null,
+        string? decidedByDeviceName = null)
     {
         if (runId == Guid.Empty || string.IsNullOrWhiteSpace(rawToolId)) return null;
         var toolId = rawToolId.Trim();
@@ -2773,7 +2944,8 @@ public sealed class ControlPlaneService
             try
             {
                 await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(
-                    sibling.Id, true, null, null, $"Released by a run-scoped approval for '{toolId}'."), ct).ConfigureAwait(false);
+                    sibling.Id, true, null, null, $"Released by a run-scoped approval for '{toolId}'.",
+                    decidedByDeviceId, decidedByDeviceName), ct).ConfigureAwait(false);
                 released++;
                 releasedIds.Add(sibling.Id);
             }
@@ -2799,6 +2971,13 @@ public sealed class ControlPlaneService
                     "approved",
                     $"Released by a run-scoped approval for '{toolId}'.",
                     ct).ConfigureAwait(false);
+                var siblingAttr = await _authorization.RecordOrGetApprovalAttributionAsync(
+                    siblingApproval.Id,
+                    siblingDecision.Status,
+                    decidedByDeviceId ?? "local",
+                    decidedByDeviceName ?? DefaultLocalDeviceName(),
+                    siblingDecision.DecidedAt,
+                    ct).ConfigureAwait(false);
                 released++;
                 releasedIds.Add(siblingApproval.Id);
                 await _runs.AppendEventAsync(
@@ -2810,7 +2989,9 @@ public sealed class ControlPlaneService
                         execution_id = siblingDecision.ExecutionId,
                         task_id = siblingDecision.TaskId,
                         decision = siblingDecision.Status,
-                        scope = "run"
+                        scope = "run",
+                        decided_by_device_id = siblingAttr.DecidedByDeviceId,
+                        decided_by_device_name = siblingAttr.DecidedByDeviceName
                     },
                     $"Approval {siblingDecision.Status} (released by run-scoped approval for '{toolId}').",
                     "info",
@@ -2848,7 +3029,10 @@ public sealed class ControlPlaneService
             .Select(x => x.Id).ToListAsync(ct)).ToHashSet();
     }
 
-    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row, IReadOnlySet<Guid> retryExecutions)
+    private static ApprovalResponseDto ToResponse(
+        ApprovalRequestRecord row,
+        IReadOnlySet<Guid> retryExecutions,
+        ApprovalDeviceAttributionSnapshot? attribution = null)
     {
         // Rows minted before the evidence digest landed decode to nothing and keep
         // showing only their stored summary — the projection never invents facts.
@@ -2858,7 +3042,10 @@ public sealed class ControlPlaneService
             Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary,
             // The fixed sentences two mint sites store (a user action's approval, a retry after an unknown outcome).
             SummaryCode = row.Kind == "user_tool" ? "user_requested" : row.ExecutionId is { } execution && retryExecutions.Contains(execution) ? "retry_after_unknown" : null,
-            Arguments = hasEvidence ? evidence.Arguments : string.Empty, Command = evidence.Command, Cwd = evidence.WorkingDirectory, ResourcePath = evidence.ResourcePath, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt
+            Arguments = hasEvidence ? evidence.Arguments : string.Empty, Command = evidence.Command, Cwd = evidence.WorkingDirectory, ResourcePath = evidence.ResourcePath, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason,
+            DecidedByDeviceId = attribution?.DecidedByDeviceId,
+            DecidedByDeviceName = attribution?.DecidedByDeviceName,
+            DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt
         };
     }
 
@@ -2892,12 +3079,27 @@ public sealed class ControlPlaneService
     private static ApprovalResponseDto ToPermissionResponse(
         PermissionRequestSnapshot value,
         ApprovalEvidence? evidence,
-        Guid? sessionId = null)
+        Guid? sessionId = null,
+        AuthorizationDecisionSnapshot? decision = null)
     {
         // A policy park used to report nothing but "requires authorization". When it
         // came from a tool call the execution's frozen digest names the real target;
         // otherwise the claim itself is the most specific fact available.
         var resource = value.Claim.Resource;
+        var projectedStatus = value.Status switch
+        {
+            PermissionRequestStatuses.Granted => "approved",
+            PermissionRequestStatuses.Denied => "rejected",
+            PermissionRequestStatuses.Expired => "expired",
+            PermissionRequestStatuses.Cancelled => "cancelled",
+            _ => "pending"
+        };
+        var projectedDecision = value.Status switch
+        {
+            PermissionRequestStatuses.Granted => "approved",
+            PermissionRequestStatuses.Denied => "rejected",
+            _ => null
+        };
         return new ApprovalResponseDto
         {
             Id = value.Id,
@@ -2915,7 +3117,12 @@ public sealed class ControlPlaneService
             Cwd = evidence?.WorkingDirectory,
             ResourcePath = evidence?.ResourcePath
                 ?? (resource.StartsWith("path://", StringComparison.OrdinalIgnoreCase) ? resource[7..] : null),
-            Status = "pending",
+            Status = projectedStatus,
+            Decision = projectedDecision,
+            DecisionReason = projectedDecision is null ? null : decision?.Reason,
+            DecidedByDeviceId = decision?.DecidedByDeviceId ?? value.DecidedByDeviceId,
+            DecidedByDeviceName = decision?.DecidedByDeviceName ?? value.DecidedByDeviceName,
+            DecidedAt = projectedDecision is null ? null : decision?.CreatedAt,
             ExpiresAt = value.ExpiresAt,
             CreatedAt = value.CreatedAt,
             UpdatedAt = value.UpdatedAt

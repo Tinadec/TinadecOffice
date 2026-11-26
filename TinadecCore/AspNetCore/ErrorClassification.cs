@@ -92,6 +92,17 @@ public static class ErrorClassification
             "forbidden" or "unauthorized" or "host_authorization_required" or "host_identity_unavailable"
                 or "host_control_unbound" => new(UserActionRequired, false, []),
 
+            // Peer device & cross-device collaboration RFC 9457 error vocabulary (§5.1)
+            "inbound_disabled" or "pairing_code_rejected" or "pairing_code_expired"
+                or "fingerprint_mismatch" or "policy_denied"
+                => new(UserActionRequired, false, [ActionKind.OpenSettings]),
+            "protocol_major_mismatch" or "encryption_unavailable"
+                => new(EnvironmentUnavailable, false, [ActionKind.OpenSettings]),
+            "unreachable" or "handshake_failed" or "device_offline"
+                => new(EnvironmentUnavailable, true, [ActionKind.Retry, ActionKind.OpenSettings]),
+            "timeout" => new(Retryable, true, [ActionKind.Retry]),
+            "submission_uncertain" => new(Retryable, false, [ActionKind.Reload]),
+
             "rate_limited" => new(Retryable, true, [ActionKind.Retry]),
             "context_conflict" or "session_settings_conflict" or "workspace_conflict"
                 or "queue_owner_changed" => new(Retryable, true, [ActionKind.Reload]),

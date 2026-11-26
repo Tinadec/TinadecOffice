@@ -97,6 +97,12 @@ public sealed class ApprovalDecisionResponseDto
     [JsonPropertyName("decision_reason")]
     public string? DecisionReason { get; init; }
 
+    [JsonPropertyName("decided_by_device_id")]
+    public string? DecidedByDeviceId { get; init; }
+
+    [JsonPropertyName("decided_by_device_name")]
+    public string? DecidedByDeviceName { get; init; }
+
     [JsonPropertyName("user_tool_action_id")]
     public Guid? UserToolActionId { get; init; }
 
@@ -235,6 +241,12 @@ public sealed class ApprovalResponseDto
 
     [JsonPropertyName("decision_reason")]
     public string? DecisionReason { get; init; }
+
+    [JsonPropertyName("decided_by_device_id")]
+    public string? DecidedByDeviceId { get; init; }
+
+    [JsonPropertyName("decided_by_device_name")]
+    public string? DecidedByDeviceName { get; init; }
 
     [JsonPropertyName("decided_at")]
     public DateTimeOffset? DecidedAt { get; init; }

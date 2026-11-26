@@ -58,6 +58,9 @@ import { liveExplainerSchemas, registerLiveExplainerRoutes } from './liveExplain
 import { projectBoardSchemas, registerProjectBoardRoutes } from './projectBoardRoutes.js';
 import { registerTeammateControlRoutes, teammateControlSchemas } from './teammateControlRoutes.js';
 import { registerPreferencesRoutes } from './preferencesRoutes.js';
+import { PeerTlsServer } from './peers/peerTlsServer.js';
+import { PeerClientPool } from './peers/peerClientPool.js';
+import { registerPeerRoutes } from './peers/peerProxyRoutes.js';
 import {
   finalizeRequestTiming,
   logRequestTiming,
@@ -72,6 +75,14 @@ const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
 const requestPrincipals = new WeakMap<Request, AuthenticatedPrincipal>();
 const webAuthRuntime = createWebAuthRuntime();
+const peerTlsServer = new PeerTlsServer({
+  coreUrl,
+  bindHost: config.peerBindHost,
+  listenPortOverride: config.peerListenPortOverride,
+});
+const peerClientPool = new PeerClientPool({
+  coreUrl,
+});
 
 interface SpatialBoardWsBridge {
   onClientMessage(raw: unknown): void;
@@ -3183,6 +3194,16 @@ registerLiveExplainerRoutes(app, forwardHeaders);
 registerProjectBoardRoutes(app, forwardHeaders);
 registerTeammateControlRoutes(app, forwardHeaders);
 registerPreferencesRoutes(app, forwardHeaders);
+registerPeerRoutes(app, {
+  peerTlsServer,
+  peerClientPool,
+  forwardHeaders,
+  keepStreamOpen,
+  webAuthRuntime,
+  mode: config.mode,
+  authConfig: config.auth,
+  trustProxy: config.trustProxyMode,
+});
 registerWebServerPlugin(app, {
   runtime: webAuthRuntime,
   getPrincipal: (request) => requestPrincipals.get(request),
@@ -3197,7 +3218,7 @@ function keepStreamOpen(server: { timeout(request: Request, seconds: number): vo
   try { server?.timeout(request, 0); } catch { /* app.handle() in tests has no server */ }
 }
 
-export { app };
+export { app, peerTlsServer, peerClientPool };
 
 /**
  * Bun closes a connection that sends or receives nothing for `idleTimeout` seconds, 10 by
@@ -3214,4 +3235,15 @@ if (import.meta.main) {
   console.log(`TinadecGateway listening on http://${config.hostname}:${config.port} (${config.mode} mode)`);
   console.log(`  Core:         ${coreUrl()}`);
   console.log(`  Tool Runtime: ${toolRuntimeUrl() || '(not configured; Core tool provider is authoritative)'}`);
+
+  void (async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const status = await peerTlsServer.start().catch(() => null);
+      if (status && status.localDeviceId) {
+        await peerClientPool.start().catch(() => undefined);
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  })();
 }

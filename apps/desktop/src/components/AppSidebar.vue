@@ -20,6 +20,7 @@ import {
   GripVertical,
   ListChecks,
   MessageSquare,
+  MonitorSmartphone,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -44,11 +45,15 @@ import BrandLogo from '@/components/BrandLogo.vue'
 import SidebarActivityCard from '@/components/SidebarActivityCard.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import PersonalAvatar from '@/components/personal/PersonalAvatar.vue'
+import PeerDeviceBadge from '@/components/peers/PeerDeviceBadge.vue'
 import InlineRenameInput from '@/components/InlineRenameInput.vue'
 import RowContextMenu, { type RowMenuItem } from '@/components/RowContextMenu.vue'
 import { UiButton, UiCheckbox, UiSelectField } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 import { usePlatform } from '@/composables/usePlatform'
+import { usePeerDevices, type PeerMountedWorkspaceDto } from '@/composables/usePeerDevices'
+import { homeController } from '@/controllers/HomeController'
+import { requestSettingsSection } from '@/lib/pageRequests'
 import { errorCodeMessage } from '@/lib/apiError'
 import { userProfile } from '@/lib/userProfile'
 import { profileNameFits } from '@/lib/profileNameFit'
@@ -576,6 +581,54 @@ function isProjectRowActive(project: ProjectDto | null): boolean {
 }
 
 const { canAccessBackend } = useHostAccess()
+const {
+  mountedWorkspaces,
+  activeEndpoint: activePeerEndpoint,
+  activePeerDevice,
+  refreshAll: refreshPeerDevices,
+  switchEndpoint: switchPeerEndpoint,
+} = usePeerDevices()
+
+const visibleMountedWorkspaces = computed(() =>
+  mountedWorkspaces.value.filter((ws) => ws.visible !== false),
+)
+
+function isRemoteMountActive(mount: PeerMountedWorkspaceDto): boolean {
+  return (
+    activePeerEndpoint.value.kind === 'peer'
+    && activePeerEndpoint.value.deviceId === mount.peer_device_id
+    && props.selectedProjectId === mount.remote_project_id
+  )
+}
+
+async function handleSelectRemoteWorkspace(mount: PeerMountedWorkspaceDto) {
+  const switchingPeer =
+    activePeerEndpoint.value.kind !== 'peer'
+    || activePeerEndpoint.value.deviceId !== mount.peer_device_id
+  switchPeerEndpoint({ kind: 'peer', deviceId: mount.peer_device_id })
+  if (switchingPeer) {
+    await homeController.refreshProjectsAndSessions().catch(() => {})
+  }
+  const targetProject = homeController.projects.value.find((p) => p.id === mount.remote_project_id)
+  const key = targetProject ? selectionKey(targetProject) : mount.remote_project_id
+  emit('select-project', key)
+  if (injectedRouter && currentRoutePath.value !== '/' && currentRoutePath.value !== '/space') {
+    void injectedRouter.push('/')
+  }
+}
+
+async function handleReturnToLocalEndpoint() {
+  if (activePeerEndpoint.value.kind === 'local') return
+  switchPeerEndpoint('local')
+  await homeController.refreshProjectsAndSessions().catch(() => {})
+  emit('select-project', '')
+}
+
+function openPeerDevicesSettings() {
+  requestSettingsSection('peers')
+  emit('go-settings')
+}
+
 const boardNeedsActionCount = ref(0)
 let boardSummaryStream: BoardEventStreamHandle | null = null
 
@@ -626,6 +679,7 @@ watch(
     if (ready && !companion) {
       void refreshGlobalBoardBadge()
       connectGlobalBoardBadgeStream()
+      void refreshPeerDevices().catch(() => {})
     } else {
       boardSummaryStream?.close()
       boardSummaryStream = null
@@ -938,6 +992,24 @@ watch([displayName, () => props.collapsed], async () => {
         ><SlidersHorizontal :size="14" /></button>
         <button type="button" class="workspace-section-action workspace-section-add sidebar-extra" :aria-label="t('sidebar.newWorkspace')" :title="t('sidebar.newWorkspace')" @click.stop="emit('open-project')"><Plus :size="14" /></button>
       </div>
+      <div
+        v-if="activePeerEndpoint.kind === 'peer' && !collapsed"
+        class="peer-active-endpoint-bar sidebar-extra"
+        data-testid="sidebar-active-peer-bar"
+      >
+        <PeerDeviceBadge
+          :state="activePeerDevice?.last_state ?? 'disconnected'"
+          :device-name="activePeerDevice?.display_name ?? activePeerEndpoint.deviceId"
+          :offline-readonly="(activePeerDevice?.last_state ?? 'disconnected') !== 'ready'"
+          compact
+        />
+        <button
+          type="button"
+          class="peer-return-local-btn"
+          data-testid="sidebar-return-local-btn"
+          @click="handleReturnToLocalEndpoint"
+        >{{ t('peers.sidebar.backToLocal') }}</button>
+      </div>
       <div id="sidebar-workspaces" ref="sidebarListRef" class="sidebar-list" :class="{ 'sidebar-list--group-collapsed': list.state.value.collapsed }" @scroll.passive="onSidebarListScroll">
         <!-- One entry per visible block. The four option rows are siblings in this scrollport, so
              the order the options menu holds is literally the order rendered here. -->
@@ -1039,6 +1111,55 @@ watch([displayName, () => props.collapsed], async () => {
               </div>
             </div>
           </template>
+          <div
+            v-if="visibleMountedWorkspaces.length > 0"
+            class="peer-mounted-group"
+            role="group"
+            :aria-label="t('peers.sidebar.mountedHeading')"
+            data-testid="sidebar-mounted-peer-workspaces"
+          >
+            <div class="peer-mounted-heading">
+              <span>{{ t('peers.sidebar.mountedHeading') }}</span>
+              <button
+                type="button"
+                class="peer-mounted-manage-btn sidebar-extra"
+                :title="t('peers.sidebar.managePeers')"
+                :aria-label="t('peers.sidebar.managePeers')"
+                @click.stop="openPeerDevicesSettings"
+              >
+                <MonitorSmartphone :size="12" />
+              </button>
+            </div>
+            <div
+              v-for="mount in visibleMountedWorkspaces"
+              :key="mount.alias_workspace_id"
+              class="project-row peer-mounted-row"
+              :class="{
+                active: isRemoteMountActive(mount),
+                'is-offline': mount.offline_readonly || mount.device_state !== 'ready',
+              }"
+              :data-testid="`sidebar-peer-workspace-${mount.alias_workspace_id}`"
+              @click="handleSelectRemoteWorkspace(mount)"
+            >
+              <button
+                type="button"
+                class="project-row-main peer-mounted-main"
+                :title="mount.offline_readonly || mount.device_state !== 'ready' ? `${mount.name} · ${t('peers.sidebar.offlineHint')}` : `${mount.name} · ${mount.remote_root_path ?? mount.device_display_name}`"
+                @click.stop="handleSelectRemoteWorkspace(mount)"
+              >
+                <FolderOpen :size="15" class="sidebar-list-item-icon sidebar-icon" />
+                <span class="sidebar-list-item-text sidebar-label">{{ mount.name }}</span>
+              </button>
+              <PeerDeviceBadge
+                v-if="!collapsed"
+                class="sidebar-extra"
+                :state="mount.device_state"
+                :device-name="mount.device_display_name"
+                :offline-readonly="mount.offline_readonly || mount.device_state !== 'ready'"
+                compact
+              />
+            </div>
+          </div>
         </template>
       </div>
     </div>
@@ -1352,10 +1473,83 @@ watch([displayName, () => props.collapsed], async () => {
 .sidebar-migration-dialog form > div { display: flex; justify-content: flex-end; gap: 12px; }
 .sidebar-migration-dialog h2 { font-size: 18px; margin: 0; }
 .sidebar-migration-dialog select:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.peer-active-endpoint-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 2px 8px 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-card-active, var(--border-muted));
+  background: var(--surface-raised);
+}
+.peer-return-local-btn {
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-card, var(--border-muted));
+  background: var(--surface-section);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.peer-return-local-btn:hover {
+  background: var(--surface-hover);
+}
+.peer-mounted-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-card, var(--border-muted));
+}
+.peer-mounted-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.peer-mounted-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.peer-mounted-manage-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.peer-mounted-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-right: 6px;
+}
+.peer-mounted-row.is-offline .sidebar-list-item-text {
+  color: var(--text-secondary);
+}
+.peer-mounted-main {
+  min-width: 0;
+  flex: 1;
+}
 @media (prefers-reduced-motion: reduce) {
   .sidebar-nav-item,
   .sidebar-footer-action,
   .project-row,
+  .peer-mounted-row,
   .session-row,
   .project-row-action,
   .session-more,

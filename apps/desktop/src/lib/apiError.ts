@@ -28,25 +28,148 @@ const KNOWN_CATEGORIES = new Set<ApiErrorCategory>([
   'user_action_required', 'retryable', 'environment_unavailable', 'internal',
 ])
 
-/** Reads the category/retryable/actions triple, falling back to an honest status-based guess. */
+/**
+ * Unified 13 RFC 9457 peer-device error codes shared across Core, Gateway, and Desktop.
+ */
+export const PEER_ERROR_CODES = [
+  'unreachable',
+  'inbound_disabled',
+  'pairing_code_rejected',
+  'pairing_code_expired',
+  'fingerprint_mismatch',
+  'unauthorized',
+  'protocol_major_mismatch',
+  'encryption_unavailable',
+  'handshake_failed',
+  'timeout',
+  'policy_denied',
+  'device_offline',
+  'submission_uncertain',
+] as const
+
+export type PeerErrorCode = (typeof PEER_ERROR_CODES)[number]
+
+export interface PeerErrorSemanticContract {
+  category: ApiErrorCategory
+  retryable: boolean
+  actions: ApiErrorActionKind[]
+  fallbackMessage: string
+}
+
+export const PEER_ERROR_DEFAULTS: Record<PeerErrorCode, PeerErrorSemanticContract> = {
+  unreachable: {
+    category: 'environment_unavailable',
+    retryable: true,
+    actions: ['retry'],
+    fallbackMessage: 'The peer device could not be reached at the specified address.',
+  },
+  inbound_disabled: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: ['open_settings'],
+    fallbackMessage: 'Inbound peer connections are disabled on the target device.',
+  },
+  pairing_code_rejected: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'The pairing code was rejected.',
+  },
+  pairing_code_expired: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'The pairing code has expired or exceeded the maximum attempts.',
+  },
+  fingerprint_mismatch: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: ['open_settings'],
+    fallbackMessage: 'Peer TLS certificate SHA-256 fingerprint does not match the pinned identity.',
+  },
+  unauthorized: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'This device is not authorized by the remote peer.',
+  },
+  protocol_major_mismatch: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'Incompatible peer protocol major version.',
+  },
+  encryption_unavailable: {
+    category: 'environment_unavailable',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'Local secret storage or TLS encryption material is unavailable.',
+  },
+  handshake_failed: {
+    category: 'retryable',
+    retryable: true,
+    actions: ['retry'],
+    fallbackMessage: 'Peer mTLS application handshake failed.',
+  },
+  timeout: {
+    category: 'retryable',
+    retryable: true,
+    actions: ['retry'],
+    fallbackMessage: 'The peer request timed out.',
+  },
+  policy_denied: {
+    category: 'user_action_required',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'Operation denied by the remote peer access policy.',
+  },
+  device_offline: {
+    category: 'environment_unavailable',
+    retryable: true,
+    actions: ['retry'],
+    fallbackMessage: 'The peer device is currently offline or disconnected.',
+  },
+  submission_uncertain: {
+    category: 'environment_unavailable',
+    retryable: false,
+    actions: [],
+    fallbackMessage: 'Connection dropped while sending; delivery status will be reconciled upon reconnect.',
+  },
+}
+
+const PEER_ERROR_CODE_SET = new Set<string>(PEER_ERROR_CODES)
+
+export function isPeerErrorCode(code: unknown): code is PeerErrorCode {
+  return typeof code === 'string' && PEER_ERROR_CODE_SET.has(code)
+}
+
+/** Reads the category/retryable/actions triple, falling back to peer contract defaults or an honest status-based guess. */
 function parseContract(data: Record<string, unknown> | null, status: number): {
   category: ApiErrorCategory
   retryable: boolean
   actions: ApiErrorActionKind[]
 } {
+  const code = typeof data?.code === 'string' ? data.code : ''
+  const peerDefault = isPeerErrorCode(code) ? PEER_ERROR_DEFAULTS[code] : undefined
   const rawCategory = typeof data?.category === 'string' ? data.category : ''
   const category = KNOWN_CATEGORIES.has(rawCategory as ApiErrorCategory)
     ? rawCategory as ApiErrorCategory
-    : status >= 500 ? 'internal' : 'user_action_required'
+    : peerDefault
+      ? peerDefault.category
+      : status >= 500 ? 'internal' : 'user_action_required'
   // Mirrors Core's fallback exactly: a transient or internal failure may succeed if repeated,
   // a user-action failure will not. Diverging here would show "retry" for a form error.
   const retryable = typeof data?.retryable === 'boolean'
     ? data.retryable
-    : category === 'retryable' || category === 'internal'
+    : peerDefault
+      ? peerDefault.retryable
+      : category === 'retryable' || category === 'internal'
   const actions = Array.isArray(data?.actions)
     ? (data.actions.filter((value): value is ApiErrorActionKind =>
         typeof value === 'string' && KNOWN_ACTIONS.has(value as ApiErrorActionKind)))
-    : []
+    : peerDefault
+      ? [...peerDefault.actions]
+      : []
   return { category, retryable, actions }
 }
 
@@ -140,6 +263,8 @@ export class ApiError extends Error {
   readonly serverMessage?: string
   readonly trace_id?: string
   readonly storageId?: string
+  readonly endpointId?: string
+  readonly clientRequestId?: string
   readonly instance?: string
   readonly diagnostics: ApiDiagnostic[]
   /** Who can resolve this, per the server contract. */
@@ -149,13 +274,24 @@ export class ApiError extends Error {
   /** Stable recovery actions the UI may offer, already filtered to the known set. */
   readonly actions: ApiErrorActionKind[]
 
-  constructor(message: string, status: number, body: unknown, context?: { storageId?: string }) {
+  constructor(
+    message: string,
+    status: number,
+    body: unknown,
+    context?: { storageId?: string; endpointId?: string; clientRequestId?: string },
+  ) {
     const data = record(body)
     const code = typeof data?.code === 'string' ? data.code : undefined
     const translated = errorCodeMessage(code, data)
-    super(translated ?? message)
+    const fallbackMessage = (!message || message === code) && isPeerErrorCode(code)
+      ? PEER_ERROR_DEFAULTS[code].fallbackMessage
+      : message
+    super(translated ?? fallbackMessage)
     this.name = 'ApiError'
     this.storageId = context?.storageId
+    this.endpointId = context?.endpointId ?? (typeof data?.endpoint_id === 'string' ? data.endpoint_id : undefined)
+    this.clientRequestId = context?.clientRequestId
+      ?? (typeof data?.client_request_id === 'string' ? data.client_request_id : undefined)
     this.status = status
     this.code = code
     if (translated && message && message !== translated && message !== code) this.serverMessage = message
@@ -170,6 +306,41 @@ export class ApiError extends Error {
 
   /** True when this failure is worth offering a plain retry for. */
   get canRetry(): boolean { return this.retryable || this.actions.includes('retry') }
+}
+
+export function isPeerError(error: unknown, expectedCode?: PeerErrorCode): error is ApiError {
+  if (!(error instanceof ApiError) || !isPeerErrorCode(error.code)) return false
+  return expectedCode ? error.code === expectedCode : true
+}
+
+export function isSubmissionUncertainError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.code === 'submission_uncertain'
+}
+
+export function toSubmissionUncertainError(
+  cause: unknown,
+  context: { clientRequestId: string; endpointId?: string; storageId?: string },
+): ApiError {
+  if (cause instanceof ApiError && cause.code === 'submission_uncertain') {
+    return cause
+  }
+  const status = cause instanceof ApiError ? cause.status : 0
+  const serverDetail = cause instanceof Error ? cause.message : String(cause ?? '')
+  const traceId = cause instanceof ApiError ? cause.trace_id : undefined
+  return new ApiError(
+    serverDetail || PEER_ERROR_DEFAULTS.submission_uncertain.fallbackMessage,
+    status,
+    {
+      code: 'submission_uncertain',
+      category: 'environment_unavailable',
+      retryable: false,
+      actions: [],
+      client_request_id: context.clientRequestId,
+      ...(context.endpointId ? { endpoint_id: context.endpointId } : {}),
+      ...(traceId ? { trace_id: traceId } : {}),
+    },
+    context,
+  )
 }
 
 export function apiErrorDetails(error: unknown): string | undefined {

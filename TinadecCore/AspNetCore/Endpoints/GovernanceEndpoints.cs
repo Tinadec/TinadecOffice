@@ -41,19 +41,31 @@ public static class GovernanceEndpoints
         app.MapPost("/api/v1/governance/permission-requests/{id:guid}/decision", async (
             Guid id,
             PermissionDecisionRequestDto? input,
+            HttpContext httpContext,
             IAuthorizationService authorization,
             IUserToolActionService actions,
             ILifecycleManager lifecycle,
             IFullDuplexRunEngine engine,
             CancellationToken ct) =>
         {
+            if (PeerDeviceEndpoints.IsObserverPeerRequest(httpContext))
+            {
+                return PeerDeviceEndpoints.Problem(
+                    httpContext,
+                    StatusCodes.Status403Forbidden,
+                    PeerErrorCodes.PolicyDenied,
+                    "Observer peer role is not permitted to decide permission requests.");
+            }
             if (input is null) return Results.BadRequest(new { code = "invalid_request", message = "A decision body is required." });
+            var (deciderDeviceId, deciderDeviceName) = await ResolveDeciderDeviceAsync(httpContext, ct).ConfigureAwait(false);
             var resolution = await authorization.DecidePermissionAsync(new PermissionDecisionCommand(
                 id,
                 input.Approve,
                 input.ApproverAgentInstanceId,
                 input.ApprovalDelegationId,
-                input.Reason ?? string.Empty), ct).ConfigureAwait(false);
+                input.Reason ?? string.Empty,
+                deciderDeviceId,
+                deciderDeviceName), ct).ConfigureAwait(false);
 
             // A decision is committed before this wake-up. If the process exits
             // between these operations, the persisted executing status is visible
@@ -224,10 +236,30 @@ public static class GovernanceEndpoints
                 permission_request_id = resolution.Request.Id,
                 authorization_decision_id = resolution.Decision.Id,
                 outcome = resolution.Decision.Outcome,
-                reason_code = resolution.Decision.ReasonCode
+                reason_code = resolution.Decision.ReasonCode,
+                decided_by_device_id = resolution.Decision.DecidedByDeviceId ?? resolution.Request.DecidedByDeviceId,
+                decided_by_device_name = resolution.Decision.DecidedByDeviceName ?? resolution.Request.DecidedByDeviceName
             }, "Permission decision committed; run resumed.", cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         await engine.EnqueueAsync(runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<(string DeviceId, string DeviceName)> ResolveDeciderDeviceAsync(
+        HttpContext context,
+        CancellationToken ct)
+    {
+        var origin = PeerDeviceEndpoints.ResolveApprovalDeciderOrigin(context);
+        if (string.Equals(origin.DeviceId, "local", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(context.Request.Headers[PeerDeviceEndpoints.PeerControllerNameHeader].FirstOrDefault())
+            && context.RequestServices.GetService<IPeerIdentityService>() is { } peerIdentity)
+        {
+            var local = await peerIdentity.EnsureLocalIdentityAsync(ct).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(local.DisplayName))
+            {
+                return ("local", local.DisplayName);
+            }
+        }
+        return origin;
     }
 
     private static object ToResolutionBody(PermissionResolution resolution) => new
@@ -257,6 +289,8 @@ public static class GovernanceEndpoints
         authorization_decision_id = value.AuthorizationDecisionId,
         capability_grant_id = value.CapabilityGrantId,
         capability_lease_id = value.CapabilityLeaseId,
+        decided_by_device_id = value.DecidedByDeviceId,
+        decided_by_device_name = value.DecidedByDeviceName,
         expires_at = value.ExpiresAt,
         created_at = value.CreatedAt,
         updated_at = value.UpdatedAt
@@ -284,6 +318,8 @@ public static class GovernanceEndpoints
         policy_snapshot_hash = value.PolicySnapshotHash,
         decided_by_principal_id = value.DecidedByPrincipalId,
         decided_by_agent_instance_id = value.DecidedByAgentInstanceId,
+        decided_by_device_id = value.DecidedByDeviceId,
+        decided_by_device_name = value.DecidedByDeviceName,
         created_at = value.CreatedAt
     };
 
