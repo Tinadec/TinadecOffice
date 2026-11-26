@@ -338,6 +338,18 @@ public sealed class ProjectBoardCoordinator
         return dtos;
     }
 
+    internal async Task<HashSet<Guid>> ListAutopilotEnabledProjectIdsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var ids = await db.BoardSettings.AsNoTracking()
+            .Where(x => x.AutopilotEnabled)
+            .Select(x => x.ProjectId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return ids.ToHashSet();
+    }
+
     public async Task<IReadOnlyList<ProjectBoardTaskDto>> ListTasksForProjectsAsync(
         IReadOnlyDictionary<Guid, string> projectNamesById,
         TaskQueryFilter? filter = null,
@@ -389,6 +401,18 @@ public sealed class ProjectBoardCoordinator
         }
 
         return dtos;
+    }
+
+    internal async Task<HashSet<Guid>> ListAutopilotEnabledProjectIdsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var ids = await db.BoardSettings.AsNoTracking()
+            .Where(x => x.AutopilotEnabled)
+            .Select(x => x.ProjectId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return ids.ToHashSet();
     }
 
     public async Task<ProjectBoardTaskDto?> GetTaskAsync(

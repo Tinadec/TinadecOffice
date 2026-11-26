@@ -84,21 +84,17 @@ public sealed class ProjectAutopilotService : IHostedService, IProjectAutopilotW
         try
         {
             await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
-            var projects = await _sessionStore.ListProjectsAsync(LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
-            foreach (var project in projects)
+            var enabledIds = await _coordinator.ListAutopilotEnabledProjectIdsAsync(cancellationToken).ConfigureAwait(false);
+            if (enabledIds.Count > 0)
             {
-                if (cancellationToken.IsCancellationRequested) break;
-                try
+                var projects = await _sessionStore.ListProjectsAsync(LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
+                foreach (var project in projects)
                 {
-                    var settings = await _coordinator.GetSettingsAsync(project.Id, cancellationToken).ConfigureAwait(false);
-                    if (settings.AutopilotEnabled)
+                    if (cancellationToken.IsCancellationRequested) break;
+                    if (enabledIds.Contains(project.Id))
                     {
                         NotifyProjectChanged(project.Id);
                     }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger?.LogDebug(ex, "Skipped startup Autopilot check for project {ProjectId}.", project.Id);
                 }
             }
         }

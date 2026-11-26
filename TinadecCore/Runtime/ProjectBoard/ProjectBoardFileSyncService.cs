@@ -93,19 +93,50 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         {
             await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
             var projects = await _sessionStore.ListProjectsAsync(LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
+            if (projects.Count == 0)
+                return;
+
+            HashSet<Guid> presentInDb;
+            await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var settingsIds = await db.BoardSettings.AsNoTracking().Select(x => x.ProjectId).ToListAsync(cancellationToken).ConfigureAwait(false);
+                var taskIds = await db.BoardTasks.AsNoTracking().Where(x => !x.Deleted).Select(x => x.ProjectId).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
+                var notesIds = await db.NotesMeta.AsNoTracking().Select(x => x.ProjectId).ToListAsync(cancellationToken).ConfigureAwait(false);
+                presentInDb = new HashSet<Guid>(settingsIds.Count + taskIds.Count + notesIds.Count);
+                foreach (var id in settingsIds) presentInDb.Add(id);
+                foreach (var id in taskIds) presentInDb.Add(id);
+                foreach (var id in notesIds) presentInDb.Add(id);
+            }
+
+            var toSync = new List<ProjectRecord>();
             foreach (var project in projects)
             {
                 if (cancellationToken.IsCancellationRequested) break;
-                try
+                if (presentInDb.Contains(project.Id)
+                    || Directory.Exists(Path.Combine(project.RootPath, ".tinadec", "board", "tasks"))
+                    || File.Exists(Path.Combine(project.RootPath, ".tinadec", "project", "notes.md")))
                 {
-                    // Reconcile only projects that already initialized board settings or have existing .tinadec/board/tasks/*.md
-                    await ReconcileProjectOnStartupIfPresentAsync(project, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger?.LogWarning(ex, "ProjectBoard startup reconciliation skipped for project {ProjectId}.", project.Id);
+                    toSync.Add(project);
                 }
             }
+
+            if (toSync.Count == 0)
+                return;
+
+            await Parallel.ForEachAsync(
+                toSync,
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+                async (project, ct) =>
+                {
+                    try
+                    {
+                        await SyncProjectAsync(project.Id, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger?.LogWarning(ex, "ProjectBoard startup reconciliation skipped for project {ProjectId}.", project.Id);
+                    }
+                }).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
