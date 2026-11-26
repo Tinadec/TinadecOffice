@@ -23,6 +23,7 @@ import {
   type WsTerminalSession,
 } from '../wsTerminalProxy.js';
 import type { PairPeerDeviceInput, PeerClientPool, PeerDeviceRecord } from './peerClientPool.js';
+import { DevServerRequestError, type RequestDevServerLeaseInput } from './peerDevServerTunnel.js';
 import { PeerProtocolError } from './peerProtocol.js';
 import { discoverReachablePeerAddresses, type PeerTlsServer } from './peerTlsServer.js';
 
@@ -150,6 +151,10 @@ function formatPeerErrorResponse(
   set.headers['content-type'] = 'application/problem+json';
 
   if (err instanceof PeerProtocolError) {
+    set.status = err.status;
+    return toProblemDetails(err.status, err.code, err.message, path, rid);
+  }
+  if (err instanceof DevServerRequestError) {
     set.status = err.status;
     return toProblemDetails(err.status, err.code, err.message, path, rid);
   }
@@ -962,6 +967,315 @@ export function registerPeerRoutes(app: AnyElysia, options: RegisterPeerRoutesOp
           return mapCoreErrorToExternal(result.status, result.data, path);
         }
         return result.data ?? { cleared: true, device_id: params.deviceId };
+      },
+      HIDDEN_DETAIL,
+    )
+    .get(
+      '/api/v1/peers/devices/:deviceId/shadow/sessions',
+      async ({
+        params,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string };
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const reqUrl = new URL(request.url);
+        const basePath = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/shadow/sessions`;
+        const fullPath = `${basePath}${reqUrl.search}`;
+        const result = await callCoreJson(fullPath, {
+          headers: forwardHeaders(request),
+          signal: request.signal,
+        });
+        set.status = result.status;
+        if (result.status >= 400) {
+          set.headers['content-type'] = 'application/problem+json';
+          return mapCoreErrorToExternal(result.status, result.data, basePath);
+        }
+        return result.data;
+      },
+      HIDDEN_DETAIL,
+    )
+    .get(
+      '/api/v1/peers/devices/:deviceId/shadow/sessions/:remoteSessionId',
+      async ({
+        params,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string; remoteSessionId: string };
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const reqUrl = new URL(request.url);
+        const basePath = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/shadow/sessions/${encodeURIComponent(params.remoteSessionId)}`;
+        const fullPath = `${basePath}${reqUrl.search}`;
+        const result = await callCoreJson(fullPath, {
+          headers: forwardHeaders(request),
+          signal: request.signal,
+        });
+        set.status = result.status;
+        if (result.status >= 400) {
+          set.headers['content-type'] = 'application/problem+json';
+          return mapCoreErrorToExternal(result.status, result.data, basePath);
+        }
+        return result.data;
+      },
+      HIDDEN_DETAIL,
+    )
+    .post(
+      '/api/v1/peers/devices/:deviceId/shadow/sync',
+      async ({
+        params,
+        body,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string };
+        body: unknown;
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const path = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/shadow/sync`;
+        const result = await callCoreJson(path, {
+          method: 'POST',
+          body: (body && typeof body === 'object' ? (body as Record<string, unknown>) : {}),
+          headers: forwardHeaders(request),
+          signal: request.signal,
+        });
+        set.status = result.status;
+        if (result.status >= 400) {
+          set.headers['content-type'] = 'application/problem+json';
+          return mapCoreErrorToExternal(result.status, result.data, path);
+        }
+        return result.data;
+      },
+      HIDDEN_DETAIL,
+    )
+    .get(
+      '/api/v1/peers/devices/:deviceId/devserver-lease',
+      ({
+        params,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string };
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        return {
+          leases: peerClientPool.listDevServerLeases(params.deviceId),
+        };
+      },
+      HIDDEN_DETAIL,
+    )
+    .post(
+      '/api/v1/peers/devices/:deviceId/devserver-lease',
+      async ({
+        params,
+        body,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string };
+        body: RequestDevServerLeaseInput;
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        const path = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/devserver-lease`;
+        try {
+          return await peerClientPool.requestDevServerLease(
+            params.deviceId,
+            (body ?? {}) as RequestDevServerLeaseInput,
+            request.signal,
+          );
+        } catch (err) {
+          return formatPeerErrorResponse(set, err, path, rid);
+        }
+      },
+      HIDDEN_DETAIL,
+    )
+    .delete(
+      '/api/v1/peers/devices/:deviceId/devserver-lease/:leaseId',
+      async ({
+        params,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string; leaseId: string };
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        const path = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/devserver-lease/${encodeURIComponent(params.leaseId)}`;
+        try {
+          return await peerClientPool.releaseDevServerLease(params.deviceId, params.leaseId);
+        } catch (err) {
+          return formatPeerErrorResponse(set, err, path, rid);
+        }
+      },
+      HIDDEN_DETAIL,
+    )
+    .delete(
+      '/api/v1/peers/devices/:deviceId/devserver-lease',
+      async ({
+        params,
+        request,
+        set,
+        server,
+      }: {
+        params: { deviceId: string };
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+        server?: ServerLike | null;
+      }) => {
+        const denied = checkMgmt(request, set, server);
+        if (denied) return denied;
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        const path = `/api/v1/peers/devices/${encodeURIComponent(params.deviceId)}/devserver-lease`;
+        try {
+          return await peerClientPool.releaseDevServerLease(params.deviceId);
+        } catch (err) {
+          return formatPeerErrorResponse(set, err, path, rid);
+        }
+      },
+      HIDDEN_DETAIL,
+    )
+    .get(
+      '/api/v1/peers/internal/devserver-lease',
+      ({
+        request,
+        set,
+      }: {
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+      }) => {
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        set.status = 403;
+        set.headers['content-type'] = 'application/problem+json';
+        return toProblemDetails(
+          403,
+          'policy_denied',
+          'Internal DevServer lease endpoint is only accessible over authenticated mTLS peer tunnels.',
+          '/api/v1/peers/internal/devserver-lease',
+          rid,
+        );
+      },
+      HIDDEN_DETAIL,
+    )
+    .post(
+      '/api/v1/peers/internal/devserver-lease',
+      ({
+        request,
+        set,
+      }: {
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+      }) => {
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        set.status = 403;
+        set.headers['content-type'] = 'application/problem+json';
+        return toProblemDetails(
+          403,
+          'policy_denied',
+          'Internal DevServer lease endpoint is only accessible over authenticated mTLS peer tunnels.',
+          '/api/v1/peers/internal/devserver-lease',
+          rid,
+        );
+      },
+      HIDDEN_DETAIL,
+    )
+    .all(
+      '/api/v1/peers/internal/devserver-lease',
+      ({
+        request,
+        set,
+      }: {
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+      }) => {
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        set.status = 403;
+        set.headers['content-type'] = 'application/problem+json';
+        return toProblemDetails(
+          403,
+          'policy_denied',
+          'Internal DevServer lease endpoint is only accessible over authenticated mTLS peer tunnels.',
+          '/api/v1/peers/internal/devserver-lease',
+          rid,
+        );
+      },
+      HIDDEN_DETAIL,
+    )
+    .delete(
+      '/api/v1/peers/internal/devserver-lease/:leaseId',
+      ({
+        request,
+        set,
+      }: {
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+      }) => {
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        const pathname = new URL(request.url).pathname;
+        set.status = 403;
+        set.headers['content-type'] = 'application/problem+json';
+        return toProblemDetails(
+          403,
+          'policy_denied',
+          'Internal DevServer lease endpoint is only accessible over authenticated mTLS peer tunnels.',
+          pathname,
+          rid,
+        );
+      },
+      HIDDEN_DETAIL,
+    )
+    .all(
+      '/api/v1/peers/internal/devserver-lease/:leaseId',
+      ({
+        request,
+        set,
+      }: {
+        request: Request;
+        set: { status?: number | string; headers: Record<string, string | number> };
+      }) => {
+        const rid = ensureRequestId(request.headers.get('x-request-id'));
+        const pathname = new URL(request.url).pathname;
+        set.status = 403;
+        set.headers['content-type'] = 'application/problem+json';
+        return toProblemDetails(
+          403,
+          'policy_denied',
+          'Internal DevServer lease endpoint is only accessible over authenticated mTLS peer tunnels.',
+          pathname,
+          rid,
+        );
       },
       HIDDEN_DETAIL,
     )

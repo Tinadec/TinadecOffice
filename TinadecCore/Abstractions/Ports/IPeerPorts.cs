@@ -1,4 +1,6 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Abstractions.Ports;
 
@@ -552,3 +554,417 @@ public sealed class PeerPolicyEventDto
     [JsonPropertyName("timestamp_ms")]
     public long TimestampMs { get; init; }
 }
+
+// --- Wave 2: Shadow Cache, Multi-Writer FIFO Ingress Queue, and Staged Attachments ---
+
+public interface IPeerShadowService
+{
+    Task<PeerShadowSyncResultDto> SyncShadowAsync(string deviceId, PeerShadowSyncRequestDto request, CancellationToken cancellationToken = default);
+    Task<PeerShadowSessionListDto> ListShadowSessionsAsync(string deviceId, string? remoteProjectId = null, CancellationToken cancellationToken = default);
+    Task<PeerShadowSessionDetailDto?> GetShadowSessionAsync(string deviceId, string remoteSessionId, CancellationToken cancellationToken = default);
+    Task<int> ClearDeviceLocalCacheAsync(string deviceId, CancellationToken cancellationToken = default);
+    Task PurgeDeviceShadowDataAsync(string deviceId, CancellationToken cancellationToken = default);
+}
+
+public interface IPeerIngressQueueService
+{
+    Task<PeerIngressExecutionOutcome> ExecuteSerializedAsync(
+        PeerIngressSubmitCommand command,
+        Func<PeerIngressTicketContext, CancellationToken, Task<PeerIngressWorkResult>> work,
+        CancellationToken cancellationToken = default);
+
+    Task<PeerIngressStatusDto> GetIngressStatusAsync(
+        string sessionId,
+        string clientRequestId,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IPeerAttachmentStageService
+{
+    Task<PeerAttachmentStageResultDto> StageChunkOrReferenceAsync(
+        PeerAttachmentStageCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task<PeerResolvedStagedAttachment?> ResolveForMessageAsync(
+        Guid sessionId,
+        string idOrStageId,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class PeerShadowSyncRequestDto
+{
+    [JsonPropertyName("workspaces")]
+    public IReadOnlyList<PeerShadowWorkspaceSyncItemDto>? Workspaces { get; init; }
+
+    [JsonPropertyName("sessions")]
+    public IReadOnlyList<PeerShadowSessionSyncItemDto>? Sessions { get; init; }
+}
+
+public sealed class PeerShadowWorkspaceSyncItemDto
+{
+    [JsonPropertyName("alias_workspace_id")]
+    public string? AliasWorkspaceId { get; init; }
+
+    [JsonPropertyName("remote_project_id")]
+    public string? RemoteProjectId { get; init; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [JsonPropertyName("remote_root_path")]
+    public string? RemoteRootPath { get; init; }
+
+    [JsonPropertyName("visible")]
+    public bool? Visible { get; init; }
+}
+
+public sealed class PeerShadowSessionSyncItemDto
+{
+    [JsonPropertyName("local_shadow_id")]
+    public string? LocalShadowId { get; init; }
+
+    [JsonPropertyName("remote_session_id")]
+    public string? RemoteSessionId { get; init; }
+
+    [JsonPropertyName("remote_project_id")]
+    public string? RemoteProjectId { get; init; }
+
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    [JsonPropertyName("run_status")]
+    public string? RunStatus { get; init; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [JsonPropertyName("initiator_device_id")]
+    public string? InitiatorDeviceId { get; init; }
+
+    [JsonPropertyName("last_event_seq")]
+    public long? LastEventSeq { get; init; }
+
+    [JsonPropertyName("turns")]
+    public IReadOnlyList<PeerShadowTurnSyncItemDto>? Turns { get; init; }
+}
+
+public sealed class PeerShadowTurnSyncItemDto
+{
+    [JsonPropertyName("turn_id")]
+    public string? TurnId { get; init; }
+
+    [JsonPropertyName("digest_json")]
+    public string? DigestJson { get; init; }
+
+    [JsonPropertyName("digest")]
+    public JsonElement? Digest { get; init; }
+}
+
+public sealed class PeerShadowSyncResultDto
+{
+    [JsonPropertyName("synced")]
+    public bool Synced { get; init; } = true;
+
+    [JsonPropertyName("device_id")]
+    public string DeviceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("synced_workspaces")]
+    public int SyncedWorkspaces { get; init; }
+
+    [JsonPropertyName("synced_sessions")]
+    public int SyncedSessions { get; init; }
+
+    [JsonPropertyName("synced_turns")]
+    public int SyncedTurns { get; init; }
+
+    [JsonPropertyName("synced_at")]
+    public long SyncedAt { get; init; }
+}
+
+public sealed class PeerShadowSessionDto
+{
+    [JsonPropertyName("local_shadow_id")]
+    public string LocalShadowId { get; init; } = string.Empty;
+
+    [JsonPropertyName("peer_device_id")]
+    public string PeerDeviceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("remote_session_id")]
+    public string RemoteSessionId { get; init; } = string.Empty;
+
+    [JsonPropertyName("remote_project_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? RemoteProjectId { get; init; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("run_status")]
+    public string RunStatus { get; init; } = "idle";
+
+    [JsonPropertyName("initiator_device_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? InitiatorDeviceId { get; init; }
+
+    [JsonPropertyName("last_event_seq")]
+    public long LastEventSeq { get; init; }
+
+    [JsonPropertyName("last_synced_at")]
+    public long LastSyncedAt { get; init; }
+}
+
+public sealed class PeerShadowTurnDto
+{
+    [JsonPropertyName("local_shadow_id")]
+    public string LocalShadowId { get; init; } = string.Empty;
+
+    [JsonPropertyName("turn_id")]
+    public string TurnId { get; init; } = string.Empty;
+
+    [JsonPropertyName("digest_json")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? DigestJson { get; init; }
+
+    [JsonPropertyName("updated_at")]
+    public long UpdatedAt { get; init; }
+}
+
+public sealed class PeerShadowMessagePreviewDto
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("turn_id")]
+    public string TurnId { get; init; } = string.Empty;
+
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = "user";
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("pending_confirmation")]
+    public bool PendingConfirmation { get; init; }
+
+    [JsonPropertyName("updated_at")]
+    public long UpdatedAt { get; init; }
+}
+
+public sealed class PeerShadowSessionListDto
+{
+    [JsonPropertyName("device_id")]
+    public string DeviceId { get; init; } = string.Empty;
+
+    [JsonPropertyName("sessions")]
+    public IReadOnlyList<PeerShadowSessionDto> Sessions { get; init; } = [];
+}
+
+public sealed class PeerShadowSessionDetailDto
+{
+    [JsonPropertyName("session")]
+    public PeerShadowSessionDto Session { get; init; } = new();
+
+    [JsonPropertyName("turns")]
+    public IReadOnlyList<PeerShadowTurnDto> Turns { get; init; } = [];
+
+    [JsonPropertyName("messages")]
+    public IReadOnlyList<PeerShadowMessagePreviewDto> Messages { get; init; } = [];
+}
+
+public sealed record PeerIngressSubmitCommand(
+    string SessionId,
+    string ClientRequestId,
+    string OriginDeviceId,
+    string OriginDisplayName,
+    string Method,
+    string PayloadJson);
+
+public sealed record PeerIngressTicketContext(
+    string SessionId,
+    string ClientRequestId,
+    long EnqueuedSeq,
+    string OriginDeviceId,
+    string OriginDisplayName);
+
+public sealed record PeerIngressWorkResult(
+    bool Accepted,
+    int HttpStatusCode,
+    string? RunId = null,
+    string? TurnId = null,
+    string? MessageId = null,
+    long? LastEventSeq = null,
+    string? RejectErrorCode = null,
+    string? ResponseJson = null,
+    string? Location = null);
+
+public sealed record PeerIngressExecutionOutcome(
+    bool IdempotentReplay,
+    int HttpStatusCode,
+    string SessionId,
+    string ClientRequestId,
+    long EnqueuedSeq,
+    string Stage,
+    string? RunId,
+    string? TurnId,
+    string? MessageId,
+    long? LastEventSeq,
+    string? RejectErrorCode,
+    string? ResponseJson,
+    string? Location);
+
+public sealed class PeerIngressStatusDto
+{
+    [JsonPropertyName("found")]
+    public bool Found { get; init; }
+
+    [JsonPropertyName("session_id")]
+    public string SessionId { get; init; } = string.Empty;
+
+    [JsonPropertyName("client_request_id")]
+    public string ClientRequestId { get; init; } = string.Empty;
+
+    [JsonPropertyName("enqueued_seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? EnqueuedSeq { get; init; }
+
+    [JsonPropertyName("stage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Stage { get; init; }
+
+    [JsonPropertyName("origin_device_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginDeviceId { get; init; }
+
+    [JsonPropertyName("origin_display_name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginDisplayName { get; init; }
+
+    [JsonPropertyName("run_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RunId { get; init; }
+
+    [JsonPropertyName("turn_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TurnId { get; init; }
+
+    [JsonPropertyName("message_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MessageId { get; init; }
+
+    [JsonPropertyName("last_event_seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? LastEventSeq { get; init; }
+
+    [JsonPropertyName("stream_cursor")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StreamCursor { get; init; }
+
+    [JsonPropertyName("reject_error_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RejectErrorCode { get; init; }
+
+    [JsonPropertyName("after_seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? AfterSeq { get; init; }
+
+    [JsonPropertyName("events")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<object>? Events { get; init; }
+}
+
+public sealed class PeerAttachmentStageJsonRequestDto
+{
+    [JsonPropertyName("stage_id")]
+    public string? StageId { get; init; }
+
+    [JsonPropertyName("session_id")]
+    public string? SessionId { get; init; }
+
+    [JsonPropertyName("project_id")]
+    public string? ProjectId { get; init; }
+
+    [JsonPropertyName("filename")]
+    public string? Filename { get; init; }
+
+    [JsonPropertyName("media_type")]
+    public string? MediaType { get; init; }
+
+    [JsonPropertyName("total_bytes")]
+    public long? TotalBytes { get; init; }
+
+    [JsonPropertyName("sha256_hex")]
+    public string? Sha256Hex { get; init; }
+
+    [JsonPropertyName("chunk_index")]
+    public int? ChunkIndex { get; init; }
+
+    [JsonPropertyName("total_chunks")]
+    public int? TotalChunks { get; init; }
+
+    [JsonPropertyName("chunk_base64")]
+    public string? ChunkBase64 { get; init; }
+
+    [JsonPropertyName("origin")]
+    public string? Origin { get; init; }
+
+    [JsonPropertyName("source_path")]
+    public string? SourcePath { get; init; }
+}
+
+public sealed record PeerAttachmentStageCommand(
+    string? StageId,
+    Guid? SessionId,
+    Guid? ProjectId,
+    string FileName,
+    string MediaType,
+    string Origin,
+    int ChunkIndex,
+    int TotalChunks,
+    long? DeclaredTotalBytes,
+    string? ExpectedSha256Hex,
+    string? ValidatedWorkspaceSourcePath,
+    long? WorkspaceSourceFileBytes,
+    byte[]? ChunkBytes);
+
+public sealed class PeerAttachmentStageResultDto
+{
+    [JsonPropertyName("stage_id")]
+    public string StageId { get; init; } = string.Empty;
+
+    [JsonPropertyName("complete")]
+    public bool Complete { get; init; }
+
+    [JsonPropertyName("zero_copy")]
+    public bool ZeroCopy { get; init; }
+
+    [JsonPropertyName("origin")]
+    public string Origin { get; init; } = "composer";
+
+    [JsonPropertyName("source_path")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourcePath { get; init; }
+
+    [JsonPropertyName("attachment_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AttachmentId { get; init; }
+
+    [JsonPropertyName("attachment")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MessageAttachmentDto? Attachment { get; init; }
+
+    [JsonPropertyName("received_chunks")]
+    public int ReceivedChunks { get; init; }
+
+    [JsonPropertyName("total_chunks")]
+    public int TotalChunks { get; init; }
+}
+
+public sealed record PeerResolvedStagedAttachment(
+    string StageId,
+    string Origin,
+    bool ZeroCopy,
+    Guid? AttachmentId,
+    string FileName,
+    string MediaType,
+    long TotalBytes,
+    string? SourcePath);

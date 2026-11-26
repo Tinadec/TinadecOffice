@@ -150,7 +150,9 @@ public static class PeerDeviceEndpoints
         mgmt.MapDelete("/devices/{deviceId}", async (string deviceId, HttpContext ctx, CancellationToken ct) =>
         {
             await using var scope = await AcquireUserPeerScopeAsync(ctx, ct).ConfigureAwait(false);
+            var shadow = scope.Services.GetRequiredService<IPeerShadowService>();
             var pairing = scope.Services.GetRequiredService<IPeerPairingService>();
+            await shadow.PurgeDeviceShadowDataAsync(deviceId, ct).ConfigureAwait(false);
             var deleted = await pairing.DeleteDeviceAsync(deviceId, ct).ConfigureAwait(false);
             return deleted
                 ? Results.Ok(new { deleted = true, device_id = deviceId })
@@ -236,13 +238,63 @@ public static class PeerDeviceEndpoints
             }
         });
 
+        mgmt.MapPost("/devices/{deviceId}/shadow/sync", async (string deviceId, PeerShadowSyncRequestDto? input, HttpContext ctx, CancellationToken ct) =>
+        {
+            if (input is null)
+                return Problem(ctx, StatusCodes.Status400BadRequest, "invalid_request", "Shadow sync payload is required.");
+            await using var scope = await AcquireUserPeerScopeAsync(ctx, ct).ConfigureAwait(false);
+            var shadow = scope.Services.GetRequiredService<IPeerShadowService>();
+            try
+            {
+                var synced = await shadow.SyncShadowAsync(deviceId, input, ct).ConfigureAwait(false);
+                return Results.Ok(synced);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Problem(ctx, StatusCodes.Status404NotFound, "not_found", ex.Message);
+            }
+        }).Produces<PeerShadowSyncResultDto>();
+
+        mgmt.MapGet("/devices/{deviceId}/shadow/sessions", async (string deviceId, string? project_id, string? remote_project_id, HttpContext ctx, CancellationToken ct) =>
+        {
+            await using var scope = await AcquireUserPeerScopeAsync(ctx, ct).ConfigureAwait(false);
+            var shadow = scope.Services.GetRequiredService<IPeerShadowService>();
+            try
+            {
+                var filterProject = !string.IsNullOrWhiteSpace(project_id) ? project_id : remote_project_id;
+                var result = await shadow.ListShadowSessionsAsync(deviceId, filterProject, ct).ConfigureAwait(false);
+                return Results.Ok(result);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Problem(ctx, StatusCodes.Status404NotFound, "not_found", ex.Message);
+            }
+        }).Produces<PeerShadowSessionListDto>();
+
+        mgmt.MapGet("/devices/{deviceId}/shadow/sessions/{remoteSessionId}", async (string deviceId, string remoteSessionId, HttpContext ctx, CancellationToken ct) =>
+        {
+            await using var scope = await AcquireUserPeerScopeAsync(ctx, ct).ConfigureAwait(false);
+            var shadow = scope.Services.GetRequiredService<IPeerShadowService>();
+            try
+            {
+                var detail = await shadow.GetShadowSessionAsync(deviceId, remoteSessionId, ct).ConfigureAwait(false);
+                return detail is not null
+                    ? Results.Ok(detail)
+                    : Problem(ctx, StatusCodes.Status404NotFound, "not_found", $"Shadow session '{remoteSessionId}' was not found for peer device '{deviceId}'.");
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Problem(ctx, StatusCodes.Status404NotFound, "not_found", ex.Message);
+            }
+        }).Produces<PeerShadowSessionDetailDto>();
+
         mgmt.MapDelete("/devices/{deviceId}/local-cache", async (string deviceId, HttpContext ctx, CancellationToken ct) =>
         {
             await using var scope = await AcquireUserPeerScopeAsync(ctx, ct).ConfigureAwait(false);
-            var pairing = scope.Services.GetRequiredService<IPeerPairingService>();
+            var shadow = scope.Services.GetRequiredService<IPeerShadowService>();
             try
             {
-                var cleared = await pairing.ClearDeviceLocalCacheAsync(deviceId, ct).ConfigureAwait(false);
+                var cleared = await shadow.ClearDeviceLocalCacheAsync(deviceId, ct).ConfigureAwait(false);
                 return Results.Ok(new { cleared = true, device_id = deviceId, removed_entries = cleared });
             }
             catch (KeyNotFoundException ex)

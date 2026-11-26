@@ -185,6 +185,18 @@ function isAbsoluteBlockedPeerPath(path: string, policy: PeerAccessPolicy): stri
     return null;
   }
 
+  // Wave 2 DevServer preview lease internal endpoint is permitted over authenticated mTLS
+  // tunnels ONLY for operator/owner roles (observer is strictly denied 403 policy_denied).
+  if (
+    lower === '/api/v1/peers/internal/devserver-lease' ||
+    lower.startsWith('/api/v1/peers/internal/devserver-lease/')
+  ) {
+    if (policy.role === 'observer') {
+      return 'Observer role cannot request or manage DevServer preview leases.';
+    }
+    return null;
+  }
+
   const forbiddenPrefixes = [
     '/api/v1/peers/inbound',
     '/api/v1/peers/pairing-code',

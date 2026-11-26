@@ -1,9 +1,13 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Contracts.Events;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -45,25 +49,157 @@ public static class InteractionsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound);
         app.MapGet("/api/v1/sessions/{sessionId:guid}/interactions", ListInteractions)
             .Produces<IReadOnlyList<InteractionSummaryResponseDto>>(StatusCodes.Status200OK);
+        app.MapGet("/api/v1/sessions/{sessionId:guid}/ingress/{clientRequestId}", GetIngressStatus)
+            .Produces<PeerIngressStatusDto>(StatusCodes.Status200OK);
         return app;
     }
 
     static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, GlobalAgentConfiguration globalConfig, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, ILifecycleManager lifecycleManager, CancellationToken ct)
     {
-        var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
-        if (el.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { code = "invalid_request", message = "Body must be a JSON object." });
-        // Fail closed on retired/unknown keys so a stale client cannot silently
-        // admit a run under a mode nobody reads anymore.
+        if (PeerDeviceEndpoints.IsObserverPeerRequest(req.HttpContext))
+        {
+            return PeerDeviceEndpoints.Problem(
+                req.HttpContext,
+                StatusCodes.Status403Forbidden,
+                PeerErrorCodes.PolicyDenied,
+                "Observer peers cannot submit session interactions.");
+        }
+
+        JsonElement el;
+        try
+        {
+            el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
+        }
+        catch (JsonException)
+        {
+            return Results.BadRequest(new { code = "invalid_request", message = "Body must be valid JSON." });
+        }
+
+        if (el.ValueKind != JsonValueKind.Object)
+            return Results.BadRequest(new { code = "invalid_request", message = "Body must be a JSON object." });
+
         var unknownField = el.EnumerateObject()
             .Select(property => property.Name)
-            .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "expected_settings_revision" or "meeting_model_override" or "clear_meeting_model_override" or "space_options" or "attachment_ids" or "interrupt" or "interface_locale"));
-        if (unknownField is not null) return Results.BadRequest(new { code = "unknown_field", message = $"Field '{unknownField}' is not part of the interaction contract." });
+            .FirstOrDefault(name => name is not (
+                "content" or "client_message_id" or "client_request_id" or "mode_version_id" or "permission_mode"
+                or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "expected_settings_revision"
+                or "meeting_model_override" or "clear_meeting_model_override" or "space_options" or "attachment_ids"
+                or "staged_attachment_ids" or "interrupt" or "interface_locale"));
+        if (unknownField is not null)
+            return Results.BadRequest(new { code = "unknown_field", message = $"Field '{unknownField}' is not part of the interaction contract." });
+
+        string? bodyClientRequestId = null;
+        if (el.TryGetProperty("client_request_id", out var crEl) && crEl.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            if (crEl.ValueKind != JsonValueKind.String)
+                return Results.BadRequest(new { code = "invalid_request", message = "client_request_id must be a string." });
+            bodyClientRequestId = crEl.GetString()?.Trim();
+        }
+
+        var dispatchMode = el.TryGetProperty("dispatch_mode", out var dmPreview) ? dmPreview.GetString()?.Trim().ToLowerInvariant() : "queued";
+        if (dispatchMode is not ("queued" or "insert" or "parallel"))
+            return Results.BadRequest(new { code = "invalid_request", message = "dispatch_mode must be queued|insert|parallel" });
+
+        var ingressQueue = req.HttpContext.RequestServices.GetService<IPeerIngressQueueService>();
+        // Out-of-band steering ('insert') bypasses peer_ingress_queue per spec §4.1.
+        if (dispatchMode == "insert" || ingressQueue is null)
+        {
+            return await CreateInteractionCoreAsync(
+                sessionId, el, req, cfgFactory, globalConfig, lifecycleDbFactory, tenant, modelResolver,
+                sessions, conversations, coordinator, attachments, lifecycle, lifecycleManager, ct).ConfigureAwait(false);
+        }
+
+        var headerClientRequestId = req.Headers["x-tinadec-client-request-id"].FirstOrDefault()?.Trim();
+        var bodyClientMessageId = el.TryGetProperty("client_message_id", out var cmEl) && cmEl.ValueKind == JsonValueKind.String
+            ? cmEl.GetString()?.Trim()
+            : null;
+        var effectiveClientRequestId = !string.IsNullOrWhiteSpace(bodyClientRequestId)
+            ? bodyClientRequestId!
+            : !string.IsNullOrWhiteSpace(headerClientRequestId)
+                ? headerClientRequestId!
+                : !string.IsNullOrWhiteSpace(bodyClientMessageId)
+                    ? bodyClientMessageId!
+                    : Guid.NewGuid().ToString("N");
+
+        var rawControllerId = req.Headers[PeerDeviceEndpoints.PeerControllerIdHeader].FirstOrDefault()?.Trim();
+        var originDeviceId = string.IsNullOrWhiteSpace(rawControllerId)
+            || string.Equals(rawControllerId, "local", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : rawControllerId;
+        var rawControllerName = req.Headers[PeerDeviceEndpoints.PeerControllerNameHeader].FirstOrDefault()?.Trim();
+        var originDisplayName = !string.IsNullOrWhiteSpace(rawControllerName)
+            ? rawControllerName
+            : originDeviceId.Length == 0
+                ? (Environment.MachineName?.Trim() is { Length: > 0 } machine ? machine : "local")
+                : originDeviceId;
+
+        var outcome = await ingressQueue.ExecuteSerializedAsync(
+            new PeerIngressSubmitCommand(
+                SessionId: sessionId.ToString(),
+                ClientRequestId: effectiveClientRequestId,
+                OriginDeviceId: originDeviceId,
+                OriginDisplayName: originDisplayName,
+                Method: "session.send",
+                PayloadJson: el.GetRawText()),
+            async (ticket, innerCt) =>
+            {
+                var innerResult = await CreateInteractionCoreAsync(
+                    sessionId, el, req, cfgFactory, globalConfig, lifecycleDbFactory, tenant, modelResolver,
+                    sessions, conversations, coordinator, attachments, lifecycle, lifecycleManager, innerCt,
+                    overrideClientMessageId: effectiveClientRequestId).ConfigureAwait(false);
+
+                return await CaptureIngressWorkResultAsync(
+                    req.HttpContext.RequestServices,
+                    innerResult,
+                    ticket,
+                    effectiveClientRequestId).ConfigureAwait(false);
+            },
+            ct).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(outcome.Location))
+        {
+            req.HttpContext.Response.Headers.Location = outcome.Location;
+        }
+
+        if (outcome.IdempotentReplay)
+        {
+            var replayBody = RewriteReplayResponseJson(outcome);
+            return Results.Content(replayBody, "application/json; charset=utf-8", Encoding.UTF8, outcome.HttpStatusCode);
+        }
+
+        var responseBody = outcome.ResponseJson ?? "{}";
+        var contentType = outcome.HttpStatusCode >= 400 && responseBody.Contains("\"type\":\"https://tinadec.dev/errors/", StringComparison.Ordinal)
+            ? "application/problem+json"
+            : "application/json; charset=utf-8";
+        return Results.Content(responseBody, contentType, Encoding.UTF8, outcome.HttpStatusCode);
+    }
+
+    private static async Task<IResult> CreateInteractionCoreAsync(
+        Guid sessionId,
+        JsonElement el,
+        HttpRequest req,
+        IDbContextFactory<AgentConfigurationDbContext> cfgFactory,
+        GlobalAgentConfiguration globalConfig,
+        IDbContextFactory<LifecycleDbContext> lifecycleDbFactory,
+        ITenantContextAccessor tenant,
+        IAgentModelResolver modelResolver,
+        ProjectSessionStore sessions,
+        IConversationStore conversations,
+        IFullDuplexRunCoordinator coordinator,
+        IMessageAttachmentStore attachments,
+        StorageLifecycleService lifecycle,
+        ILifecycleManager lifecycleManager,
+        CancellationToken ct,
+        string? overrideClientMessageId = null)
+    {
         var content = el.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
         // Not "content is required" here: a message that carries a file does say something, it
         // just does not say it in words. The refusal belongs below, where the attachment ids have
         // been parsed, so the two together decide whether this turn says anything at all.
         var hasText = !string.IsNullOrWhiteSpace(content);
-        var clientMessageId = el.TryGetProperty("client_message_id", out var cm) ? cm.GetString() : Guid.NewGuid().ToString("N");
+        var clientMessageId = el.TryGetProperty("client_message_id", out var cm) && cm.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cm.GetString())
+            ? cm.GetString()!
+            : (overrideClientMessageId ?? Guid.NewGuid().ToString("N"));
         var modeVersionId = el.TryGetProperty("mode_version_id", out var mv) && Guid.TryParse(mv.GetString(), out var g) ? g : (Guid?)null;
         var dispatchMode = el.TryGetProperty("dispatch_mode", out var dm) ? dm.GetString()?.Trim().ToLowerInvariant() : "queued";
         if (dispatchMode is not ("queued" or "insert" or "parallel")) return Results.BadRequest(new { code = "invalid_request", message = "dispatch_mode must be queued|insert|parallel" });
@@ -166,6 +302,62 @@ public static class InteractionsEndpoints
 
         // An attachment is claimed by the message this interaction appends, so the ids
         // arrive with the send rather than in a second request that could race it.
+        var stageService = req.HttpContext.RequestServices.GetService<IPeerAttachmentStageService>();
+        var workspaceZeroCopyRefs = new List<PeerResolvedStagedAttachment>();
+        var stagedAttachmentIdsEcho = new List<string>();
+        var collectedAttachmentIds = new List<Guid>();
+
+        if (el.TryGetProperty("staged_attachment_ids", out var stagedElement)
+            && stagedElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            if (stagedElement.ValueKind != JsonValueKind.Array)
+                return Results.BadRequest(new { code = "staged_attachment_ids_invalid", message = "staged_attachment_ids must be an array of strings." });
+            if (dispatchMode == "insert")
+                return Results.BadRequest(new { code = "attachment_dispatch_unsupported", message = "Steering inserts no user message, so it cannot carry attachments. Send the file as its own message." });
+
+            foreach (var item in stagedElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                    return Results.BadRequest(new { code = "staged_attachment_ids_invalid", message = "Every staged attachment id must be a non-empty string." });
+
+                var rawStageOrAttId = item.GetString()!.Trim();
+                stagedAttachmentIdsEcho.Add(rawStageOrAttId);
+
+                if (stageService is not null)
+                {
+                    try
+                    {
+                        var resolvedStage = await stageService.ResolveForMessageAsync(sessionId, rawStageOrAttId, ct).ConfigureAwait(false);
+                        if (resolvedStage is not null)
+                        {
+                            if (resolvedStage.ZeroCopy)
+                                workspaceZeroCopyRefs.Add(resolvedStage);
+                            else if (resolvedStage.AttachmentId is { } attGuid)
+                                collectedAttachmentIds.Add(attGuid);
+                            continue;
+                        }
+                    }
+                    catch (PeerException ex) when (ex.StatusCode == StatusCodes.Status404NotFound)
+                    {
+                        return Results.NotFound(new { code = ex.Code, message = ex.Message });
+                    }
+                    catch (PeerException ex)
+                    {
+                        return Results.BadRequest(new { code = ex.Code, message = ex.Message });
+                    }
+                }
+
+                if (Guid.TryParse(rawStageOrAttId, out var fallbackGuid))
+                {
+                    collectedAttachmentIds.Add(fallbackGuid);
+                }
+                else
+                {
+                    return Results.BadRequest(new { code = "attachment_not_found", message = $"No staged attachment found for id '{rawStageOrAttId}'." });
+                }
+            }
+        }
+
         IReadOnlyList<Guid>? attachmentIds = null;
         if (el.TryGetProperty("attachment_ids", out var attachmentElement)
             && attachmentElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
@@ -181,52 +373,96 @@ public static class InteractionsEndpoints
             {
                 return Results.BadRequest(new { code = "attachment_dispatch_unsupported", message = "Steering inserts no user message, so it cannot carry attachments. Send the file as its own message." });
             }
-            var ids = new List<Guid>(attachmentElement.GetArrayLength());
             foreach (var item in attachmentElement.EnumerateArray())
             {
-                if (item.ValueKind != JsonValueKind.String || !Guid.TryParse(item.GetString(), out var parsedId))
+                if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                {
+                    return Results.BadRequest(new { code = "attachment_ids_invalid", message = "Every attachment id must be a guid or stage_id string." });
+                }
+
+                var rawId = item.GetString()!.Trim();
+                if (stageService is not null)
+                {
+                    try
+                    {
+                        var resolvedFromStage = await stageService.ResolveForMessageAsync(sessionId, rawId, ct).ConfigureAwait(false);
+                        if (resolvedFromStage is not null)
+                        {
+                            stagedAttachmentIdsEcho.Add(resolvedFromStage.StageId);
+                            if (resolvedFromStage.ZeroCopy)
+                                workspaceZeroCopyRefs.Add(resolvedFromStage);
+                            else if (resolvedFromStage.AttachmentId is { } stageAttGuid)
+                                collectedAttachmentIds.Add(stageAttGuid);
+                            continue;
+                        }
+                    }
+                    catch (PeerException ex) when (ex.StatusCode == StatusCodes.Status404NotFound)
+                    {
+                        return Results.NotFound(new { code = ex.Code, message = ex.Message });
+                    }
+                    catch (PeerException ex)
+                    {
+                        return Results.BadRequest(new { code = ex.Code, message = ex.Message });
+                    }
+                }
+
+                if (!Guid.TryParse(rawId, out var parsedId))
                 {
                     return Results.BadRequest(new { code = "attachment_ids_invalid", message = "Every attachment id must be a guid string." });
                 }
-                ids.Add(parsedId);
+                collectedAttachmentIds.Add(parsedId);
             }
-            if (ids.Count > MaxAttachmentsPerMessage)
-            {
-                return Results.BadRequest(new { code = "attachment_count_exceeded", message = $"A message carries at most {MaxAttachmentsPerMessage} attachments.", max = MaxAttachmentsPerMessage });
-            }
-            if (ids.Count > 0)
-            {
-                // Pre-flight against the session's unbound rows before a run exists. The
-                // bind below still re-checks; this is what stops the common mistake — a
-                // stale id from a session the user has since left — from starting a run
-                // whose message silently carries nothing.
-                var unbound = await attachments.ListAsync(sessionId, ct).ConfigureAwait(false);
-                // "Unbound" is the wrong ceiling for a retry. When the first response was lost,
-                // the rows are bound - to the message this same client_message_id already names -
-                // and refusing the resend told the user their own file does not exist. The bind
-                // below treats rows the message already owns as success, so the replay was always
-                // meant to get this far; only this pre-flight blocked it.
-                var replayTarget = string.IsNullOrWhiteSpace(clientMessageId)
-                    ? null
-                    : await conversations.FindMessageByClientMessageIdAsync(sessionId, clientMessageId, ct).ConfigureAwait(false);
-                var presentable = unbound
-                    .Where(row => row.MessageId is null || (replayTarget is not null && row.MessageId == replayTarget.Id))
-                    .Select(row => row.Id);
-                var missing = ids.Except(presentable).ToArray();
-                if (missing.Length > 0)
-                {
-                    return Results.BadRequest(new { code = "attachment_not_found", message = $"No unbound attachment in this session has the id(s): {string.Join(", ", missing)}.", missing });
-                }
-            }
-            attachmentIds = ids;
         }
 
-        if (!hasText && attachmentIds is not { Count: > 0 })
+        var uniqueAttachmentIds = collectedAttachmentIds.Distinct().ToList();
+        workspaceZeroCopyRefs = workspaceZeroCopyRefs
+            .GroupBy(x => x.StageId, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
+        if (uniqueAttachmentIds.Count + workspaceZeroCopyRefs.Count > MaxAttachmentsPerMessage)
+        {
+            return Results.BadRequest(new { code = "attachment_count_exceeded", message = $"A message carries at most {MaxAttachmentsPerMessage} attachments.", max = MaxAttachmentsPerMessage });
+        }
+
+        if (uniqueAttachmentIds.Count > 0)
+        {
+            var unbound = await attachments.ListAsync(sessionId, ct).ConfigureAwait(false);
+            var replayTarget = string.IsNullOrWhiteSpace(clientMessageId)
+                ? null
+                : await conversations.FindMessageByClientMessageIdAsync(sessionId, clientMessageId, ct).ConfigureAwait(false);
+            var presentable = unbound
+                .Where(row => row.MessageId is null || (replayTarget is not null && row.MessageId == replayTarget.Id))
+                .Select(row => row.Id);
+            var missing = uniqueAttachmentIds.Except(presentable).ToArray();
+            if (missing.Length > 0)
+            {
+                return Results.BadRequest(new { code = "attachment_not_found", message = $"No unbound attachment in this session has the id(s): {string.Join(", ", missing)}.", missing });
+            }
+            attachmentIds = uniqueAttachmentIds;
+        }
+
+        if (!hasText && attachmentIds is not { Count: > 0 } && workspaceZeroCopyRefs.Count == 0)
         {
             // Same machine code the empty-content contract has always answered with; only the
             // message grew, because "content is required" was a lie by omission - attaching the
             // file is the other way to say something.
             return Results.BadRequest(new { code = "invalid_request", message = "content is required unless the message carries an attachment." });
+        }
+
+        if (workspaceZeroCopyRefs.Count > 0)
+        {
+            var refLines = workspaceZeroCopyRefs
+                .Where(r => !string.IsNullOrWhiteSpace(r.SourcePath) && !content.Contains(r.SourcePath!, StringComparison.Ordinal))
+                .Select(r => $"[Workspace file reference: {r.FileName} ({r.SourcePath})]")
+                .ToArray();
+            if (refLines.Length > 0)
+            {
+                content = hasText
+                    ? $"{content}\n\n{string.Join("\n", refLines)}"
+                    : string.Join("\n", refLines);
+                hasText = !string.IsNullOrWhiteSpace(content);
+            }
         }
 
         // The message is appended first (its id comes from the run admission or the queued
@@ -602,7 +838,253 @@ public static class InteractionsEndpoints
         }
         var status = admissionStatus;
         var admissionCursor = await RunStreamCursorAsync(lifecycleDbFactory, admission.RunId, ct).ConfigureAwait(false);
-        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, client_message_id = clientMessageId, context_revision = admission.ContextRevision, stream_cursor = admissionCursor, correlation_id = clientMessageId });
+        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new
+        {
+            interaction_id = admission.TurnId,
+            session_id = sessionId,
+            run_id = admission.RunId,
+            turn_id = admission.TurnId,
+            message_id = admission.MessageId,
+            dispatch_mode = dispatchMode,
+            status,
+            mode_version_id = modeVersionId,
+            meeting_model_override = meetingModelOverride,
+            attachment_ids = attachmentIds,
+            staged_attachment_ids = stagedAttachmentIdsEcho.Count > 0 ? stagedAttachmentIdsEcho.Distinct().ToArray() : null,
+            workspace_references = workspaceZeroCopyRefs.Count > 0
+                ? workspaceZeroCopyRefs.Select(r => new { stage_id = r.StageId, file_name = r.FileName, source_path = r.SourcePath, total_bytes = r.TotalBytes }).ToArray()
+                : null,
+            client_message_id = clientMessageId,
+            context_revision = admission.ContextRevision,
+            stream_cursor = admissionCursor,
+            correlation_id = clientMessageId
+        });
+    }
+
+    static async Task<IResult> GetIngressStatus(
+        Guid sessionId,
+        string clientRequestId,
+        long? after_seq,
+        HttpContext http,
+        StorageLifecycleService lifecycle,
+        IDbContextFactory<LifecycleDbContext> lifecycleDbFactory,
+        CancellationToken ct)
+    {
+        var ingressQueue = http.RequestServices.GetService<IPeerIngressQueueService>();
+        if (ingressQueue is null || string.IsNullOrWhiteSpace(clientRequestId))
+        {
+            return Results.Ok(new PeerIngressStatusDto
+            {
+                Found = false,
+                SessionId = sessionId.ToString(),
+                ClientRequestId = clientRequestId ?? string.Empty
+            });
+        }
+
+        var status = await ingressQueue.GetIngressStatusAsync(sessionId.ToString(), clientRequestId.Trim(), ct).ConfigureAwait(false);
+        if (!status.Found)
+        {
+            return Results.Ok(status);
+        }
+
+        long? liveMaxSeq = status.LastEventSeq;
+        string? streamCursor = null;
+        IReadOnlyList<object>? deltaEvents = null;
+
+        Guid? parsedRunId = Guid.TryParse(status.RunId, out var rGuid) ? rGuid : null;
+        if (parsedRunId is { } runGuid)
+        {
+            var cursorVal = await RunStreamCursorAsync(lifecycleDbFactory, runGuid, ct).ConfigureAwait(false);
+            streamCursor = cursorVal.ToString(CultureInfo.InvariantCulture);
+            liveMaxSeq = Math.Max(liveMaxSeq ?? 0L, cursorVal);
+        }
+
+        var sessionEvents = await lifecycle.FollowEventsAsync(sessionId, new Dictionary<Guid, long>(), ct).ConfigureAwait(false);
+        var matchingEvents = parsedRunId is { } targetRun
+            ? sessionEvents.Where(e => string.Equals(e.RunId, targetRun.ToString(), StringComparison.OrdinalIgnoreCase)).ToList()
+            : sessionEvents.ToList();
+
+        foreach (var evt in matchingEvents)
+        {
+            if (TryExtractEventSeq(evt) is { } seq && seq > (liveMaxSeq ?? 0L))
+            {
+                liveMaxSeq = seq;
+            }
+        }
+
+        if (after_seq is { } afterThreshold)
+        {
+            var filtered = new List<object>();
+            foreach (var evt in matchingEvents)
+            {
+                var seq = TryExtractEventSeq(evt);
+                if (seq is null || seq.Value > afterThreshold)
+                {
+                    filtered.Add(evt);
+                }
+            }
+            deltaEvents = filtered;
+        }
+
+        return Results.Ok(new PeerIngressStatusDto
+        {
+            Found = true,
+            SessionId = status.SessionId,
+            ClientRequestId = status.ClientRequestId,
+            EnqueuedSeq = status.EnqueuedSeq,
+            Stage = status.Stage,
+            OriginDeviceId = status.OriginDeviceId,
+            OriginDisplayName = status.OriginDisplayName,
+            RunId = status.RunId,
+            TurnId = status.TurnId,
+            MessageId = status.MessageId,
+            LastEventSeq = liveMaxSeq,
+            StreamCursor = streamCursor,
+            RejectErrorCode = status.RejectErrorCode,
+            AfterSeq = after_seq,
+            Events = deltaEvents
+        });
+    }
+
+    private static long? TryExtractEventSeq(EventEnvelope item)
+    {
+        if (!item.Payload.TryGetValue("sequence", out var value) || value is null) return null;
+        return value switch
+        {
+            long s => s,
+            int i => i,
+            JsonElement { ValueKind: JsonValueKind.Number } num when num.TryGetInt64(out var parsed) => parsed,
+            string str when long.TryParse(str, out var parsedStr) => parsedStr,
+            _ => null
+        };
+    }
+
+    private static async Task<PeerIngressWorkResult> CaptureIngressWorkResultAsync(
+        IServiceProvider services,
+        IResult innerResult,
+        PeerIngressTicketContext ticket,
+        string clientRequestId)
+    {
+        var captureContext = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        await using var bodyStream = new MemoryStream();
+        captureContext.Response.Body = bodyStream;
+
+        await innerResult.ExecuteAsync(captureContext).ConfigureAwait(false);
+        var statusCode = captureContext.Response.StatusCode;
+        var location = captureContext.Response.Headers.Location.FirstOrDefault();
+        var rawJson = Encoding.UTF8.GetString(bodyStream.ToArray());
+
+        if (statusCode is >= 200 and < 300)
+        {
+            string? runId = null;
+            string? turnId = null;
+            string? messageId = null;
+            long? lastEventSeq = null;
+            var enrichedJson = rawJson;
+
+            try
+            {
+                if (JsonNode.Parse(string.IsNullOrWhiteSpace(rawJson) ? "{}" : rawJson) is JsonObject obj)
+                {
+                    runId = obj["run_id"]?.GetValue<string>();
+                    turnId = obj["turn_id"]?.GetValue<string>() ?? (runId is not null ? obj["interaction_id"]?.GetValue<string>() : null);
+                    messageId = obj["message_id"]?.GetValue<string>();
+                    if (obj["stream_cursor"] is JsonValue cursorVal)
+                    {
+                        if (cursorVal.TryGetValue<long>(out var cursorLong))
+                            lastEventSeq = cursorLong;
+                        else if (cursorVal.TryGetValue<string>(out var cursorStr) && long.TryParse(cursorStr, out var parsedCursor))
+                            lastEventSeq = parsedCursor;
+                    }
+
+                    obj["client_request_id"] = clientRequestId;
+                    obj["enqueued_seq"] = ticket.EnqueuedSeq;
+                    obj["stage"] = "processed";
+                    obj["idempotent_replay"] = false;
+                    enrichedJson = obj.ToJsonString();
+                }
+            }
+            catch (JsonException)
+            {
+                // Preserve original response body if non-object.
+            }
+
+            return new PeerIngressWorkResult(
+                Accepted: true,
+                HttpStatusCode: statusCode,
+                RunId: runId,
+                TurnId: turnId,
+                MessageId: messageId,
+                LastEventSeq: lastEventSeq,
+                RejectErrorCode: null,
+                ResponseJson: enrichedJson,
+                Location: location);
+        }
+        else
+        {
+            var rejectCode = "rejected";
+            try
+            {
+                using var errDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(rawJson) ? "{}" : rawJson);
+                if (errDoc.RootElement.ValueKind == JsonValueKind.Object
+                    && errDoc.RootElement.TryGetProperty("code", out var codeEl)
+                    && codeEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(codeEl.GetString()))
+                {
+                    rejectCode = codeEl.GetString()!;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return new PeerIngressWorkResult(
+                Accepted: false,
+                HttpStatusCode: statusCode,
+                RejectErrorCode: rejectCode,
+                ResponseJson: rawJson,
+                Location: location);
+        }
+    }
+
+    private static string RewriteReplayResponseJson(PeerIngressExecutionOutcome outcome)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(outcome.ResponseJson)
+                && JsonNode.Parse(outcome.ResponseJson) is JsonObject obj)
+            {
+                obj["client_request_id"] = outcome.ClientRequestId;
+                obj["enqueued_seq"] = outcome.EnqueuedSeq;
+                obj["stage"] = outcome.Stage;
+                obj["idempotent_replay"] = true;
+                return obj.ToJsonString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        var fallback = new JsonObject
+        {
+            ["session_id"] = outcome.SessionId,
+            ["client_request_id"] = outcome.ClientRequestId,
+            ["enqueued_seq"] = outcome.EnqueuedSeq,
+            ["stage"] = outcome.Stage,
+            ["idempotent_replay"] = true
+        };
+        if (outcome.RunId is not null) fallback["run_id"] = outcome.RunId;
+        if (outcome.TurnId is not null)
+        {
+            fallback["turn_id"] = outcome.TurnId;
+            fallback["interaction_id"] = outcome.TurnId;
+        }
+        if (outcome.MessageId is not null) fallback["message_id"] = outcome.MessageId;
+        if (outcome.LastEventSeq is { } seq) fallback["last_event_seq"] = seq;
+        return fallback.ToJsonString();
     }
 
     private static IResult TinaChatInputLocked(HttpRequest request) => Results.Problem(

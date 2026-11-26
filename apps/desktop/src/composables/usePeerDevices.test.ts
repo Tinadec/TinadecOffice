@@ -450,4 +450,61 @@ describe('usePeerDevices state & lifecycle', () => {
       expect(c.url).not.toContain('/proxy/api/v1/peers')
     }
   })
+
+  it('requests and releases DevServer tunnel leases and invalidates leases automatically on disconnect', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.endsWith('/api/v1/peers/devices/dev-mac-1/devserver-lease') && method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              lease_id: 'lease-3000',
+              device_id: 'dev-mac-1',
+              target_port: 3000,
+              local_port: 54321,
+              preview_url: 'http://127.0.0.1:54321',
+              ttl_seconds: 1800,
+              expires_at_ms: Date.now() + 1_800_000,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.endsWith('/api/v1/peers/devices/dev-mac-1/disconnect') && method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              device_id: 'dev-mac-1',
+              display_name: 'MacBuildBox',
+              transport: 'lan',
+              address: '192.168.1.25:48735',
+              remote_device_id: 'remote-mac-uuid',
+              certificate_fingerprint: SAMPLE_FP,
+              protocol_major: 1,
+              protocol_minor: 0,
+              paired_at: 1700000000000,
+              last_connected_at: 1700000050000,
+              connection_desired: false,
+              adopt_sessions: true,
+              last_state: 'disconnected',
+              last_failure_code: null,
+              access_revision: 'rev-1',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } })
+      }),
+    )
+
+    const peers = usePeerDevices()
+    peers.switchEndpoint({ kind: 'peer', deviceId: 'dev-mac-1' })
+    const lease = await peers.requestDevServerLease('dev-mac-1', 3000)
+    expect(lease.preview_url).toBe('http://127.0.0.1:54321')
+    expect(peers.activePeerDevServerLeases.value).toHaveLength(1)
+
+    await peers.disconnectDevice('dev-mac-1')
+    expect(peers.activePeerDevServerLeases.value).toHaveLength(0)
+    expect(peers.isActivePeerOfflineReadonly.value).toBe(true)
+  })
 })

@@ -4,7 +4,11 @@ import ChatHeader from './ChatHeader.vue'
 import ConversationView from './conversation/ConversationView.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
+import PeerOfflineShadowBanner from './peers/PeerOfflineShadowBanner.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
+import { usePeerDevices } from '@/composables/usePeerDevices'
+import { usePeerSubmissionReconcile } from '@/lib/peerSubmissionReconcile'
+import { homeController } from '@/controllers/HomeController'
 import type { ComposerSubmitOptions, SessionSettingsUpdate, SpaceOptionsDto, MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import { copySpaceOptions, type ComposerSettings } from '@/lib/composerSettings'
 import type { PermissionLevel } from '@/types/mode'
@@ -81,7 +85,51 @@ function onWelcomeSubmit(payload: ComposerSubmitOptions & { content: string }) {
 const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
-const hero = computed(() => props.messages.length === 0 && !props.loading)
+const {
+  activeEndpoint,
+  activePeerDevice,
+  isActivePeerOfflineReadonly,
+  activePeerLastSyncedAt,
+  connectDevice,
+  clearDeviceLocalCache,
+} = usePeerDevices()
+
+const { sessionRecords: uncertainSessionRecords } = usePeerSubmissionReconcile({
+  endpoint: () => activeEndpoint.value,
+  sessionId: () => props.currentSession?.id ?? null,
+})
+
+const shadowReconnecting = ref(false)
+const shadowClearingCache = ref(false)
+
+async function handleReconnectShadowPeer(deviceId: string) {
+  shadowReconnecting.value = true
+  try {
+    await connectDevice(deviceId)
+    await homeController.refreshProjectsAndSessions().catch(() => {})
+    await homeController.loadMessagesAndApprovals().catch(() => {})
+  } catch {
+    // Error is already captured in usePeerDevices().error
+  } finally {
+    shadowReconnecting.value = false
+  }
+}
+
+async function handleClearShadowPeerCache(deviceId: string) {
+  shadowClearingCache.value = true
+  try {
+    await clearDeviceLocalCache(deviceId)
+    await homeController.refreshProjectsAndSessions().catch(() => {})
+  } catch {
+    // Error is already captured in usePeerDevices().error
+  } finally {
+    shadowClearingCache.value = false
+  }
+}
+
+const hero = computed(
+  () => props.messages.length === 0 && uncertainSessionRecords.value.length === 0 && !props.loading,
+)
 
 const modeVersionId = ref<string | null>(null)
 const spaceOptions = ref<SpaceOptionsDto | null>(null)
@@ -141,6 +189,17 @@ watch(hero, async () => {
 
 <template>
   <section ref="conversationRef" class="conversation" :class="conversationClass">
+    <PeerOfflineShadowBanner
+      v-if="activeEndpoint.kind === 'peer' && isActivePeerOfflineReadonly && !compactPip"
+      :device-id="activeEndpoint.deviceId"
+      :device-name="activePeerDevice?.display_name ?? activeEndpoint.deviceId"
+      :state="activePeerDevice?.last_state ?? 'disconnected'"
+      :last-synced-at="activePeerLastSyncedAt"
+      :reconnecting="shadowReconnecting"
+      :clearing-cache="shadowClearingCache"
+      @reconnect="handleReconnectShadowPeer"
+      @clear-cache="handleClearShadowPeerCache"
+    />
     <!-- Immersive chat zone: transparent background so page background shows through.
          User's global material setting controls backdrop-filter on inner objects (composer, welcome dialog, bubbles).
          NO border or shadow here — the card frame and parent stack own the visual boundary. -->
@@ -153,6 +212,7 @@ watch(hero, async () => {
       <div v-else key="chat-active" class="chat-active-panel" style="background: transparent !important; border: none !important; box-shadow: none !important;">
         <ChatHeader :current-session="currentSession" />
         <ConversationView
+          :session-id="currentSession?.id ?? null"
           :messages="messages"
           :runs="conversation.runs"
           :feed="conversation.feed"

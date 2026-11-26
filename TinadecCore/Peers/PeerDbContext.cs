@@ -12,6 +12,10 @@ public sealed class PeerDbContext : DbContext
     public DbSet<PeerGrantRecord> Grants => Set<PeerGrantRecord>();
     public DbSet<PeerAccessPolicyRecord> AccessPolicies => Set<PeerAccessPolicyRecord>();
     public DbSet<PeerShadowWorkspaceRecord> ShadowWorkspaces => Set<PeerShadowWorkspaceRecord>();
+    public DbSet<PeerShadowSessionRecord> ShadowSessions => Set<PeerShadowSessionRecord>();
+    public DbSet<PeerShadowTurnRecord> ShadowTurns => Set<PeerShadowTurnRecord>();
+    public DbSet<PeerIngressQueueRecord> IngressQueue => Set<PeerIngressQueueRecord>();
+    public DbSet<PeerStagedAttachmentRecord> StagedAttachments => Set<PeerStagedAttachmentRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -132,6 +136,110 @@ public sealed class PeerDbContext : DbContext
             entity.HasIndex(x => new { x.PeerDeviceId, x.RemoteProjectId })
                 .HasDatabaseName("ix_peer_shadow_ws_identity")
                 .IsUnique();
+        });
+
+        modelBuilder.Entity<PeerShadowSessionRecord>(entity =>
+        {
+            entity.ToTable("peer_shadow_sessions");
+            entity.HasKey(x => x.LocalShadowId);
+            entity.Property(x => x.LocalShadowId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.PeerDeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RemoteSessionId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RemoteProjectId).HasMaxLength(128);
+            entity.Property(x => x.Title).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.RunStatus).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.InitiatorDeviceId).HasMaxLength(128);
+            entity.Property(x => x.LastEventSeq).HasDefaultValue(0L).IsRequired();
+            entity.Property(x => x.LastSyncedAt).IsRequired();
+
+            entity.HasOne<PeerDeviceRecord>()
+                .WithMany()
+                .HasForeignKey(x => x.PeerDeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => new { x.PeerDeviceId, x.RemoteSessionId })
+                .HasDatabaseName("ix_peer_shadow_sess_identity")
+                .IsUnique();
+        });
+
+        modelBuilder.Entity<PeerShadowTurnRecord>(entity =>
+        {
+            entity.ToTable("peer_shadow_turns");
+            entity.HasKey(x => new { x.LocalShadowId, x.TurnId });
+            entity.Property(x => x.LocalShadowId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.TurnId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.DigestJson);
+            entity.Property(x => x.UpdatedAt).IsRequired();
+
+            entity.HasOne<PeerShadowSessionRecord>()
+                .WithMany()
+                .HasForeignKey(x => x.LocalShadowId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PeerIngressQueueRecord>(entity =>
+        {
+            entity.ToTable("peer_ingress_queue", t =>
+            {
+                t.HasCheckConstraint(
+                    "ck_peer_ingress_queue_stage",
+                    "stage IN ('received', 'processing', 'processed', 'rejected')");
+            });
+            entity.HasKey(x => new { x.SessionId, x.ClientRequestId });
+            entity.Property(x => x.SessionId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ClientRequestId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.EnqueuedSeq).IsRequired();
+            entity.Property(x => x.OriginDeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.OriginDisplayName).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.Method).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PayloadJson).IsRequired();
+            entity.Property(x => x.Stage).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.RejectErrorCode).HasMaxLength(128);
+            entity.Property(x => x.RunId).HasMaxLength(128);
+            entity.Property(x => x.TurnId).HasMaxLength(128);
+            entity.Property(x => x.MessageId).HasMaxLength(128);
+            entity.Property(x => x.LastEventSeq);
+            entity.Property(x => x.ResponseJson);
+            entity.Property(x => x.ReceivedAt).IsRequired();
+            entity.Property(x => x.UpdatedAt).IsRequired();
+
+            entity.HasIndex(x => new { x.SessionId, x.Stage, x.EnqueuedSeq })
+                .HasDatabaseName("ix_peer_ingress_queue_fifo");
+        });
+
+        modelBuilder.Entity<PeerStagedAttachmentRecord>(entity =>
+        {
+            entity.ToTable("peer_staged_attachments", t =>
+            {
+                t.HasCheckConstraint(
+                    "ck_peer_staged_attachments_origin",
+                    "origin IN ('composer', 'workspace')");
+                t.HasCheckConstraint(
+                    "ck_peer_staged_attachments_status",
+                    "status IN ('staging', 'completed', 'expired', 'failed')");
+            });
+            entity.HasKey(x => x.StageId);
+            entity.Property(x => x.StageId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.SessionId).HasMaxLength(128);
+            entity.Property(x => x.ProjectId).HasMaxLength(128);
+            entity.Property(x => x.Filename).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.MediaType).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Origin).HasMaxLength(32).HasDefaultValue("composer").IsRequired();
+            entity.Property(x => x.TotalBytes).HasDefaultValue(0L).IsRequired();
+            entity.Property(x => x.TotalChunks).HasDefaultValue(1).IsRequired();
+            entity.Property(x => x.Sha256Hex).HasMaxLength(64);
+            entity.Property(x => x.ReceivedChunksJson).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(32).HasDefaultValue("staging").IsRequired();
+            entity.Property(x => x.SourcePath).HasMaxLength(2048);
+            entity.Property(x => x.AttachmentId).HasMaxLength(128);
+            entity.Property(x => x.CreatedAt).IsRequired();
+            entity.Property(x => x.ExpiresAt).IsRequired();
+            entity.Property(x => x.UpdatedAt).IsRequired();
+
+            entity.HasIndex(x => new { x.SessionId, x.Status })
+                .HasDatabaseName("ix_peer_staged_attachments_session");
+            entity.HasIndex(x => x.ExpiresAt)
+                .HasDatabaseName("ix_peer_staged_attachments_expires");
         });
 
         modelBuilder.UseTinadecSnakeCase();

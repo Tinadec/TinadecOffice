@@ -20,6 +20,7 @@ import {
   type WsTerminalSession,
 } from '../wsTerminalProxy.js';
 import { type CoreHandshakeVerifyDecision, type CoreHandshakeVerifyInput, performServerHandshake } from './peerHandshake.js';
+import { PeerDevServerLeaseManager } from './peerDevServerTunnel.js';
 import {
   buildSanitizedPeerCoreHeaders,
   evaluatePeerPolicy,
@@ -37,7 +38,10 @@ import {
   type DecodedPeerFrame,
   isPeerErrorCode,
   MAX_PEER_LISTEN_PORT,
+  PEER_ALPN_DEVSERVER,
   PEER_ALPN_PROTOCOLS,
+  PEER_PROTOCOL_MAJOR,
+  PEER_PROTOCOL_MINOR,
   type PeerErrorCode,
   PeerFrameConnection,
   type PeerHttpReqFrame,
@@ -77,6 +81,9 @@ export interface PeerTlsServerOptions {
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   handshakeTimeoutMs?: number;
+  devServerAllowedPorts?: readonly number[];
+  devServerForbiddenPorts?: readonly number[];
+  devServerVerifyReachable?: boolean;
   createInteractiveShell?: typeof createInteractiveShellSession;
   createAgentTerminal?: typeof createAgentTerminalBridgeSession;
 }
@@ -158,6 +165,7 @@ export function discoverReachablePeerAddresses(port: number): string[] {
 export class PeerTlsServer {
   private readonly options: PeerTlsServerOptions;
   private readonly policySubscriber: PeerPolicyEventSubscriber;
+  readonly devServerTunnel: PeerDevServerLeaseManager;
 
   private server: TlsServer | null = null;
   private inboundEnabled = false;
@@ -171,6 +179,7 @@ export class PeerTlsServer {
   private portConflict = false;
 
   private readonly rawSockets = new Set<import('node:net').Socket>();
+  private readonly activeTlsSockets = new Set<TLSSocket>();
   private readonly pendingSockets = new Set<TLSSocket>();
   private readonly sessionsByController = new Map<string, Set<ActivePeerSession>>();
   private readonly knownSessionInitiators = new Map<string, string>();
@@ -185,6 +194,11 @@ export class PeerTlsServer {
       hostControlToken: options.hostControlToken,
       fetchImpl: options.fetchImpl,
       onPolicyEvent: (event) => this.handlePolicyEvent(event),
+    });
+    this.devServerTunnel = new PeerDevServerLeaseManager({
+      getDynamicForbiddenPorts: () => this.collectDynamicForbiddenPorts(),
+      allowedPorts: options.devServerAllowedPorts,
+      verifyTargetReachable: options.devServerVerifyReachable,
     });
   }
 
@@ -276,12 +290,14 @@ export class PeerTlsServer {
   }
 
   /**
-   * Immediately destroy all mTLS sockets, in-flight HTTP/SSE streams, and WS terminals
-   * belonging to `controllerDeviceId` (< 100ms SLA; executes synchronously in < 5ms).
+   * Immediately destroy all mTLS sockets, in-flight HTTP/SSE streams, WS terminals,
+   * and DevServer ALPN preview leases/sockets belonging to `controllerDeviceId`
+   * (< 100ms SLA; executes synchronously in < 5ms).
    */
   kickController(controllerDeviceId: string, reason = 'Peer access policy changed.'): number {
+    const revokedLeases = this.devServerTunnel.revokeControllerLeases(controllerDeviceId, reason);
     const sessions = this.sessionsByController.get(controllerDeviceId);
-    if (!sessions || sessions.size === 0) return 0;
+    if (!sessions || sessions.size === 0) return revokedLeases;
 
     const snapshot = [...sessions];
     this.sessionsByController.delete(controllerDeviceId);
@@ -289,7 +305,7 @@ export class PeerTlsServer {
     for (const session of snapshot) {
       this.teardownSession(session, 'policy_denied', reason);
     }
-    return snapshot.length;
+    return snapshot.length + revokedLeases;
   }
 
   private async doSyncFromCore(): Promise<PeerInboundRuntimeStatus> {
@@ -428,6 +444,24 @@ export class PeerTlsServer {
   }
 
   private async stopListening(reason: string): Promise<void> {
+    const closingPromises: Promise<void>[] = [];
+    for (const tlsSock of this.activeTlsSockets) {
+      if (!tlsSock.destroyed) {
+        closingPromises.push(
+          new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, 40);
+            t.unref?.();
+            tlsSock.once('close', () => {
+              clearTimeout(t);
+              resolve();
+            });
+          }),
+        );
+      }
+    }
+
+    this.devServerTunnel.revokeAll(reason);
+
     for (const sock of this.pendingSockets) {
       try {
         sock.destroy();
@@ -444,11 +478,19 @@ export class PeerTlsServer {
     }
     this.sessionsByController.clear();
 
+    if (closingPromises.length > 0) {
+      await Promise.all(closingPromises);
+    }
+    this.activeTlsSockets.clear();
+
+    // Only destroy raw TCP sockets that never completed TLS upgrade (never double-destroy TLSSocket backing handle).
     for (const rawSock of this.rawSockets) {
-      try {
-        rawSock.destroy();
-      } catch {
-        // ignore
+      if (!rawSock.destroyed) {
+        try {
+          rawSock.destroy();
+        } catch {
+          // ignore
+        }
       }
     }
     this.rawSockets.clear();
@@ -506,6 +548,38 @@ export class PeerTlsServer {
   private async handleIncomingTlsConnection(tlsSocket: TLSSocket): Promise<void> {
     if (!this.inboundEnabled || this.stopped) {
       tlsSocket.destroy();
+      return;
+    }
+
+    this.activeTlsSockets.add(tlsSocket);
+    tlsSocket.once('close', () => {
+      this.activeTlsSockets.delete(tlsSocket);
+    });
+
+    if (tlsSocket.alpnProtocol === PEER_ALPN_DEVSERVER) {
+      this.pendingSockets.add(tlsSocket);
+      tlsSocket.once('close', () => {
+        this.pendingSockets.delete(tlsSocket);
+      });
+      try {
+        await this.devServerTunnel.handleIncomingDevServerSocket({
+          tlsSocket,
+          isInboundEnabled: () => this.inboundEnabled && !this.stopped,
+          verifyControllerGrant: (input) =>
+            this.verifyHandshakeWithCore({
+              transport: 'lan',
+              controllerDeviceId: input.controllerDeviceId,
+              displayName: input.controllerDeviceId,
+              remoteFingerprint: input.clientFingerprint,
+              protocolMajor: PEER_PROTOCOL_MAJOR,
+              protocolMinor: PEER_PROTOCOL_MINOR,
+              pairingMode: 'grant',
+            }),
+          handshakeTimeoutMs: this.options.handshakeTimeoutMs,
+        });
+      } finally {
+        this.pendingSockets.delete(tlsSocket);
+      }
       return;
     }
 
@@ -643,7 +717,10 @@ export class PeerTlsServer {
 
   private handleHttpReqStart(session: ActivePeerSession, req: PeerHttpReqFrame): void {
     const contentType = this.getHeader(req.headers, 'content-type') ?? '';
-    const isJsonBody = req.hasBody && contentType.toLowerCase().includes('application/json');
+    const isJsonBody =
+      req.hasBody &&
+      (contentType.toLowerCase().includes('application/json') ||
+        /^\/api\/v1\/peers\/internal\/devserver-lease(?:\/|$)/i.test(req.path));
 
     // Fast fail-closed policy pre-check before reading any body bytes (unless observer POST tool execute needs bodyJson).
     const mightNeedJsonForPolicy =
@@ -827,6 +904,42 @@ export class PeerTlsServer {
           decision.message,
           reqFrame.path,
         );
+        return;
+      }
+
+      const trimmedReqPath = reqFrame.path.replace(/\/+$/, '');
+      const lowerReqPath = trimmedReqPath.toLowerCase();
+      if (
+        lowerReqPath === '/api/v1/peers/internal/devserver-lease' ||
+        lowerReqPath.startsWith('/api/v1/peers/internal/devserver-lease/')
+      ) {
+        const leaseResult = await this.devServerTunnel.handleInternalLeaseHttpRequest(
+          session.controller,
+          reqFrame.method,
+          trimmedReqPath,
+          bodyJson,
+        );
+        session.inFlightHttp.delete(streamId);
+        if (!leaseResult.ok) {
+          this.sendHttpProblemResponse(
+            session.connection,
+            streamId,
+            leaseResult.status,
+            leaseResult.code,
+            leaseResult.detail,
+            reqFrame.path,
+          );
+          return;
+        }
+        const outBytes = Buffer.from(JSON.stringify(leaseResult.body), 'utf8');
+        session.connection.sendFrame({
+          type: 'http.res.head',
+          streamId,
+          status: leaseResult.status,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+        session.connection.sendFrame({ type: 'http.res.chunk', streamId }, outBytes);
+        session.connection.sendFrame({ type: 'http.res.end', streamId });
         return;
       }
 
@@ -1300,6 +1413,35 @@ export class PeerTlsServer {
     } catch {
       // ignore
     }
+  }
+
+  private collectDynamicForbiddenPorts(): Set<number> {
+    const ports = new Set<number>(this.options.devServerForbiddenPorts ?? []);
+    if (this.actualListenPort && this.actualListenPort > 0) {
+      ports.add(this.actualListenPort);
+    }
+    if (this.configuredPort > 0) {
+      ports.add(this.configuredPort);
+    }
+    const addPortFromUrl = (rawUrl: string | undefined) => {
+      if (!rawUrl) return;
+      try {
+        const parsed = new URL(rawUrl);
+        const port = Number(parsed.port);
+        if (Number.isInteger(port) && port > 0) {
+          ports.add(port);
+        }
+      } catch {
+        // ignore invalid URL
+      }
+    };
+    addPortFromUrl(this.options.coreUrl());
+    addPortFromUrl(process.env.TINADEC_TOOL_RUNTIME_URL);
+    const gwPort = Number(process.env.TINADEC_GATEWAY_PORT || process.env.PORT || '');
+    if (Number.isInteger(gwPort) && gwPort > 0) {
+      ports.add(gwPort);
+    }
+    return ports;
   }
 
   private getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {

@@ -46,6 +46,7 @@ import { api } from '@/api'
 import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 import { useHostAccess } from '@/lib/hostAccess'
+import { usePeerDevices } from '@/composables/usePeerDevices'
 import { isConnectionLevelError, useNotifications } from '@/composables/useNotifications'
 
 const COMPOSER_SEND_KEY = 'composer-send'
@@ -54,6 +55,7 @@ const COMPOSER_ATTACHMENT_KEY = 'composer-attachment'
 
 const { t, te } = useI18n()
 const { canAccessBackend } = useHostAccess()
+const { isActivePeerOfflineReadonly } = usePeerDevices()
 const { notify, dismissByKey } = useNotifications()
 const { runStatusLabel } = useStatusLabels()
 const router = useRouter()
@@ -643,13 +645,17 @@ async function togglePlusMenu() {
 const attachments = pendingAttachments
 // The native picker opens within the user gesture. If necessary, its selection
 // creates a correctly typed draft session before bytes are uploaded.
-const canAttach = computed(() => !attachmentPreparing.value && !props.settingsSaving)
+const canAttach = computed(
+  () => !attachmentPreparing.value && !props.settingsSaving && !isActivePeerOfflineReadonly.value,
+)
 /**
  * A file with no words is a turn of its own: Core appends it to the transcript and starts no
  * run. So Send unlocks on either half. Only *ready* chips count - an upload still in flight
  * names no stored row, and sending early would drop the file.
  */
-const canSend = computed(() => Boolean(props.modelValue.trim()) || pendingAttachmentCount() > 0)
+const canSend = computed(
+  () => !isActivePeerOfflineReadonly.value && (Boolean(props.modelValue.trim()) || pendingAttachmentCount() > 0),
+)
 
 function openFilePicker(accept: string) {
   closeCommandPanel()
@@ -956,7 +962,7 @@ onUnmounted(() => {
 })
 
 function submit(pref?: DispatchPref, asText = false) {
-  if (props.settingsSaving || modelSaving.value || attachmentPreparing.value) return
+  if (isActivePeerOfflineReadonly.value || props.settingsSaving || modelSaving.value || attachmentPreparing.value) return
   if (!asText && handleCommandEnter()) return
   const content = props.modelValue.trim()
   if (!content && !canSend.value) return
@@ -1178,6 +1184,8 @@ function confirmSteer(id: string, interrupt = false) {
           <button
             ref="plusTriggerRef"
             class="welcome-dialog-plus"
+            :disabled="isActivePeerOfflineReadonly"
+            :title="isActivePeerOfflineReadonly ? t('peers.shadowBanner.composerDisabledHint') : undefined"
             :aria-label="t('composer.commands')"
             aria-haspopup="dialog"
             :aria-expanded="commandPanelOpen"
@@ -1225,7 +1233,9 @@ function confirmSteer(id: string, interrupt = false) {
           ref="textareaRef"
           :value="modelValue"
           class="welcome-dialog-input"
-          :placeholder="t('chat.whatToDo')"
+          :disabled="isActivePeerOfflineReadonly"
+          :title="isActivePeerOfflineReadonly ? t('peers.shadowBanner.composerDisabledHint') : undefined"
+          :placeholder="isActivePeerOfflineReadonly ? t('peers.shadowBanner.composerDisabledPlaceholder') : t('chat.whatToDo')"
           rows="1"
           @input="onDraftInput"
           @click="onCaretMove"
@@ -1252,8 +1262,9 @@ function confirmSteer(id: string, interrupt = false) {
             size="icon"
             class="welcome-dialog-send"
             data-testid="composer-send"
-            :disabled="!canSend || settingsSaving || modelSaving || attachmentPreparing"
-            :aria-label="canSend ? t('chat.send') : t('chat.nothingToSend')"
+            :disabled="!canSend || isActivePeerOfflineReadonly || settingsSaving || modelSaving || attachmentPreparing"
+            :title="isActivePeerOfflineReadonly ? t('peers.shadowBanner.composerDisabledHint') : undefined"
+            :aria-label="isActivePeerOfflineReadonly ? t('peers.shadowBanner.composerDisabledHint') : (canSend ? t('chat.send') : t('chat.nothingToSend'))"
             @click="submit()"
           >
             <span v-if="busy" class="composer-send-spinner" role="status" :aria-label="t('chat.sending')" />

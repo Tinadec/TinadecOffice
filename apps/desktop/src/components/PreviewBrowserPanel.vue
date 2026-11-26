@@ -9,6 +9,7 @@ import {
   Hand,
   Home as HomeIcon,
   Layers,
+  Link2,
   Monitor,
   Play,
   Plus,
@@ -22,6 +23,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
+import { usePeerDevices, type PeerDevServerLeaseDto } from '@/composables/usePeerDevices'
 
 type ViewportPreset = 'desktop' | 'tablet' | 'mobile' | 'custom'
 type PanelMode = 'tabs' | 'mirror'
@@ -519,8 +521,105 @@ onMounted(() => {
   }
 })
 
+const {
+  activeEndpoint,
+  activePeerDevice,
+  activePeerDevServerLeases,
+  isActivePeerOfflineReadonly,
+  requestDevServerLease,
+  releaseDevServerLease,
+} = usePeerDevices()
+
+const isPeerEndpointActive = computed(() => activeEndpoint.value.kind === 'peer')
+const remotePortInput = ref('5173')
+const leaseMappingBusy = ref(false)
+const leaseReleasingBusy = ref(false)
+const leaseClockNow = ref(Date.now())
+let leaseCountdownTimer: number | null = null
+
+const currentPeerLease = computed<PeerDevServerLeaseDto | null>(
+  () => activePeerDevServerLeases.value[0] ?? null,
+)
+
+const leaseRemainingSeconds = computed<number>(() => {
+  const lease = currentPeerLease.value
+  if (!lease) return 0
+  return Math.max(0, Math.floor((lease.expires_at_ms - leaseClockNow.value) / 1000))
+})
+
+const leaseCountdownText = computed<string>(() => {
+  const total = leaseRemainingSeconds.value
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+})
+
+function syncLeaseTimer(): void {
+  if (currentPeerLease.value && leaseCountdownTimer === null) {
+    leaseClockNow.value = Date.now()
+    leaseCountdownTimer = window.setInterval(() => {
+      leaseClockNow.value = Date.now()
+    }, 1000)
+  } else if (!currentPeerLease.value && leaseCountdownTimer !== null) {
+    window.clearInterval(leaseCountdownTimer)
+    leaseCountdownTimer = null
+  }
+}
+
+watch(currentPeerLease, () => {
+  syncLeaseTimer()
+}, { immediate: true })
+
+async function handleMapRemoteDevServer(presetPort?: number): Promise<void> {
+  if (activeEndpoint.value.kind !== 'peer' || leaseMappingBusy.value) return
+  if (presetPort !== undefined) {
+    remotePortInput.value = String(presetPort)
+  }
+  const parsedPort = Number.parseInt(remotePortInput.value.trim(), 10)
+  if (!Number.isInteger(parsedPort) || parsedPort < 1024 || parsedPort > 65535) {
+    notify.error(label('peers.devServer.invalidPortError', 'Enter a valid remote user port between 1024 and 65535.'), {
+      source: 'preview',
+    })
+    return
+  }
+  leaseMappingBusy.value = true
+  try {
+    const lease = await requestDevServerLease(activeEndpoint.value.deviceId, parsedPort)
+    panelMode.value = 'tabs'
+    navigate(lease.preview_url)
+  } catch (err) {
+    notify.error(err instanceof Error ? err.message : label('peers.devServer.mapFailedError', 'Failed to map remote DevServer preview.'), {
+      source: 'preview',
+    })
+  } finally {
+    leaseMappingBusy.value = false
+  }
+}
+
+async function handleReleaseRemoteDevServer(): Promise<void> {
+  const lease = currentPeerLease.value
+  if (!lease || leaseReleasingBusy.value) return
+  leaseReleasingBusy.value = true
+  try {
+    await releaseDevServerLease(lease.device_id, lease.lease_id)
+    if (activeTab.value.currentUrl.startsWith(lease.preview_url)) {
+      goHome()
+    }
+  } catch (err) {
+    notify.error(err instanceof Error ? err.message : label('peers.devServer.releaseFailedError', 'Failed to close DevServer mapping.'), {
+      source: 'preview',
+    })
+  } finally {
+    leaseReleasingBusy.value = false
+  }
+}
+
 onBeforeUnmount(() => {
   stopMirrorPolling()
+  if (leaseCountdownTimer !== null) {
+    window.clearInterval(leaseCountdownTimer)
+    leaseCountdownTimer = null
+  }
   try {
     unsubscribeMirrorState?.()
   } catch {
@@ -670,6 +769,84 @@ onBeforeUnmount(() => {
         <button class="preview-nav-btn" :title="label('context.previewOpenExternal', 'Open external')" @click="openExternal">
           <ExternalLink :size="15" />
         </button>
+      </div>
+
+      <!-- Remote Peer DevServer ALPN Tunnel Mapping Bar (shown ONLY when activeEndpoint.kind === 'peer') -->
+      <div
+        v-if="isPeerEndpointActive"
+        class="preview-peer-lease-bar"
+        data-testid="preview-peer-lease-bar"
+      >
+        <span class="preview-peer-lease-title">
+          <Link2 :size="12" aria-hidden="true" />
+          <span>{{ label('peers.devServer.barTitle', 'Map Remote Service') }}</span>
+          <strong class="preview-peer-device-tag">{{ activePeerDevice?.display_name || (activeEndpoint.kind === 'peer' ? activeEndpoint.deviceId : '') }}</strong>
+        </span>
+
+        <div class="preview-peer-port-controls">
+          <input
+            v-model="remotePortInput"
+            type="number"
+            min="1024"
+            max="65535"
+            class="preview-peer-port-input"
+            :disabled="isActivePeerOfflineReadonly || leaseMappingBusy"
+            :placeholder="label('peers.devServer.portPlaceholder', '5173')"
+            :aria-label="label('peers.devServer.portLabel', 'Remote DevServer port')"
+            data-testid="preview-peer-port-input"
+            @keydown.enter.prevent="handleMapRemoteDevServer()"
+          />
+          <button
+            type="button"
+            class="preview-peer-port-preset"
+            :disabled="isActivePeerOfflineReadonly || leaseMappingBusy"
+            @click="handleMapRemoteDevServer(5173)"
+          >:5173</button>
+          <button
+            type="button"
+            class="preview-peer-port-preset"
+            :disabled="isActivePeerOfflineReadonly || leaseMappingBusy"
+            @click="handleMapRemoteDevServer(3000)"
+          >:3000</button>
+          <button
+            type="button"
+            class="preview-peer-map-btn"
+            :disabled="isActivePeerOfflineReadonly || leaseMappingBusy"
+            data-testid="preview-map-remote-btn"
+            @click="handleMapRemoteDevServer()"
+          >
+            <span>{{ leaseMappingBusy ? label('peers.devServer.mappingBtn', 'Mapping…') : label('peers.devServer.mapBtn', 'Map Preview') }}</span>
+          </button>
+        </div>
+
+        <div
+          v-if="currentPeerLease"
+          class="preview-peer-active-lease"
+          data-testid="preview-active-lease-pill"
+        >
+          <button
+            type="button"
+            class="preview-peer-lease-link"
+            :title="currentPeerLease.preview_url"
+            @click="navigate(currentPeerLease.preview_url)"
+          >
+            <code>:{{ currentPeerLease.target_port }} → 127.0.0.1:{{ currentPeerLease.local_port }}</code>
+          </button>
+          <span class="preview-peer-lease-ttl" data-testid="preview-lease-countdown">
+            {{ leaseCountdownText }}
+          </span>
+          <button
+            type="button"
+            class="preview-peer-release-btn"
+            :disabled="leaseReleasingBusy"
+            :title="label('peers.devServer.releaseBtn', 'Close mapping')"
+            data-testid="preview-release-lease-btn"
+            @click="handleReleaseRemoteDevServer"
+          >
+            <X :size="11" aria-hidden="true" />
+            <span>{{ label('peers.devServer.releaseBtn', 'Close mapping') }}</span>
+          </button>
+        </div>
       </div>
 
       <div
@@ -1619,4 +1796,145 @@ onBeforeUnmount(() => {
 
 .spinning { animation: preview-spin 1s linear infinite; }
 @keyframes preview-spin { to { transform: rotate(360deg); } }
+
+.preview-peer-lease-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 5px 8px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.preview-peer-lease-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.preview-peer-device-tag {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-peer-port-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.preview-peer-port-input {
+  width: 64px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.preview-peer-port-preset {
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.preview-peer-port-preset:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.preview-peer-map-btn {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--bg-primary-button, var(--text-primary));
+  color: var(--text-on-primary, var(--bg-primary));
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.preview-peer-map-btn:disabled,
+.preview-peer-port-preset:disabled,
+.preview-peer-port-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.preview-peer-active-lease {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+}
+
+.preview-peer-lease-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.preview-peer-lease-link code {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+}
+
+.preview-peer-lease-ttl {
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-peer-release-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-muted);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.preview-peer-release-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
+  .preview-mode-btn,
+  .preview-nav-btn,
+  .preview-dim-chip,
+  .mirror-action-btn {
+    transition: none;
+  }
+}
 </style>

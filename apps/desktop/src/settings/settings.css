@@ -4461,7 +4461,9 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
   .peer-address-chip,
   .peer-entity-card,
-  .peer-whitelist-item {
+  .peer-whitelist-item,
+  .peer-shadow-status-strip,
+  .peer-devserver-chip {
     transition: none !important;
   }
 }
@@ -7089,6 +7091,38 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   font-size: 12.5px;
   text-align: center;
 }
+
+/* ===== Wave 2: Offline Shadow Cache & DevServer Tunnel Monochrome Tokens ===== */
+.peer-shadow-status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-card, var(--border-default));
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: border-color 140ms ease;
+}
+
+.peer-devserver-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-card, var(--border-default));
+  background: var(--surface-section);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
 
 
 

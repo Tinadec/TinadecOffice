@@ -40,6 +40,22 @@ public static class PeerConstants
         "all",
         "selected"
     };
+
+    public static readonly IReadOnlySet<string> IngressStages = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "received",
+        "processing",
+        "processed",
+        "rejected"
+    };
+
+    public static readonly IReadOnlySet<string> StagedAttachmentStatuses = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "staging",
+        "completed",
+        "expired",
+        "failed"
+    };
 }
 
 public sealed class PeerInboundSettingsRecord
@@ -113,6 +129,67 @@ public sealed class PeerShadowWorkspaceRecord
     public string? RemoteRootPath { get; set; }
     public int Visible { get; set; } = 1;
     public long SyncedAt { get; set; }
+}
+
+public sealed class PeerShadowSessionRecord
+{
+    public string LocalShadowId { get; set; } = string.Empty;
+    public string PeerDeviceId { get; set; } = string.Empty;
+    public string RemoteSessionId { get; set; } = string.Empty;
+    public string? RemoteProjectId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string RunStatus { get; set; } = "idle";
+    public string? InitiatorDeviceId { get; set; }
+    public long LastEventSeq { get; set; }
+    public long LastSyncedAt { get; set; }
+}
+
+public sealed class PeerShadowTurnRecord
+{
+    public string LocalShadowId { get; set; } = string.Empty;
+    public string TurnId { get; set; } = string.Empty;
+    public string? DigestJson { get; set; }
+    public long UpdatedAt { get; set; }
+}
+
+public sealed class PeerIngressQueueRecord
+{
+    public string SessionId { get; set; } = string.Empty;
+    public string ClientRequestId { get; set; } = string.Empty;
+    public long EnqueuedSeq { get; set; }
+    public string OriginDeviceId { get; set; } = string.Empty;
+    public string OriginDisplayName { get; set; } = string.Empty;
+    public string Method { get; set; } = "session.send";
+    public string PayloadJson { get; set; } = "{}";
+    public string Stage { get; set; } = "received";
+    public string? RejectErrorCode { get; set; }
+    public string? RunId { get; set; }
+    public string? TurnId { get; set; }
+    public string? MessageId { get; set; }
+    public long? LastEventSeq { get; set; }
+    public string? ResponseJson { get; set; }
+    public long ReceivedAt { get; set; }
+    public long UpdatedAt { get; set; }
+}
+
+public sealed class PeerStagedAttachmentRecord
+{
+    public string StageId { get; set; } = string.Empty;
+    public string? SessionId { get; set; }
+    public string? ProjectId { get; set; }
+    public string Filename { get; set; } = string.Empty;
+    public string MediaType { get; set; } = "application/octet-stream";
+    public string Origin { get; set; } = "composer";
+    public long TotalBytes { get; set; }
+    public int TotalChunks { get; set; } = 1;
+    public string? Sha256Hex { get; set; }
+    public string ReceivedChunksJson { get; set; } = "[]";
+    public string Status { get; set; } = "staging";
+    public string? SourcePath { get; set; }
+    public string? AttachmentId { get; set; }
+    public long CreatedAt { get; set; }
+    public long ExpiresAt { get; set; }
+    public long UpdatedAt { get; set; }
 }
 
 /// <summary>

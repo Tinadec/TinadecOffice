@@ -585,9 +585,27 @@ const {
   mountedWorkspaces,
   activeEndpoint: activePeerEndpoint,
   activePeerDevice,
+  isActivePeerOfflineReadonly,
+  connectDevice: connectPeerDevice,
   refreshAll: refreshPeerDevices,
   switchEndpoint: switchPeerEndpoint,
 } = usePeerDevices()
+
+const sidebarReconnectingPeer = ref(false)
+
+async function handleReconnectActivePeer() {
+  if (activePeerEndpoint.value.kind !== 'peer' || sidebarReconnectingPeer.value) return
+  sidebarReconnectingPeer.value = true
+  try {
+    await connectPeerDevice(activePeerEndpoint.value.deviceId)
+    await homeController.refreshProjectsAndSessions().catch(() => {})
+    await homeController.loadMessagesAndApprovals().catch(() => {})
+  } catch {
+    // Error is recorded in usePeerDevices
+  } finally {
+    sidebarReconnectingPeer.value = false
+  }
+}
 
 const visibleMountedWorkspaces = computed(() =>
   mountedWorkspaces.value.filter((ws) => ws.visible !== false),
@@ -905,8 +923,8 @@ watch([displayName, () => props.collapsed], async () => {
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
-        :disabled="busy"
-        :title="t('sidebar.newChat')"
+        :disabled="busy || isActivePeerOfflineReadonly"
+        :title="isActivePeerOfflineReadonly ? t('peers.sidebar.offlineReadonlyNewChatDisabled') : t('sidebar.newChat')"
         @click="handleNewThread"
       >
         <MessageSquare :size="16" class="sidebar-icon" />
@@ -1000,15 +1018,26 @@ watch([displayName, () => props.collapsed], async () => {
         <PeerDeviceBadge
           :state="activePeerDevice?.last_state ?? 'disconnected'"
           :device-name="activePeerDevice?.display_name ?? activePeerEndpoint.deviceId"
-          :offline-readonly="(activePeerDevice?.last_state ?? 'disconnected') !== 'ready'"
+          :offline-readonly="isActivePeerOfflineReadonly"
           compact
         />
-        <button
-          type="button"
-          class="peer-return-local-btn"
-          data-testid="sidebar-return-local-btn"
-          @click="handleReturnToLocalEndpoint"
-        >{{ t('peers.sidebar.backToLocal') }}</button>
+        <div class="peer-active-endpoint-actions">
+          <button
+            v-if="isActivePeerOfflineReadonly"
+            type="button"
+            class="peer-return-local-btn"
+            :disabled="sidebarReconnectingPeer"
+            :title="t('peers.shadowBanner.reconnectBtn')"
+            data-testid="sidebar-peer-reconnect-btn"
+            @click="handleReconnectActivePeer"
+          >{{ t('peers.shadowBanner.reconnectBtn') }}</button>
+          <button
+            type="button"
+            class="peer-return-local-btn"
+            data-testid="sidebar-return-local-btn"
+            @click="handleReturnToLocalEndpoint"
+          >{{ t('peers.sidebar.backToLocal') }}</button>
+        </div>
       </div>
       <div id="sidebar-workspaces" ref="sidebarListRef" class="sidebar-list" :class="{ 'sidebar-list--group-collapsed': list.state.value.collapsed }" @scroll.passive="onSidebarListScroll">
         <!-- One entry per visible block. The four option rows are siblings in this scrollport, so
@@ -1076,7 +1105,7 @@ watch([displayName, () => props.collapsed], async () => {
                   <span class="sidebar-list-item-text sidebar-label">{{ item.workspace.name }}</span>
                 </button>
                 <button v-if="item.workspace.project" class="project-row-action sidebar-extra" :aria-label="`${item.workspace.name} · ${t('sidebar.moreActions')}`" :title="t('sidebar.moreActions')" @mousedown.stop @click.stop="openMenuAtButton($event, 'project', item.workspace.key, item.workspace.name)"><MoreHorizontal :size="14" /></button>
-                <button class="project-row-action sidebar-extra" :disabled="busy || item.workspace.project?.availability === 'error'" :aria-label="`${item.workspace.name} · ${t('sidebar.newChat')}`" :title="t('sidebar.newChat')" @mousedown.stop @click.stop="emit('create-session', item.workspace.project ? item.workspace.key : null)"><Plus :size="14" /></button>
+                <button class="project-row-action sidebar-extra" :disabled="busy || isActivePeerOfflineReadonly || item.workspace.project?.availability === 'error'" :aria-label="`${item.workspace.name} · ${isActivePeerOfflineReadonly ? t('peers.sidebar.offlineReadonlyNewChatDisabled') : t('sidebar.newChat')}`" :title="isActivePeerOfflineReadonly ? t('peers.sidebar.offlineReadonlyNewChatDisabled') : t('sidebar.newChat')" @mousedown.stop @click.stop="emit('create-session', item.workspace.project ? item.workspace.key : null)"><Plus :size="14" /></button>
               </div>
               <div v-if="isExpanded(item.workspace.key)" :id="`workspace-sessions-${item.workspace.key}`" class="project-sessions sidebar-extra">
                 <div v-if="workspaceLoadStates?.[item.workspace.key]?.status === 'loading'" class="session-empty" role="status">{{ t('common.loading') }}</div>
@@ -1483,6 +1512,11 @@ watch([displayName, () => props.collapsed], async () => {
   border-radius: 8px;
   border: 1px solid var(--border-card-active, var(--border-muted));
   background: var(--surface-raised);
+}
+.peer-active-endpoint-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .peer-return-local-btn {
   padding: 2px 7px;

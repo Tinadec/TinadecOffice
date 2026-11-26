@@ -24,11 +24,17 @@ public sealed class PeersModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IPeerIdentityService>(sp => sp.GetRequiredService<PeerIdentityService>());
         builder.Services.AddSingleton<PeerPairingService>();
         builder.Services.AddSingleton<IPeerPairingService>(sp => sp.GetRequiredService<PeerPairingService>());
+        builder.Services.AddSingleton<PeerShadowService>();
+        builder.Services.AddSingleton<IPeerShadowService>(sp => sp.GetRequiredService<PeerShadowService>());
+        builder.Services.AddSingleton<PeerIngressQueueService>();
+        builder.Services.AddSingleton<IPeerIngressQueueService>(sp => sp.GetRequiredService<PeerIngressQueueService>());
+        builder.Services.AddSingleton<PeerAttachmentStageService>();
+        builder.Services.AddSingleton<IPeerAttachmentStageService>(sp => sp.GetRequiredService<PeerAttachmentStageService>());
 
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
-            Version = "0.1.0",
+            Version = "0.2.0",
             Dependencies = ["contracts", "abstractions", "persistence", "tenancy"],
             Capabilities =
             [
@@ -37,7 +43,10 @@ public sealed class PeersModuleRegistrar : IModuleRegistrar
                 "peer_device_directory",
                 "peer_grants",
                 "peer_access_policies",
-                "peer_shadow_workspaces"
+                "peer_shadow_workspaces",
+                "peer_shadow_sessions",
+                "peer_ingress_queue",
+                "peer_staged_attachments"
             ],
             Language = "C#",
             MafPrimitives = [],

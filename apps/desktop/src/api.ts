@@ -24,6 +24,11 @@ import {
 } from '@/lib/endpointScope'
 import type { StorageScopeDto, StorageStatsDto, StorageCleanupPreviewDto, StorageContentPreviewDto, StorageDeletePreviewDto, SessionTransferDto, ConfigurationDocumentDto, StorageConfigureInput } from '@/settings/storage'
 import { ScopedEventSource } from '@/lib/scopedEventSource'
+import {
+  beginPeerSubmissionDraft,
+  clearInFlightPeerSubmissionDraft,
+  markPeerSubmissionUncertain,
+} from '@/lib/peerSubmissionReconcile'
 
 export { endpointScopedApi }
 export type { EndpointScope, EndpointId, EndpointInput }
@@ -3581,6 +3586,56 @@ function catalogKey(name: string): string {
   })
 }
 
+export const PEER_ATTACHMENT_CHUNK_SIZE_BYTES = 256 * 1024
+
+interface PeerSubmissionDraftMeta {
+  sessionId: string
+  storageId?: string
+  text: string
+  stagedAttachmentIds?: readonly string[]
+}
+
+let peerDeviceOfflineLookup: ((deviceId: string) => boolean) | null = null
+let peerShadowFallbackListener: ((deviceId: string, active: boolean, syncedAt?: number | null) => void) | null = null
+const localShadowSessionsSnapshot = new Map<string, SessionDto[]>()
+const localShadowMessagesSnapshot = new Map<string, MessageDto[]>()
+const localShadowSyncedAt = new Map<string, number>()
+
+export function registerPeerOfflineShadowHooks(hooks: {
+  isDeviceOffline?: ((deviceId: string) => boolean) | null
+  onShadowFallback?: ((deviceId: string, active: boolean, syncedAt?: number | null) => void) | null
+}): void {
+  if (hooks.isDeviceOffline !== undefined) peerDeviceOfflineLookup = hooks.isDeviceOffline
+  if (hooks.onShadowFallback !== undefined) peerShadowFallbackListener = hooks.onShadowFallback
+}
+
+export function clearLocalPeerShadowSnapshots(deviceId?: string): void {
+  if (!deviceId) {
+    localShadowSessionsSnapshot.clear()
+    localShadowMessagesSnapshot.clear()
+    localShadowSyncedAt.clear()
+    return
+  }
+  localShadowSessionsSnapshot.delete(deviceId)
+  localShadowSyncedAt.delete(deviceId)
+  const prefix = `${deviceId}:`
+  for (const key of [...localShadowMessagesSnapshot.keys()]) {
+    if (key.startsWith(prefix)) localShadowMessagesSnapshot.delete(key)
+  }
+}
+
+function isPeerKnownOffline(deviceId: string): boolean {
+  return peerDeviceOfflineLookup ? peerDeviceOfflineLookup(deviceId) : false
+}
+
+function isPeerOfflineReadError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.code === 'device_offline' || error.code === 'unreachable' || error.code === 'timeout') {
+    return true
+  }
+  return error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504
+}
+
 function shouldMarkSubmissionUncertain(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false
   if (error.code === 'submission_uncertain' || error.code === 'backend_write_outcome_unknown' || error.code === 'timeout') {
@@ -3593,16 +3648,48 @@ async function submitWithUncertainGuard<T>(
   clientRequestId: string,
   endpointId: EndpointId,
   send: () => Promise<T>,
+  draftMeta?: PeerSubmissionDraftMeta,
 ): Promise<T> {
+  if (draftMeta && endpointId.startsWith('peer:')) {
+    beginPeerSubmissionDraft({
+      endpoint: endpointId,
+      sessionId: draftMeta.sessionId,
+      storageId: draftMeta.storageId,
+      clientRequestId,
+      text: draftMeta.text,
+      stagedAttachmentIds: draftMeta.stagedAttachmentIds,
+    })
+  }
   try {
-    return await send()
+    const result = await send()
+    if (draftMeta && endpointId.startsWith('peer:')) {
+      clearInFlightPeerSubmissionDraft(endpointId, draftMeta.sessionId, clientRequestId)
+    }
+    return result
   } catch (error) {
     if (shouldMarkSubmissionUncertain(error)) {
-      throw toSubmissionUncertainError(error, {
+      const uncertainError = toSubmissionUncertainError(error, {
         clientRequestId,
         endpointId,
-        storageId: error instanceof ApiError ? error.storageId : undefined,
+        storageId: draftMeta?.storageId ?? (error instanceof ApiError ? error.storageId : undefined),
       })
+      if (draftMeta && endpointId.startsWith('peer:')) {
+        markPeerSubmissionUncertain(
+          {
+            endpoint: endpointId,
+            sessionId: draftMeta.sessionId,
+            storageId: draftMeta.storageId,
+            clientRequestId,
+            text: draftMeta.text,
+            stagedAttachmentIds: draftMeta.stagedAttachmentIds,
+          },
+          uncertainError.message,
+        )
+      }
+      throw uncertainError
+    }
+    if (draftMeta && endpointId.startsWith('peer:')) {
+      clearInFlightPeerSubmissionDraft(endpointId, draftMeta.sessionId, clientRequestId)
     }
     throw error
   }
@@ -4071,16 +4158,97 @@ export const api = {
   },
   readiness: (options?: { signal?: AbortSignal }) => request<RuntimeReadinessReceiptDto>('/api/v1/readiness', options),
   getToolLayerReadiness: (options?: { signal?: AbortSignal }) => request<ToolLayerReadinessReceiptDto>('/api/v1/tool-layer-readiness', options),
-  listProjects: (options?: { signal?: AbortSignal; storageId?: string; lifecycleStatus?: 'active' | 'archived' | 'trashed' }) => request<ProjectDto[]>(`/api/v1/projects${options?.lifecycleStatus ? '?lifecycle_status=' + encodeURIComponent(options.lifecycleStatus) : ''}`, options),
+  listProjects: async (options?: { signal?: AbortSignal; storageId?: string; lifecycleStatus?: 'active' | 'archived' | 'trashed' }) => {
+    const endpointScope = currentEndpointScope()
+    const suffix = options?.lifecycleStatus ? '?lifecycle_status=' + encodeURIComponent(options.lifecycleStatus) : ''
+    if (endpointScope.kind !== 'peer') {
+      return request<ProjectDto[]>(`/api/v1/projects${suffix}`, options)
+    }
+    const deviceId = endpointScope.deviceId
+    const fallbackShadowProjects = async (): Promise<ProjectDto[]> => {
+      if (options?.lifecycleStatus && options.lifecycleStatus !== 'active') return []
+      const mounts = await api.listPeerRemoteWorkspaces(deviceId, options?.signal).catch(() => [] as PeerRemoteWorkspaceDto[])
+      const visible = mounts.filter((ws) => ws.mounted && ws.visible !== false)
+      const latestSync = visible.reduce((acc, ws) => Math.max(acc, ws.synced_at ?? 0), localShadowSyncedAt.get(deviceId) ?? 0)
+      if (latestSync > 0) localShadowSyncedAt.set(deviceId, latestSync)
+      peerShadowFallbackListener?.(deviceId, true, latestSync || null)
+      return visible.map((ws) => ({
+        id: ws.remote_project_id,
+        name: ws.name,
+        path: ws.remote_root_path ?? '',
+        storage_id: options?.storageId ?? 'user',
+        availability: 'ready' as const,
+        created_at: new Date(ws.synced_at ?? Date.now()).toISOString(),
+        lifecycle_status: 'active' as const,
+      }))
+    }
+    if (isPeerKnownOffline(deviceId)) {
+      return fallbackShadowProjects()
+    }
+    try {
+      const live = await request<ProjectDto[]>(`/api/v1/projects${suffix}`, options)
+      const now = Date.now()
+      localShadowSyncedAt.set(deviceId, now)
+      peerShadowFallbackListener?.(deviceId, false, now)
+      return live
+    } catch (error) {
+      if (isPeerOfflineReadError(error)) {
+        return fallbackShadowProjects()
+      }
+      throw error
+    }
+  },
   createProject: (name: string, path: string) => request<ProjectDto>('/api/v1/projects', {
     method: 'POST',
     body: JSON.stringify({ name, path })
   }),
-  listSessions: (projectId?: string, signal?: AbortSignal, storageId?: string, lifecycleStatus?: 'active' | 'archived' | 'trashed') => {
+  listSessions: async (projectId?: string, signal?: AbortSignal, storageId?: string, lifecycleStatus?: 'active' | 'archived' | 'trashed') => {
     const query = new URLSearchParams()
     if (projectId) query.set('project_id', projectId)
     if (lifecycleStatus) query.set('lifecycle_status', lifecycleStatus)
-    return request<SessionDto[]>(`/api/v1/sessions${query.size ? '?' + query : ''}`, { signal, storageId, cache: 'no-store' })
+    const endpointScope = currentEndpointScope()
+    const path = `/api/v1/sessions${query.size ? '?' + query : ''}`
+    if (endpointScope.kind !== 'peer') {
+      return request<SessionDto[]>(path, { signal, storageId, cache: 'no-store' })
+    }
+    const deviceId = endpointScope.deviceId
+    const fallbackShadowSessions = async (): Promise<SessionDto[]> => {
+      if (lifecycleStatus && lifecycleStatus !== 'active') return []
+      try {
+        const shadowRows = await api.listPeerShadowSessions(deviceId, { projectId, signal })
+        if (shadowRows.length > 0) {
+          const maxSynced = shadowRows.reduce((acc, row) => Math.max(acc, row.last_synced_at || 0), localShadowSyncedAt.get(deviceId) ?? 0)
+          if (maxSynced > 0) localShadowSyncedAt.set(deviceId, maxSynced)
+          peerShadowFallbackListener?.(deviceId, true, maxSynced || null)
+          return shadowRows.map((row) => mapPeerShadowSessionToSessionDto(row, storageId))
+        }
+      } catch {
+        // Degrade gracefully to in-memory snapshot if Core shadow table has no rows or returns 404.
+      }
+      const cached = localShadowSessionsSnapshot.get(deviceId) ?? []
+      peerShadowFallbackListener?.(deviceId, true, localShadowSyncedAt.get(deviceId) ?? null)
+      return projectId ? cached.filter((item) => (item.project_id ?? null) === projectId) : cached
+    }
+    if (isPeerKnownOffline(deviceId)) {
+      return fallbackShadowSessions()
+    }
+    try {
+      const live = await request<SessionDto[]>(path, { signal, storageId, cache: 'no-store' })
+      const prev = localShadowSessionsSnapshot.get(deviceId) ?? []
+      const merged = projectId
+        ? [...prev.filter((item) => (item.project_id ?? null) !== projectId), ...live]
+        : live
+      localShadowSessionsSnapshot.set(deviceId, merged)
+      const now = Date.now()
+      localShadowSyncedAt.set(deviceId, now)
+      peerShadowFallbackListener?.(deviceId, false, now)
+      return live
+    } catch (error) {
+      if (isPeerOfflineReadError(error)) {
+        return fallbackShadowSessions()
+      }
+      throw error
+    }
   },
   // mode_version_id decides which agent holds the conversation. Omitted = the workspace default.
   createSession: (
@@ -4114,27 +4282,105 @@ export const api = {
   updateSessionSettings: (sessionId: string, settings: SessionSettingsUpdate) => request<SessionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'PATCH', body: JSON.stringify(settings),
   }),
-  listMessages: (sessionId: string, signal?: AbortSignal) => request<MessageDto[]>(`/api/v1/sessions/${sessionId}/messages`, { signal, cache: 'no-store' }),
+  listMessages: async (sessionId: string, signal?: AbortSignal) => {
+    const endpointScope = currentEndpointScope()
+    if (endpointScope.kind !== 'peer') {
+      return request<MessageDto[]>(`/api/v1/sessions/${sessionId}/messages`, { signal, cache: 'no-store' })
+    }
+    const deviceId = endpointScope.deviceId
+    const snapKey = `${deviceId}:${sessionId}`
+    const fallbackShadowMessages = async (): Promise<MessageDto[]> => {
+      try {
+        const detail = await api.getPeerShadowSession(deviceId, sessionId, signal)
+        const syncedAt = detail.session.last_synced_at || localShadowSyncedAt.get(deviceId) || 0
+        if (syncedAt > 0) localShadowSyncedAt.set(deviceId, syncedAt)
+        peerShadowFallbackListener?.(deviceId, true, syncedAt || null)
+        if (detail.messages.length > 0) return detail.messages
+      } catch {
+        // Fallback to local snapshot when Core shadow session detail is absent.
+      }
+      peerShadowFallbackListener?.(deviceId, true, localShadowSyncedAt.get(deviceId) ?? null)
+      return localShadowMessagesSnapshot.get(snapKey) ?? []
+    }
+    if (isPeerKnownOffline(deviceId)) {
+      return fallbackShadowMessages()
+    }
+    try {
+      const live = await request<MessageDto[]>(`/api/v1/sessions/${sessionId}/messages`, { signal, cache: 'no-store' })
+      localShadowMessagesSnapshot.set(snapKey, live)
+      const now = Date.now()
+      localShadowSyncedAt.set(deviceId, now)
+      peerShadowFallbackListener?.(deviceId, false, now)
+      return live
+    } catch (error) {
+      if (isPeerOfflineReadError(error)) {
+        return fallbackShadowMessages()
+      }
+      throw error
+    }
+  },
   postMessage: (
     sessionId: string,
     content: string,
-    options?: { client_request_id?: string; storageId?: string; endpointId?: EndpointInput },
+    options?: {
+      client_request_id?: string
+      storageId?: string
+      endpointId?: EndpointInput
+      attachment_ids?: string[]
+      staged_attachment_ids?: string[]
+    },
   ) => {
     const endpointScope = currentEndpointScope(options?.endpointId)
     const endpointId = toEndpointId(endpointScope)
     const clientRequestId = options?.client_request_id || newClientRequestId()
-    return submitWithUncertainGuard(clientRequestId, endpointId, () =>
-      request<MessageDto>(`/api/v1/sessions/${sessionId}/messages`, {
-        method: 'POST',
+    const bodyPayload: Record<string, unknown> = { content, client_request_id: clientRequestId }
+    if (options?.attachment_ids && options.attachment_ids.length > 0) {
+      bodyPayload.attachment_ids = options.attachment_ids
+    }
+    if (options?.staged_attachment_ids && options.staged_attachment_ids.length > 0) {
+      bodyPayload.staged_attachment_ids = options.staged_attachment_ids
+    }
+    return submitWithUncertainGuard(
+      clientRequestId,
+      endpointId,
+      () =>
+        request<MessageDto>(`/api/v1/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          storageId: options?.storageId,
+          endpointId: endpointScope,
+          headers: { 'x-tinadec-client-request-id': clientRequestId },
+          body: JSON.stringify(bodyPayload),
+        }),
+      {
+        sessionId,
         storageId: options?.storageId,
-        endpointId: endpointScope,
-        headers: { 'x-tinadec-client-request-id': clientRequestId },
-        body: JSON.stringify({ content, client_request_id: clientRequestId }),
-      }),
+        text: content,
+        stagedAttachmentIds: options?.staged_attachment_ids ?? options?.attachment_ids,
+      },
     )
   },
   revertSessionMessage: (sessionId: string, messageId: string) => request<SessionHistoryRevertDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/revert`, { method: 'POST' }),
-  getOrchestrationSnapshot: (sessionId: string, signal?: AbortSignal) => request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`, { signal, cache: 'no-store' }),
+  getOrchestrationSnapshot: async (sessionId: string, signal?: AbortSignal) => {
+    const endpointScope = currentEndpointScope()
+    const emptySnapshot = (): OrchestrationSnapshotDto => ({
+      session_id: sessionId,
+      runs: [],
+      task_nodes: [],
+      context_packs: [],
+      findings: [],
+    } as unknown as OrchestrationSnapshotDto)
+    if (endpointScope.kind === 'peer' && isPeerKnownOffline(endpointScope.deviceId)) {
+      return emptySnapshot()
+    }
+    try {
+      return await request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`, { signal, cache: 'no-store' })
+    } catch (error) {
+      if (endpointScope.kind === 'peer' && isPeerOfflineReadError(error)) {
+        return emptySnapshot()
+      }
+      throw error
+    }
+  },
   // Session organization + graph (Core OrganizationEndpoints, proxied verbatim by the Gateway).
   /** The session's organization, or null before its first run creates one (404 `organization_not_started`). */
   getOrganization: async (sessionId: string): Promise<OrganizationDto | null> => {
@@ -4174,27 +4420,56 @@ export const api = {
     request<SessionTopologyDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/topology${querySuffix({
       run_id: params.run_id, include_finished: params.include_finished, max_runs: params.max_runs, max_tasks: params.max_tasks,
     })}`, { cache: 'no-store', signal }),
-  listToolExecutions: (sessionId: string, params: { run_id?: string; limit?: number } = {}, signal?: AbortSignal) => {
+  listToolExecutions: async (sessionId: string, params: { run_id?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const search = new URLSearchParams();
     if (params.run_id) search.set('run_id', params.run_id);
     if (params.limit !== undefined) search.set('limit', String(params.limit));
     const suffix = search.toString() ? `?${search.toString()}` : '';
-    return request<ToolExecutionTimelineItemDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/tool-executions${suffix}`, { signal, cache: 'no-store' });
+    const endpointScope = currentEndpointScope();
+    if (endpointScope.kind === 'peer' && isPeerKnownOffline(endpointScope.deviceId)) {
+      return [];
+    }
+    try {
+      return await request<ToolExecutionTimelineItemDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/tool-executions${suffix}`, { signal, cache: 'no-store' });
+    } catch (error) {
+      if (endpointScope.kind === 'peer' && isPeerOfflineReadError(error)) return [];
+      throw error;
+    }
   },
   getToolExecutionPreview: (executionId: string, params: { max_bytes?: number } = {}, signal?: AbortSignal) => {
     const suffix = params.max_bytes === undefined ? '' : `?max_bytes=${params.max_bytes}`
     return request<ToolExecutionPreviewDto>(`/api/v1/tool-executions/${encodeURIComponent(executionId)}/preview${suffix}`, { signal, cache: 'no-store' })
   },
-  listRuns: (sessionId: string, signal?: AbortSignal) => request<OrchestrationRunDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { signal, cache: 'no-store' }),
+  listRuns: async (sessionId: string, signal?: AbortSignal) => {
+    const endpointScope = currentEndpointScope()
+    if (endpointScope.kind === 'peer' && isPeerKnownOffline(endpointScope.deviceId)) {
+      return []
+    }
+    try {
+      return await request<OrchestrationRunDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { signal, cache: 'no-store' })
+    } catch (error) {
+      if (endpointScope.kind === 'peer' && isPeerOfflineReadError(error)) return []
+      throw error
+    }
+  },
   listTaskNodes: (sessionId: string) => request<TaskNodeDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/task-nodes`),
   listContextPacks: (sessionId: string) => request<ContextPackDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/context-packs`),
   listSupervisionFindings: (sessionId: string) => request<SupervisionFindingDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/supervision-findings`),
-  listApprovals: (sessionId?: string, status?: string, signal?: AbortSignal) => {
+  listApprovals: async (sessionId?: string, status?: string, signal?: AbortSignal) => {
     const search = new URLSearchParams();
     if (status) search.set('status', status);
     if (sessionId) search.set('session_id', sessionId);
     const suffix = search.toString() ? `?${search.toString()}` : '';
-    return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`, { signal, cache: 'no-store' });
+    const endpointScope = currentEndpointScope();
+    if (endpointScope.kind === 'peer' && isPeerKnownOffline(endpointScope.deviceId)) {
+      return [];
+    }
+    try {
+      return await request<ApprovalDto[]>(`/api/v1/approvals${suffix}`, { signal, cache: 'no-store' });
+    } catch (error) {
+      if (endpointScope.kind === 'peer' && isPeerOfflineReadError(error)) return [];
+      throw error;
+    }
   },
   listApprovalRules: (sessionId: string, signal?: AbortSignal) =>
     request<ApprovalRuleDto[]>(`/api/v1/approval-rules?sessionId=${encodeURIComponent(sessionId)}`, { signal, cache: 'no-store' }),
@@ -4524,18 +4799,26 @@ export const api = {
   /** Effective policy ceilings of this scope (read-only; edited through the runtime document). */
   getAgentRuntimePolicy: () => request<AgentRuntimePolicyDto>('/api/v1/agent-runtime-policy'),
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; clear_meeting_model_override?: boolean; expected_settings_revision?: number; space_options?: SpaceOptionsDto | null; attachment_ids?: string[]; interrupt?: boolean; interface_locale?: string }) => {
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; clear_meeting_model_override?: boolean; expected_settings_revision?: number; space_options?: SpaceOptionsDto | null; attachment_ids?: string[]; staged_attachment_ids?: string[]; interrupt?: boolean; interface_locale?: string }) => {
     const endpointScope = currentEndpointScope()
     const endpointId = toEndpointId(endpointScope)
     const clientMessageId = body.client_message_id || newClientRequestId()
     const payload = body.client_message_id ? body : { ...body, client_message_id: clientMessageId }
-    return submitWithUncertainGuard(clientMessageId, endpointId, () =>
-      request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
-        method: 'POST',
-        endpointId: endpointScope,
-        headers: { 'x-tinadec-client-request-id': clientMessageId },
-        body: JSON.stringify(payload),
-      }),
+    return submitWithUncertainGuard(
+      clientMessageId,
+      endpointId,
+      () =>
+        request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
+          method: 'POST',
+          endpointId: endpointScope,
+          headers: { 'x-tinadec-client-request-id': clientMessageId },
+          body: JSON.stringify(payload),
+        }),
+      {
+        sessionId,
+        text: body.content,
+        stagedAttachmentIds: body.staged_attachment_ids ?? body.attachment_ids,
+      },
     )
   },
   getCorrection: (runId: string) => request<Record<string, unknown>>(`/api/v1/runs/${encodeURIComponent(runId)}/correction`),
@@ -4548,13 +4831,54 @@ export const api = {
   // so an upload is a raw body with its name and type in the query string. The ceiling is
   // enforced in Core, and a refusal arrives as a coded error ({ code: 'attachment_too_large' })
   // that requestResult() already turns into a branchable `err.code`.
-  uploadAttachment: (
+  uploadAttachment: async (
     sessionId: string,
     bytes: Blob | ArrayBuffer | Uint8Array,
     fileName: string,
     mediaType?: string,
     metadata: { origin?: 'composer' | 'workspace'; projectId?: string | null; sourcePath?: string } = {},
-  ) => {
+  ): Promise<MessageAttachmentDto> => {
+    const endpointScope = currentEndpointScope();
+    const declaredByteLength =
+      bytes instanceof Uint8Array
+        ? bytes.byteLength
+        : bytes instanceof ArrayBuffer
+          ? bytes.byteLength
+          : typeof Blob !== 'undefined' && bytes instanceof Blob
+            ? bytes.size
+            : 0;
+    const isPeerZeroCopy = endpointScope.kind === 'peer' && metadata.origin === 'workspace' && Boolean(metadata.sourcePath);
+    const isPeerChunked = endpointScope.kind === 'peer' && declaredByteLength > PEER_ATTACHMENT_CHUNK_SIZE_BYTES;
+
+    if (isPeerZeroCopy || isPeerChunked) {
+      const staged = await api.stageAttachmentChunks(sessionId, isPeerZeroCopy ? null : bytes, fileName, mediaType, {
+        endpointId: endpointScope,
+        origin: metadata.origin,
+        projectId: metadata.projectId,
+        sourcePath: metadata.sourcePath,
+        totalBytes: declaredByteLength,
+      });
+      if (staged.attachment) return staged.attachment;
+      const resolvedId = staged.attachment_id || staged.stage_id;
+      return {
+        id: resolvedId,
+        session_id: sessionId,
+        message_id: null,
+        file_name: fileName,
+        media_type: mediaType || 'application/octet-stream',
+        content_hash: '',
+        content_length: declaredByteLength,
+        origin: metadata.origin ?? 'composer',
+        project_id: metadata.projectId ?? null,
+        source_path: metadata.sourcePath ?? null,
+        delivered_to_model: false,
+        delivered_run_id: null,
+        delivered_at: null,
+        created_at: new Date().toISOString(),
+        bound_at: null,
+      } as MessageAttachmentDto;
+    }
+
     const search = new URLSearchParams({ filename: fileName });
     if (mediaType) search.set('media_type', mediaType);
     if (metadata.origin) search.set('origin', metadata.origin);
@@ -4563,6 +4887,92 @@ export const api = {
     return request<MessageAttachmentDto>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments?${search.toString()}`,
       { method: 'POST', body: bytes as BodyInit, headers: { 'content-type': 'application/octet-stream' } },
+    );
+  },
+  stageAttachmentChunks: async (
+    sessionId: string | null,
+    bytes: Blob | ArrayBuffer | Uint8Array | null,
+    fileName: string,
+    mediaType?: string,
+    options: StageAttachmentChunksOptions = {},
+  ): Promise<PeerStagedAttachmentReceiptDto> => {
+    const endpointScope = currentEndpointScope(options.endpointId);
+    const stageId = options.stageId || newClientRequestId();
+    const resolvedMediaType = mediaType || 'application/octet-stream';
+    const origin = options.origin ?? (options.sourcePath ? 'workspace' : 'composer');
+
+    // Zero-copy remote workspace file reference: never transfer file bytes over mTLS.
+    if (origin === 'workspace' && options.sourcePath) {
+      const raw = await request<Record<string, unknown>>('/api/v1/attachments/stage', {
+        method: 'POST',
+        endpointId: endpointScope,
+        storageId: options.storageId,
+        signal: options.signal,
+        body: JSON.stringify({
+          stage_id: stageId,
+          ...(sessionId ? { session_id: sessionId } : {}),
+          ...(options.projectId ? { project_id: options.projectId } : {}),
+          filename: fileName,
+          media_type: resolvedMediaType,
+          total_bytes: options.totalBytes ?? 0,
+          chunk_index: 0,
+          total_chunks: 1,
+          origin: 'workspace',
+          source_path: options.sourcePath,
+        }),
+      });
+      return normalizePeerStagedAttachmentReceiptDto(raw, stageId, 1, true);
+    }
+
+    const rawBytes = await toAttachmentUint8Array(bytes);
+    const chunkSize = Math.max(1024, options.chunkSizeBytes ?? PEER_ATTACHMENT_CHUNK_SIZE_BYTES);
+    const totalChunks = Math.max(1, Math.ceil(rawBytes.byteLength / chunkSize));
+    let latestReceipt: PeerStagedAttachmentReceiptDto | null = null;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+      const start = chunkIndex * chunkSize;
+      const end = Math.min(rawBytes.byteLength, start + chunkSize);
+      const slice = rawBytes.subarray(start, end);
+      const chunkBase64 = encodeUint8ArrayToBase64(slice);
+
+      const raw = await request<Record<string, unknown>>('/api/v1/attachments/stage', {
+        method: 'POST',
+        endpointId: endpointScope,
+        storageId: options.storageId,
+        signal: options.signal,
+        body: JSON.stringify({
+          stage_id: stageId,
+          ...(sessionId ? { session_id: sessionId } : {}),
+          ...(options.projectId ? { project_id: options.projectId } : {}),
+          filename: fileName,
+          media_type: resolvedMediaType,
+          total_bytes: rawBytes.byteLength,
+          chunk_index: chunkIndex,
+          total_chunks: totalChunks,
+          chunk_base64: chunkBase64,
+          origin,
+        }),
+      });
+      latestReceipt = normalizePeerStagedAttachmentReceiptDto(raw, stageId, totalChunks, false);
+      options.onProgress?.({
+        stageId: latestReceipt.stage_id,
+        chunkIndex,
+        totalChunks,
+        loadedBytes: end,
+        totalBytes: rawBytes.byteLength,
+      });
+    }
+
+    return (
+      latestReceipt ?? {
+        stage_id: stageId,
+        complete: true,
+        attachment_id: null,
+        attachment: null,
+        received_chunks: totalChunks,
+        total_chunks: totalChunks,
+        zero_copy: false,
+      }
     );
   },
   listAttachments: (sessionId: string) =>
@@ -5868,11 +6278,121 @@ export const api = {
   },
 
   clearPeerDeviceLocalCache(deviceId: string): Promise<void> {
+    clearLocalPeerShadowSnapshots(deviceId);
     return request<void>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/local-cache`, {
       method: 'DELETE',
       endpointId: 'local',
       storageId: 'user',
     });
+  },
+
+  listPeerShadowSessions(
+    deviceId: string,
+    options?: { projectId?: string | null; signal?: AbortSignal },
+  ): Promise<PeerShadowSessionDto[]> {
+    const query = new URLSearchParams();
+    if (options?.projectId) query.set('project_id', options.projectId);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return request<unknown>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/shadow/sessions${suffix}`, {
+      endpointId: 'local',
+      storageId: 'user',
+      signal: options?.signal,
+      cache: 'no-store',
+    }).then((raw) => extractPeerShadowSessionList(raw, deviceId));
+  },
+
+  getPeerShadowSession(
+    deviceId: string,
+    remoteSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<PeerShadowSessionDetailDto> {
+    return request<Record<string, unknown>>(
+      `/api/v1/peers/devices/${encodeURIComponent(deviceId)}/shadow/sessions/${encodeURIComponent(remoteSessionId)}`,
+      {
+        endpointId: 'local',
+        storageId: 'user',
+        signal,
+        cache: 'no-store',
+      },
+    ).then((raw) => normalizePeerShadowSessionDetailDto(raw, deviceId, remoteSessionId));
+  },
+
+  syncPeerShadow(deviceId: string, input: PeerShadowSyncInput): Promise<void> {
+    return request<void>(`/api/v1/peers/devices/${encodeURIComponent(deviceId)}/shadow/sync`, {
+      method: 'POST',
+      endpointId: 'local',
+      storageId: 'user',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async getPeerSubmissionIngressStatus(
+    sessionId: string,
+    clientRequestId: string,
+    options?: { endpointId?: EndpointInput; storageId?: string; afterSeq?: number; signal?: AbortSignal },
+  ): Promise<PeerIngressStatusDto> {
+    const endpointScope = currentEndpointScope(options?.endpointId);
+    const suffix =
+      typeof options?.afterSeq === 'number' && Number.isFinite(options.afterSeq) && options.afterSeq >= 0
+        ? `?after_seq=${Math.floor(options.afterSeq)}`
+        : '';
+    try {
+      const raw = await request<Record<string, unknown>>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}/ingress/${encodeURIComponent(clientRequestId)}${suffix}`,
+        {
+          endpointId: endpointScope,
+          storageId: options?.storageId,
+          signal: options?.signal,
+          cache: 'no-store',
+        },
+      );
+      return normalizePeerIngressStatusDto(raw, clientRequestId);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return {
+          found: false,
+          client_request_id: clientRequestId,
+          stage: null,
+          run_id: null,
+          turn_id: null,
+          message_id: null,
+          last_event_seq: null,
+          reject_error_code: null,
+        };
+      }
+      throw error;
+    }
+  },
+
+  requestPeerDevServerLease(
+    deviceId: string,
+    input: RequestPeerDevServerLeaseInput,
+  ): Promise<PeerDevServerLeaseDto> {
+    return request<Record<string, unknown>>(
+      `/api/v1/peers/devices/${encodeURIComponent(deviceId)}/devserver-lease`,
+      {
+        method: 'POST',
+        endpointId: 'local',
+        storageId: 'user',
+        body: JSON.stringify({
+          target_port: input.target_port,
+          ...(input.target_host ? { target_host: input.target_host } : {}),
+          ...(input.ttl_seconds !== undefined ? { ttl_seconds: input.ttl_seconds } : {}),
+          ...(input.lease_id ? { lease_id: input.lease_id } : {}),
+        }),
+      },
+    ).then((raw) => normalizePeerDevServerLeaseDto(raw, deviceId, input.target_port));
+  },
+
+  releasePeerDevServerLease(deviceId: string, leaseId: string): Promise<void> {
+    return request<void>(
+      `/api/v1/peers/devices/${encodeURIComponent(deviceId)}/devserver-lease/${encodeURIComponent(leaseId)}`,
+      {
+        method: 'DELETE',
+        endpointId: 'local',
+        storageId: 'user',
+      },
+    );
   },
 
   listPeerGrants(signal?: AbortSignal): Promise<PeerGrantDto[]> {
@@ -7585,5 +8105,416 @@ function extractPeerGrantList(raw: unknown): PeerGrantDto[] {
     .map(normalizePeerGrantDto)
     .filter((item) => Boolean(item.controller_device_id) && item.revoked_at === null);
 }
+
+// ---------------------------------------------------------------------------
+// Wave 2: Shadow Cache, Ingress Queue Reconcile, Staged Chunks & DevServer Lease
+// ---------------------------------------------------------------------------
+
+export interface PeerShadowSessionDto {
+  local_shadow_id: string;
+  peer_device_id: string;
+  remote_session_id: string;
+  remote_project_id: string | null;
+  title: string;
+  run_status: string;
+  initiator_device_id: string | null;
+  last_event_seq: number;
+  last_synced_at: number;
+}
+
+export interface PeerShadowTurnDto {
+  turn_id: string;
+  digest_json: string | null;
+  updated_at: number;
+}
+
+export interface PeerShadowSessionDetailDto {
+  session: PeerShadowSessionDto;
+  turns: PeerShadowTurnDto[];
+  messages: MessageDto[];
+}
+
+export interface PeerShadowSyncInput {
+  workspaces?: PeerWorkspaceMountInput[];
+  sessions?: Array<{
+    remote_session_id: string;
+    remote_project_id?: string | null;
+    title: string;
+    run_status?: string;
+    initiator_device_id?: string | null;
+    last_event_seq?: number;
+    last_synced_at?: number;
+    turns?: Array<{
+      turn_id: string;
+      digest_json: string | null;
+      updated_at?: number;
+    }>;
+  }>;
+}
+
+export type PeerIngressStage = 'received' | 'processing' | 'processed' | 'rejected';
+
+export interface PeerIngressStatusDto {
+  found: boolean;
+  client_request_id: string;
+  stage: PeerIngressStage | null;
+  run_id: string | null;
+  turn_id: string | null;
+  message_id: string | null;
+  last_event_seq: number | null;
+  reject_error_code: string | null;
+}
+
+export interface StageAttachmentChunksOptions {
+  stageId?: string;
+  endpointId?: EndpointInput;
+  storageId?: string;
+  origin?: 'composer' | 'workspace';
+  projectId?: string | null;
+  sourcePath?: string;
+  totalBytes?: number;
+  chunkSizeBytes?: number;
+  signal?: AbortSignal;
+  onProgress?: (progress: {
+    stageId: string;
+    chunkIndex: number;
+    totalChunks: number;
+    loadedBytes: number;
+    totalBytes: number;
+  }) => void;
+}
+
+export interface PeerStagedAttachmentReceiptDto {
+  stage_id: string;
+  complete: boolean;
+  attachment_id: string | null;
+  attachment: MessageAttachmentDto | null;
+  received_chunks: number;
+  total_chunks: number;
+  zero_copy: boolean;
+}
+
+export interface RequestPeerDevServerLeaseInput {
+  target_port: number;
+  target_host?: '127.0.0.1' | '::1' | 'localhost';
+  ttl_seconds?: number;
+  lease_id?: string;
+}
+
+export interface PeerDevServerLeaseDto {
+  lease_id: string;
+  device_id: string;
+  target_port: number;
+  local_port: number;
+  preview_url: string;
+  ttl_seconds: number;
+  expires_at_ms: number;
+}
+
+function normalizePeerShadowSessionDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackDeviceId = '',
+  fallbackRemoteSessionId = '',
+): PeerShadowSessionDto {
+  const remoteSessionId =
+    typeof raw?.remote_session_id === 'string' && raw.remote_session_id
+      ? raw.remote_session_id
+      : typeof raw?.id === 'string' && raw.id
+        ? raw.id
+        : fallbackRemoteSessionId;
+  const peerDeviceId =
+    typeof raw?.peer_device_id === 'string' && raw.peer_device_id ? raw.peer_device_id : fallbackDeviceId;
+  return {
+    local_shadow_id:
+      typeof raw?.local_shadow_id === 'string' && raw.local_shadow_id
+        ? raw.local_shadow_id
+        : `${peerDeviceId}:${remoteSessionId}`,
+    peer_device_id: peerDeviceId,
+    remote_session_id: remoteSessionId,
+    remote_project_id:
+      typeof raw?.remote_project_id === 'string'
+        ? raw.remote_project_id
+        : typeof raw?.project_id === 'string'
+          ? raw.project_id
+          : null,
+    title: typeof raw?.title === 'string' ? raw.title : '',
+    run_status:
+      typeof raw?.run_status === 'string'
+        ? raw.run_status
+        : typeof raw?.status === 'string'
+          ? raw.status
+          : 'idle',
+    initiator_device_id: typeof raw?.initiator_device_id === 'string' ? raw.initiator_device_id : null,
+    last_event_seq: peerNum(raw?.last_event_seq, 0),
+    last_synced_at: peerNum(raw?.last_synced_at, Date.now()),
+  };
+}
+
+function extractPeerShadowSessionList(raw: unknown, fallbackDeviceId = ''): PeerShadowSessionDto[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as Record<string, unknown> | null)?.sessions)
+      ? ((raw as Record<string, unknown>).sessions as unknown[])
+      : Array.isArray((raw as Record<string, unknown> | null)?.items)
+        ? ((raw as Record<string, unknown>).items as unknown[])
+        : [];
+  return list
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item) => normalizePeerShadowSessionDto(item, fallbackDeviceId))
+    .filter((item) => Boolean(item.remote_session_id));
+}
+
+function mapPeerShadowSessionToSessionDto(row: PeerShadowSessionDto, storageId?: string): SessionDto {
+  const iso = new Date(row.last_synced_at || Date.now()).toISOString();
+  return {
+    id: row.remote_session_id,
+    project_id: row.remote_project_id,
+    title: row.title || 'Shadow Session',
+    status: row.run_status || 'idle',
+    permission_mode: 'default',
+    space_options: null,
+    settings_revision: 0,
+    created_at: iso,
+    updated_at: iso,
+    lifecycle_status: 'active',
+    ...(storageId ? { storage_id: storageId } : {}),
+  };
+}
+
+function synthesizeMessagesFromShadowTurns(
+  remoteSessionId: string,
+  turns: PeerShadowTurnDto[],
+): MessageDto[] {
+  const out: MessageDto[] = [];
+  for (const turn of turns) {
+    if (!turn.digest_json) continue;
+    const iso = new Date(turn.updated_at || Date.now()).toISOString();
+    try {
+      const parsed = JSON.parse(turn.digest_json) as Record<string, unknown> | unknown[];
+      if (Array.isArray(parsed)) {
+        for (const [idx, item] of parsed.entries()) {
+          if (item && typeof item === 'object') {
+            const msg = item as Record<string, unknown>;
+            if (typeof msg.content === 'string') {
+              out.push({
+                id: typeof msg.id === 'string' ? msg.id : `${turn.turn_id}-${idx}`,
+                session_id: remoteSessionId,
+                role: (typeof msg.role === 'string' ? msg.role : 'assistant') as MessageDto['role'],
+                content: msg.content,
+                created_at: typeof msg.created_at === 'string' ? msg.created_at : iso,
+              } as MessageDto);
+            }
+          }
+        }
+        continue;
+      }
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.messages)) {
+          for (const [idx, item] of parsed.messages.entries()) {
+            if (item && typeof item === 'object') {
+              const msg = item as Record<string, unknown>;
+              if (typeof msg.content === 'string') {
+                out.push({
+                  id: typeof msg.id === 'string' ? msg.id : `${turn.turn_id}-${idx}`,
+                  session_id: remoteSessionId,
+                  role: (typeof msg.role === 'string' ? msg.role : 'assistant') as MessageDto['role'],
+                  content: msg.content,
+                  created_at: typeof msg.created_at === 'string' ? msg.created_at : iso,
+                } as MessageDto);
+              }
+            }
+          }
+          continue;
+        }
+        const userText =
+          typeof parsed.user_content === 'string'
+            ? parsed.user_content
+            : typeof parsed.prompt === 'string'
+              ? parsed.prompt
+              : typeof parsed.user_message === 'string'
+                ? parsed.user_message
+                : typeof parsed.role === 'string' && parsed.role === 'user' && typeof parsed.content === 'string'
+                  ? parsed.content
+                  : null;
+        const assistantText =
+          typeof parsed.assistant_content === 'string'
+            ? parsed.assistant_content
+            : typeof parsed.reply === 'string'
+              ? parsed.reply
+              : typeof parsed.summary === 'string'
+                ? parsed.summary
+                : typeof parsed.role === 'string' && parsed.role !== 'user' && typeof parsed.content === 'string'
+                  ? parsed.content
+                  : !userText && typeof parsed.content === 'string'
+                    ? parsed.content
+                    : null;
+        if (userText) {
+          out.push({
+            id: `${turn.turn_id}-user`,
+            session_id: remoteSessionId,
+            role: 'user',
+            content: userText,
+            created_at: iso,
+          } as MessageDto);
+        }
+        if (assistantText) {
+          out.push({
+            id: `${turn.turn_id}-assistant`,
+            session_id: remoteSessionId,
+            role: 'assistant',
+            content: assistantText,
+            created_at: iso,
+          } as MessageDto);
+        }
+      }
+    } catch {
+      out.push({
+        id: `${turn.turn_id}-digest`,
+        session_id: remoteSessionId,
+        role: 'assistant',
+        content: turn.digest_json,
+        created_at: iso,
+      } as MessageDto);
+    }
+  }
+  return out;
+}
+
+function normalizePeerShadowSessionDetailDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackDeviceId = '',
+  fallbackRemoteSessionId = '',
+): PeerShadowSessionDetailDto {
+  const sessionObj =
+    raw?.session && typeof raw.session === 'object'
+      ? (raw.session as Record<string, unknown>)
+      : raw;
+  const session = normalizePeerShadowSessionDto(sessionObj, fallbackDeviceId, fallbackRemoteSessionId);
+  const rawTurns = Array.isArray(raw?.turns) ? raw.turns : [];
+  const turns: PeerShadowTurnDto[] = rawTurns
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item, idx) => ({
+      turn_id: typeof item.turn_id === 'string' && item.turn_id ? item.turn_id : `turn-${idx + 1}`,
+      digest_json: typeof item.digest_json === 'string' ? item.digest_json : null,
+      updated_at: peerNum(item.updated_at, session.last_synced_at),
+    }));
+
+  const explicitMessages = Array.isArray(raw?.messages)
+    ? (raw.messages.filter((m): m is MessageDto => Boolean(m && typeof m === 'object')) as MessageDto[])
+    : [];
+  const messages =
+    explicitMessages.length > 0
+      ? explicitMessages
+      : synthesizeMessagesFromShadowTurns(session.remote_session_id, turns);
+
+  return { session, turns, messages };
+}
+
+function normalizePeerIngressStatusDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackRequestId: string,
+): PeerIngressStatusDto {
+  const rawStage = typeof raw?.stage === 'string' ? raw.stage : null;
+  const stage: PeerIngressStage | null =
+    rawStage === 'received' || rawStage === 'processing' || rawStage === 'processed' || rawStage === 'rejected'
+      ? rawStage
+      : null;
+  const found =
+    typeof raw?.found === 'boolean'
+      ? raw.found
+      : stage !== null;
+  return {
+    found,
+    client_request_id:
+      typeof raw?.client_request_id === 'string' && raw.client_request_id
+        ? raw.client_request_id
+        : fallbackRequestId,
+    stage,
+    run_id: typeof raw?.run_id === 'string' ? raw.run_id : null,
+    turn_id: typeof raw?.turn_id === 'string' ? raw.turn_id : null,
+    message_id: typeof raw?.message_id === 'string' ? raw.message_id : null,
+    last_event_seq: peerNullableNum(raw?.last_event_seq ?? raw?.after_seq),
+    reject_error_code: typeof raw?.reject_error_code === 'string' ? raw.reject_error_code : null,
+  };
+}
+
+async function toAttachmentUint8Array(
+  bytes: Blob | ArrayBuffer | Uint8Array | null | undefined,
+): Promise<Uint8Array> {
+  if (!bytes) return new Uint8Array(0);
+  if (bytes instanceof Uint8Array) return bytes;
+  if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
+  if (typeof (bytes as Blob).arrayBuffer === 'function') {
+    return new Uint8Array(await (bytes as Blob).arrayBuffer());
+  }
+  return new Uint8Array(0);
+}
+
+function encodeUint8ArrayToBase64(bytes: Uint8Array): string {
+  if (bytes.byteLength === 0) return '';
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+  }
+  let binary = '';
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    const chunk = bytes.subarray(i, i + step);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function normalizePeerStagedAttachmentReceiptDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackStageId: string,
+  fallbackTotalChunks: number,
+  defaultZeroCopy: boolean,
+): PeerStagedAttachmentReceiptDto {
+  const totalChunks = peerNum(raw?.total_chunks, fallbackTotalChunks);
+  const receivedChunks = peerNum(raw?.received_chunks, totalChunks);
+  const complete = raw?.complete !== undefined ? peerBool(raw.complete, receivedChunks >= totalChunks) : receivedChunks >= totalChunks;
+  const attachmentObj =
+    raw?.attachment && typeof raw.attachment === 'object' ? (raw.attachment as MessageAttachmentDto) : null;
+  const attachmentId =
+    typeof raw?.attachment_id === 'string' && raw.attachment_id
+      ? raw.attachment_id
+      : attachmentObj && typeof attachmentObj.id === 'string'
+        ? attachmentObj.id
+        : null;
+  return {
+    stage_id: typeof raw?.stage_id === 'string' && raw.stage_id ? raw.stage_id : fallbackStageId,
+    complete,
+    attachment_id: attachmentId,
+    attachment: attachmentObj,
+    received_chunks: receivedChunks,
+    total_chunks: totalChunks,
+    zero_copy: raw?.zero_copy !== undefined ? peerBool(raw.zero_copy, defaultZeroCopy) : defaultZeroCopy,
+  };
+}
+
+function normalizePeerDevServerLeaseDto(
+  raw: Record<string, unknown> | null | undefined,
+  fallbackDeviceId: string,
+  fallbackTargetPort: number,
+): PeerDevServerLeaseDto {
+  const localPort = peerNum(raw?.local_port, 0);
+  const ttlSeconds = peerNum(raw?.ttl_seconds, 1800);
+  const previewUrl =
+    typeof raw?.preview_url === 'string' && raw.preview_url
+      ? raw.preview_url
+      : localPort > 0
+        ? `http://127.0.0.1:${localPort}`
+        : '';
+  return {
+    lease_id: typeof raw?.lease_id === 'string' ? raw.lease_id : '',
+    device_id: typeof raw?.device_id === 'string' && raw.device_id ? raw.device_id : fallbackDeviceId,
+    target_port: peerNum(raw?.target_port, fallbackTargetPort),
+    local_port: localPort,
+    preview_url: previewUrl,
+    ttl_seconds: ttlSeconds,
+    expires_at_ms: peerNum(raw?.expires_at_ms, Date.now() + ttlSeconds * 1000),
+  };
+}
+
 
 

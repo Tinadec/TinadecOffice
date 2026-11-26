@@ -12,9 +12,20 @@ import { ensureRequestId } from '../headers.js';
 import type { WsTerminalClient } from '../wsTerminalProxy.js';
 import { performClientHandshake } from './peerHandshake.js';
 import {
+  DevServerRequestError,
+  type DialDevServerTunnelParams,
+  type DialedDevServerStream,
+  type MappedDevServerLeaseDto,
+  openClientDevServerAlpnStream,
+  PeerDevServerPortMapper,
+  type RequestDevServerLeaseInput,
+  type WorkerDevServerLeaseDto,
+} from './peerDevServerTunnel.js';
+import {
   DEFAULT_PEER_LISTEN_PORT,
   type DecodedPeerFrame,
   generateSelfSignedP256TlsMaterial,
+  isPeerErrorCode,
   PEER_ALPN_HTTP,
   type PeerErrorCode,
   PeerFrameConnection,
@@ -193,6 +204,7 @@ function mapErrorToConnectionState(err: unknown): {
 export class PeerClientPool {
   private readonly options: PeerClientPoolOptions;
   private readonly entries = new Map<string, PooledPeerEntry>();
+  private readonly devServerMapper: PeerDevServerPortMapper;
   private fallbackIdentity: {
     deviceId: string;
     displayName: string;
@@ -203,6 +215,13 @@ export class PeerClientPool {
 
   constructor(options: PeerClientPoolOptions) {
     this.options = options;
+    this.devServerMapper = new PeerDevServerPortMapper({
+      dialDevServerStream: (params) => this.dialDevServerTunnelStream(params),
+      isDeviceControlReady: (deviceId) => {
+        const entry = this.entries.get(deviceId);
+        return Boolean(entry && entry.state === 'ready' && entry.connection && !entry.connection.isClosed);
+      },
+    });
   }
 
   /**
@@ -224,15 +243,23 @@ export class PeerClientPool {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    await this.devServerMapper.closeAll('PeerClientPool stopping.');
+    const inFlightConnects: Promise<unknown>[] = [];
     for (const entry of this.entries.values()) {
       if (entry.reconnectTimer) {
         clearTimeout(entry.reconnectTimer);
         entry.reconnectTimer = null;
       }
       entry.connectionDesired = false;
+      if (entry.connectingPromise) {
+        inFlightConnects.push(entry.connectingPromise.catch(() => undefined));
+      }
       entry.connection?.destroy();
       entry.connection = null;
       entry.state = 'disconnected';
+    }
+    if (inFlightConnects.length > 0) {
+      await Promise.all(inFlightConnects);
     }
     this.entries.clear();
   }
@@ -427,6 +454,7 @@ export class PeerClientPool {
   }
 
   async disconnectDevice(deviceId: string): Promise<PeerDeviceRecord | null> {
+    await this.devServerMapper.closeDeviceMappings(deviceId, 'Peer device disconnected.');
     const entry = this.entries.get(deviceId);
     if (entry) {
       entry.connectionDesired = false;
@@ -445,6 +473,7 @@ export class PeerClientPool {
   }
 
   removeDevice(deviceId: string): void {
+    void this.devServerMapper.closeDeviceMappings(deviceId, 'Peer device removed.');
     const entry = this.entries.get(deviceId);
     if (!entry) return;
     entry.connectionDesired = false;
@@ -454,6 +483,179 @@ export class PeerClientPool {
     }
     entry.connection?.destroy();
     this.entries.delete(deviceId);
+  }
+
+  listDevServerLeases(deviceId?: string): MappedDevServerLeaseDto[] {
+    return this.devServerMapper.listMappings(deviceId);
+  }
+
+  /**
+   * Request or renew a remote DevServer preview lease over the control tunnel and bind
+   * an ephemeral `127.0.0.1:<localPort>` listener that tunnels HTTP & WebSocket HMR over
+   * `ALPN = 'tinadec-peer-devserver/1'`.
+   */
+  async requestDevServerLease(
+    deviceId: string,
+    input: RequestDevServerLeaseInput,
+    signal?: AbortSignal,
+  ): Promise<MappedDevServerLeaseDto> {
+    const rawLeaseId = typeof input?.lease_id === 'string' && input.lease_id.trim() ? input.lease_id.trim() : undefined;
+    if (
+      !rawLeaseId &&
+      (typeof input?.target_port !== 'number' ||
+        !Number.isInteger(input.target_port) ||
+        input.target_port < 1 ||
+        input.target_port > 65535)
+    ) {
+      throw new DevServerRequestError(
+        400,
+        'invalid_request',
+        'target_port must be an integer between 1024 and 65535.',
+      );
+    }
+
+    const entry = await this.ensureReadyConnection(deviceId);
+    const targetHost =
+      typeof input?.target_host === 'string' && input.target_host.trim()
+        ? input.target_host.trim()
+        : undefined;
+
+    const existingMapping =
+      rawLeaseId || typeof input?.target_port !== 'number'
+        ? null
+        : this.devServerMapper.findActiveMappingByTarget(
+            deviceId,
+            input.target_port,
+            targetHost ?? '127.0.0.1',
+          );
+    const renewLeaseId = rawLeaseId ?? existingMapping?.lease_id;
+
+    const reqPayload: Record<string, unknown> = {};
+    if (typeof input?.target_port === 'number') reqPayload.target_port = input.target_port;
+    if (targetHost !== undefined) reqPayload.target_host = targetHost;
+    if (input?.ttl_seconds !== undefined) reqPayload.ttl_seconds = input.ttl_seconds;
+    if (input?.ttl_ms !== undefined) reqPayload.ttl_ms = input.ttl_ms;
+    if (renewLeaseId) reqPayload.lease_id = renewLeaseId;
+
+    const leaseRes = await this.proxyHttpRequest(deviceId, {
+      method: 'POST',
+      path: '/api/v1/peers/internal/devserver-lease',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(reqPayload),
+      signal,
+    });
+
+    if (!leaseRes.ok) {
+      const errBody = (await leaseRes.json().catch(() => null)) as Record<string, unknown> | null;
+      const rawCode = typeof errBody?.code === 'string' ? errBody.code : '';
+      const detail =
+        typeof errBody?.detail === 'string'
+          ? errBody.detail
+          : typeof errBody?.message === 'string'
+            ? errBody.message
+            : `Remote peer rejected DevServer lease request (HTTP ${leaseRes.status}).`;
+      if (isPeerErrorCode(rawCode)) {
+        throw new PeerProtocolError(rawCode, detail, leaseRes.status);
+      }
+      throw new DevServerRequestError(leaseRes.status, rawCode || 'invalid_request', detail);
+    }
+
+    const remoteLease = (await leaseRes.json()) as WorkerDevServerLeaseDto;
+    if (!remoteLease?.lease_id || !remoteLease?.ticket) {
+      throw new PeerProtocolError('handshake_failed', 'Remote peer returned malformed DevServer lease response.');
+    }
+
+    const localIdentity = await this.resolveLocalIdentity();
+    const mapped = await this.devServerMapper.openOrRefreshMapping({
+      deviceId,
+      lease: remoteLease,
+      fallbackControllerDeviceId: localIdentity.deviceId,
+    });
+
+    if (!entry.connection || entry.connection.isClosed || entry.state !== 'ready') {
+      await this.devServerMapper.closeMapping(mapped.lease_id, 'Control tunnel dropped during lease setup.');
+      throw new PeerProtocolError('device_offline', `Peer device '${deviceId}' disconnected during DevServer setup.`);
+    }
+
+    return mapped;
+  }
+
+  async releaseDevServerLease(
+    deviceId: string,
+    leaseId?: string,
+  ): Promise<{ released: boolean; device_id: string; lease_id: string | null; released_count: number }> {
+    const trimmedLeaseId = leaseId?.trim();
+    const entry = this.entries.get(deviceId);
+    const canNotifyRemote = Boolean(
+      entry && entry.state === 'ready' && entry.connection && !entry.connection.isClosed,
+    );
+
+    if (trimmedLeaseId) {
+      const closed = await this.devServerMapper.closeMapping(
+        trimmedLeaseId,
+        'Explicitly released by controller.',
+      );
+      if (canNotifyRemote) {
+        void this.proxyHttpRequest(deviceId, {
+          method: 'DELETE',
+          path: `/api/v1/peers/internal/devserver-lease/${encodeURIComponent(trimmedLeaseId)}`,
+          headers: { accept: 'application/json' },
+        }).catch(() => undefined);
+      }
+      return {
+        released: closed,
+        device_id: deviceId,
+        lease_id: trimmedLeaseId,
+        released_count: closed ? 1 : 0,
+      };
+    }
+
+    const active = this.devServerMapper.listMappings(deviceId);
+    const closedCount = await this.devServerMapper.closeDeviceMappings(
+      deviceId,
+      'Explicitly released all device leases.',
+    );
+    if (canNotifyRemote) {
+      for (const item of active) {
+        void this.proxyHttpRequest(deviceId, {
+          method: 'DELETE',
+          path: `/api/v1/peers/internal/devserver-lease/${encodeURIComponent(item.lease_id)}`,
+          headers: { accept: 'application/json' },
+        }).catch(() => undefined);
+      }
+    }
+    return {
+      released: closedCount > 0,
+      device_id: deviceId,
+      lease_id: null,
+      released_count: closedCount,
+    };
+  }
+
+  private async dialDevServerTunnelStream(
+    params: DialDevServerTunnelParams,
+  ): Promise<DialedDevServerStream> {
+    const entry = this.entries.get(params.deviceId);
+    if (!entry || entry.state !== 'ready' || !entry.connection || entry.connection.isClosed) {
+      throw new PeerProtocolError('device_offline', `Peer device '${params.deviceId}' is offline.`);
+    }
+    const { host, port } = parsePeerAddress(entry.address);
+    const localIdentity = await this.resolveLocalIdentity();
+    return await openClientDevServerAlpnStream({
+      host,
+      port,
+      certPem: localIdentity.certPem,
+      privateKeyPem: localIdentity.privateKeyPem,
+      pinnedServerFingerprint: entry.pinnedFingerprint,
+      leaseId: params.leaseId,
+      ticket: params.ticket,
+      controllerDeviceId: params.controllerDeviceId || localIdentity.deviceId,
+      connectTimeoutMs: this.options.connectTimeoutMs,
+      handshakeTimeoutMs: this.options.handshakeTimeoutMs,
+    });
   }
 
   /**
@@ -690,6 +892,9 @@ export class PeerClientPool {
 
       const failErr =
         closeErr ?? new PeerProtocolError('device_offline', 'Peer mTLS connection closed.');
+
+      // Immediately tear down all local DevServer port mappings & active preview sockets (< 5ms).
+      void this.devServerMapper.closeDeviceMappings(entry.deviceId, failErr.message);
 
       // Immediately terminate all in-flight HTTP/SSE streams (< 5ms).
       const httpStreams = [...entry.httpStreams.values()];

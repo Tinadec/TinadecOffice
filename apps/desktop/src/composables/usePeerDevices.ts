@@ -1,10 +1,13 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import {
   api,
+  clearLocalPeerShadowSnapshots,
+  registerPeerOfflineShadowHooks,
   type PairPeerDeviceInput,
   type PeerAccessPolicyDto,
   type PeerConnectionState,
   type PeerDeviceDto,
+  type PeerDevServerLeaseDto,
   type PeerGrantDto,
   type PeerInboundSettingsDto,
   type PeerMountedWorkspaceDto,
@@ -12,9 +15,13 @@ import {
   type PeerProbeResultDto,
   type PeerRemoteWorkspaceDto,
   type PeerRole,
+  type PeerShadowSessionDetailDto,
+  type PeerShadowSessionDto,
+  type PeerShadowSyncInput,
   type PeerTransportKind,
   type PeerWorkspaceMode,
   type PeerWorkspaceMountInput,
+  type RequestPeerDevServerLeaseInput,
   type UpdatePeerDeviceInput,
   type UpdatePeerGrantPolicyInput,
   type UpdatePeerInboundInput,
@@ -28,6 +35,10 @@ import {
   type EndpointInput,
   type EndpointScope,
 } from '@/lib/endpointScope'
+import {
+  clearUncertainSubmissionsForDevice,
+  reconcileDeviceUncertainSubmissions,
+} from '@/lib/peerSubmissionReconcile'
 import { invalidateEndpointReadCache } from '@/lib/readCache'
 import { clearEndpointStorageScope } from '@/lib/storageScope'
 
@@ -52,6 +63,11 @@ export type {
   PeerAccessPolicyDto,
   UpdatePeerGrantPolicyInput,
   PeerGrantDto,
+  PeerShadowSessionDto,
+  PeerShadowSessionDetailDto,
+  PeerShadowSyncInput,
+  PeerDevServerLeaseDto,
+  RequestPeerDevServerLeaseInput,
 }
 
 function defaultInboundSettings(): PeerInboundSettingsDto {
@@ -86,7 +102,30 @@ const pairingCode = ref<PeerPairingCodeDto | null>(null)
 const devices = ref<PeerDeviceDto[]>([])
 const grants = ref<PeerGrantDto[]>([])
 const mountedWorkspaces = ref<PeerMountedWorkspaceDto[]>([])
+const devServerLeases = ref<PeerDevServerLeaseDto[]>([])
+const shadowFallbackDevices = ref<Record<string, boolean>>({})
+const lastShadowSyncedAtByDevice = ref<Record<string, number>>({})
 const remoteWorkspacesCache = new Map<string, PeerRemoteWorkspaceDto[]>()
+
+function installOfflineShadowHooks(): void {
+  registerPeerOfflineShadowHooks({
+    isDeviceOffline: (deviceId: string) => {
+      const found = devices.value.find((item) => item.device_id === deviceId)
+      if (!found) return Boolean(shadowFallbackDevices.value[deviceId])
+      return found.last_state !== 'ready' || Boolean(shadowFallbackDevices.value[deviceId])
+    },
+    onShadowFallback: (deviceId: string, active: boolean, syncedAt?: number | null) => {
+      if (Boolean(shadowFallbackDevices.value[deviceId]) !== active) {
+        shadowFallbackDevices.value = { ...shadowFallbackDevices.value, [deviceId]: active }
+      }
+      if (typeof syncedAt === 'number' && Number.isFinite(syncedAt) && syncedAt > 0) {
+        lastShadowSyncedAtByDevice.value = { ...lastShadowSyncedAtByDevice.value, [deviceId]: syncedAt }
+      }
+    },
+  })
+}
+
+installOfflineShadowHooks()
 
 function rebuildMountedWorkspaces(): void {
   const rows: PeerMountedWorkspaceDto[] = []
@@ -113,6 +152,7 @@ function rebuildMountedWorkspaces(): void {
 }
 
 function upsertDeviceInList(updated: PeerDeviceDto): PeerDeviceDto {
+  const prev = devices.value.find((item) => item.device_id === updated.device_id)
   const idx = devices.value.findIndex((item) => item.device_id === updated.device_id)
   if (idx >= 0) {
     const next = [...devices.value]
@@ -123,6 +163,17 @@ function upsertDeviceInList(updated: PeerDeviceDto): PeerDeviceDto {
   }
   if (updated.mounted_workspaces) {
     remoteWorkspacesCache.set(updated.device_id, updated.mounted_workspaces)
+  }
+  if (updated.last_state === 'ready') {
+    if (shadowFallbackDevices.value[updated.device_id]) {
+      shadowFallbackDevices.value = { ...shadowFallbackDevices.value, [updated.device_id]: false }
+    }
+    if (!prev || prev.last_state !== 'ready') {
+      void reconcileDeviceUncertainSubmissions(updated.device_id)
+    }
+  } else {
+    // Severed or disconnected peer immediately invalidates local DevServer leases in UI state
+    devServerLeases.value = devServerLeases.value.filter((lease) => lease.device_id !== updated.device_id)
   }
   rebuildMountedWorkspaces()
   return updated
@@ -141,7 +192,12 @@ export function resetPeerDevicesStateForTests(): void {
   devices.value = []
   grants.value = []
   mountedWorkspaces.value = []
+  devServerLeases.value = []
+  shadowFallbackDevices.value = {}
+  lastShadowSyncedAtByDevice.value = {}
   remoteWorkspacesCache.clear()
+  clearLocalPeerShadowSnapshots()
+  installOfflineShadowHooks()
   setActiveEndpoint('local')
 }
 
@@ -153,9 +209,13 @@ export function usePeerDevices(): {
   devices: Ref<PeerDeviceDto[]>
   grants: Ref<PeerGrantDto[]>
   mountedWorkspaces: Ref<PeerMountedWorkspaceDto[]>
+  devServerLeases: Ref<PeerDevServerLeaseDto[]>
   activeEndpoint: ComputedRef<EndpointScope>
   activeEndpointId: ComputedRef<EndpointId>
   activePeerDevice: ComputedRef<PeerDeviceDto | null>
+  isActivePeerOfflineReadonly: ComputedRef<boolean>
+  activePeerLastSyncedAt: ComputedRef<number | null>
+  activePeerDevServerLeases: ComputedRef<PeerDevServerLeaseDto[]>
   refreshAll: () => Promise<void>
   updateInbound: (patch: UpdatePeerInboundInput) => Promise<PeerInboundSettingsDto>
   generatePairingCode: (options?: { ttl_seconds?: number; relay_enrolled?: boolean }) => Promise<PeerPairingCodeDto>
@@ -168,7 +228,16 @@ export function usePeerDevices(): {
   deleteDevice: (deviceId: string) => Promise<void>
   fetchRemoteWorkspaces: (deviceId: string) => Promise<PeerRemoteWorkspaceDto[]>
   mountRemoteWorkspaces: (deviceId: string, mounts: PeerWorkspaceMountInput[]) => Promise<PeerRemoteWorkspaceDto[]>
+  fetchShadowSessions: (deviceId: string, projectId?: string | null) => Promise<PeerShadowSessionDto[]>
+  fetchShadowSessionDetail: (deviceId: string, remoteSessionId: string) => Promise<PeerShadowSessionDetailDto>
+  syncShadowSnapshot: (deviceId: string, input: PeerShadowSyncInput) => Promise<void>
   clearDeviceLocalCache: (deviceId: string) => Promise<void>
+  requestDevServerLease: (
+    deviceId: string,
+    targetPort: number,
+    options?: { ttl_seconds?: number; lease_id?: string; target_host?: '127.0.0.1' | '::1' | 'localhost' },
+  ) => Promise<PeerDevServerLeaseDto>
+  releaseDevServerLease: (deviceId: string, leaseId: string) => Promise<void>
   updateGrantPolicy: (controllerDeviceId: string, policy: UpdatePeerGrantPolicyInput) => Promise<PeerGrantDto>
   revokeGrant: (controllerDeviceId: string) => Promise<void>
   switchEndpoint: (endpoint: EndpointInput) => EndpointScope
@@ -179,6 +248,29 @@ export function usePeerDevices(): {
     const scope = activeEndpointScope.value
     if (scope.kind !== 'peer') return null
     return devices.value.find((item) => item.device_id === scope.deviceId) ?? null
+  })
+  const isActivePeerOfflineReadonly = computed<boolean>(() => {
+    const scope = activeEndpointScope.value
+    if (scope.kind !== 'peer') return false
+    const dev = activePeerDevice.value
+    if (shadowFallbackDevices.value[scope.deviceId]) return true
+    return dev ? dev.last_state !== 'ready' : false
+  })
+  const activePeerLastSyncedAt = computed<number | null>(() => {
+    const scope = activeEndpointScope.value
+    if (scope.kind !== 'peer') return null
+    const explicit = lastShadowSyncedAtByDevice.value[scope.deviceId]
+    if (explicit && explicit > 0) return explicit
+    const mountSync = mountedWorkspaces.value
+      .filter((ws) => ws.peer_device_id === scope.deviceId)
+      .reduce((acc, ws) => Math.max(acc, ws.synced_at || 0), 0)
+    if (mountSync > 0) return mountSync
+    return activePeerDevice.value?.last_connected_at ?? null
+  })
+  const activePeerDevServerLeases = computed<PeerDevServerLeaseDto[]>(() => {
+    const scope = activeEndpointScope.value
+    if (scope.kind !== 'peer') return []
+    return devServerLeases.value.filter((item) => item.device_id === scope.deviceId)
   })
 
   async function refreshAll(): Promise<void> {
@@ -191,6 +283,9 @@ export function usePeerDevices(): {
         api.listPeerDevices(),
         api.listPeerGrants(),
       ])
+      const previousReady = new Set(
+        devices.value.filter((item) => item.last_state === 'ready').map((item) => item.device_id),
+      )
       inboundSettings.value = inbound
       pairingCode.value = codeState.active && codeState.pairing_code ? codeState : null
       devices.value = deviceList
@@ -198,6 +293,14 @@ export function usePeerDevices(): {
       for (const device of deviceList) {
         if (device.mounted_workspaces) {
           remoteWorkspacesCache.set(device.device_id, device.mounted_workspaces)
+        }
+        if (device.last_state === 'ready') {
+          if (shadowFallbackDevices.value[device.device_id]) {
+            shadowFallbackDevices.value = { ...shadowFallbackDevices.value, [device.device_id]: false }
+          }
+          if (!previousReady.has(device.device_id)) {
+            void reconcileDeviceUncertainSubmissions(device.device_id)
+          }
         }
       }
       await Promise.all(
@@ -325,7 +428,10 @@ export function usePeerDevices(): {
     try {
       await api.deletePeerDevice(deviceId)
       devices.value = devices.value.filter((item) => item.device_id !== deviceId)
+      devServerLeases.value = devServerLeases.value.filter((lease) => lease.device_id !== deviceId)
       remoteWorkspacesCache.delete(deviceId)
+      clearUncertainSubmissionsForDevice(deviceId)
+      clearLocalPeerShadowSnapshots(deviceId)
       purgeFrontendPeerEndpointCaches(deviceId)
       if (activeEndpointScope.value.kind === 'peer' && activeEndpointScope.value.deviceId === deviceId) {
         setActiveEndpoint('local')
@@ -363,16 +469,102 @@ export function usePeerDevices(): {
     }
   }
 
+  async function fetchShadowSessions(
+    deviceId: string,
+    projectId?: string | null,
+  ): Promise<PeerShadowSessionDto[]> {
+    error.value = null
+    try {
+      const rows = await api.listPeerShadowSessions(deviceId, { projectId })
+      const latest = rows.reduce((acc, row) => Math.max(acc, row.last_synced_at || 0), 0)
+      if (latest > 0) {
+        lastShadowSyncedAtByDevice.value = { ...lastShadowSyncedAtByDevice.value, [deviceId]: latest }
+      }
+      return rows
+    } catch (caught) {
+      setErrorFrom(caught)
+    }
+  }
+
+  async function fetchShadowSessionDetail(
+    deviceId: string,
+    remoteSessionId: string,
+  ): Promise<PeerShadowSessionDetailDto> {
+    error.value = null
+    try {
+      const detail = await api.getPeerShadowSession(deviceId, remoteSessionId)
+      if (detail.session.last_synced_at > 0) {
+        lastShadowSyncedAtByDevice.value = {
+          ...lastShadowSyncedAtByDevice.value,
+          [deviceId]: detail.session.last_synced_at,
+        }
+      }
+      return detail
+    } catch (caught) {
+      setErrorFrom(caught)
+    }
+  }
+
+  async function syncShadowSnapshot(deviceId: string, input: PeerShadowSyncInput): Promise<void> {
+    error.value = null
+    try {
+      await api.syncPeerShadow(deviceId, input)
+      lastShadowSyncedAtByDevice.value = { ...lastShadowSyncedAtByDevice.value, [deviceId]: Date.now() }
+    } catch (caught) {
+      setErrorFrom(caught)
+    }
+  }
+
   async function clearDeviceLocalCache(deviceId: string): Promise<void> {
     error.value = null
     try {
       await api.clearPeerDeviceLocalCache(deviceId)
       purgeFrontendPeerEndpointCaches(deviceId)
       remoteWorkspacesCache.delete(deviceId)
+      const nextSynced = { ...lastShadowSyncedAtByDevice.value }
+      delete nextSynced[deviceId]
+      lastShadowSyncedAtByDevice.value = nextSynced
       devices.value = devices.value.map((item) =>
         item.device_id === deviceId ? { ...item, mounted_workspaces: [] } : item,
       )
       rebuildMountedWorkspaces()
+    } catch (caught) {
+      setErrorFrom(caught)
+    }
+  }
+
+  async function requestDevServerLease(
+    deviceId: string,
+    targetPort: number,
+    options?: { ttl_seconds?: number; lease_id?: string; target_host?: '127.0.0.1' | '::1' | 'localhost' },
+  ): Promise<PeerDevServerLeaseDto> {
+    error.value = null
+    try {
+      const lease = await api.requestPeerDevServerLease(deviceId, {
+        target_port: targetPort,
+        ...(options?.target_host ? { target_host: options.target_host } : {}),
+        ...(options?.ttl_seconds !== undefined ? { ttl_seconds: options.ttl_seconds } : {}),
+        ...(options?.lease_id ? { lease_id: options.lease_id } : {}),
+      })
+      const filtered = devServerLeases.value.filter(
+        (item) =>
+          item.lease_id !== lease.lease_id &&
+          !(item.device_id === deviceId && item.target_port === lease.target_port),
+      )
+      devServerLeases.value = [lease, ...filtered]
+      return lease
+    } catch (caught) {
+      setErrorFrom(caught)
+    }
+  }
+
+  async function releaseDevServerLease(deviceId: string, leaseId: string): Promise<void> {
+    error.value = null
+    try {
+      await api.releasePeerDevServerLease(deviceId, leaseId)
+      devServerLeases.value = devServerLeases.value.filter(
+        (item) => !(item.device_id === deviceId && item.lease_id === leaseId),
+      )
     } catch (caught) {
       setErrorFrom(caught)
     }
@@ -421,9 +613,13 @@ export function usePeerDevices(): {
     devices,
     grants,
     mountedWorkspaces,
+    devServerLeases,
     activeEndpoint,
     activeEndpointId,
     activePeerDevice,
+    isActivePeerOfflineReadonly,
+    activePeerLastSyncedAt,
+    activePeerDevServerLeases,
     refreshAll,
     updateInbound,
     generatePairingCode,
@@ -436,7 +632,12 @@ export function usePeerDevices(): {
     deleteDevice,
     fetchRemoteWorkspaces,
     mountRemoteWorkspaces,
+    fetchShadowSessions,
+    fetchShadowSessionDetail,
+    syncShadowSnapshot,
     clearDeviceLocalCache,
+    requestDevServerLease,
+    releaseDevServerLease,
     updateGrantPolicy,
     revokeGrant,
     switchEndpoint,
