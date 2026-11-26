@@ -1,6 +1,6 @@
 import type { AnyElysia } from 'elysia';
 import { proxyRaw, proxySse } from './coreClient.js';
-import { wrapSseWithKeepalive } from './streaming.js';
+import { createSseResponse } from './streaming.js';
 import { externalJsonResponse } from './externalDtoOpenApi.js';
 
 /**
@@ -123,10 +123,7 @@ export function registerCompanionRoutes(app: AnyElysia, forwardHeaders: (request
         set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
         set.headers['cache-control'] = 'no-cache, no-transform';
         set.headers['x-accel-buffering'] = 'no';
-        const sseHeaders = new Headers(response.headers);
-        sseHeaders.set('cache-control', 'no-cache, no-transform');
-        sseHeaders.set('x-accel-buffering', 'no');
-        return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
+        return createSseResponse(response, request.signal, set.headers);
       }
       const body: unknown = context.body;
       return proxyRaw(url.pathname + url.search, {

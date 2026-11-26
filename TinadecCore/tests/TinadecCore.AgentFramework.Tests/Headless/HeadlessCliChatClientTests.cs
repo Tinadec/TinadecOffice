@@ -559,8 +559,18 @@ public sealed class HeadlessCliChatClientTests
         var deadline = DateTimeOffset.UtcNow + budget;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            if (File.Exists(pidFile) && int.TryParse((await File.ReadAllTextAsync(pidFile)).Trim(), out var pid) && pid > 0)
-                return pid;
+            if (File.Exists(pidFile))
+            {
+                try
+                {
+                    if (int.TryParse((await File.ReadAllTextAsync(pidFile)).Trim(), out var pid) && pid > 0)
+                        return pid;
+                }
+                catch (IOException)
+                {
+                    // PowerShell Out-File may still be closing/flushing the handle briefly on Windows.
+                }
+            }
             await Task.Delay(50);
         }
 

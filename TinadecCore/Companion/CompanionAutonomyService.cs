@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -37,6 +38,10 @@ public sealed class CompanionAutonomyService(
     private const int MaxGroupsInPrompt = 20;
     private const int MaxActivitySummary = 512;
     private const int MaxAutonomyToolRounds = 4;
+    private static readonly TimeSpan MaxFailureBackoff = TimeSpan.FromMinutes(60);
+
+    private readonly record struct FailureBackoffState(int ConsecutiveFailures, DateTimeOffset BackoffUntil, DateTimeOffset CompanionUpdatedAt);
+    private readonly ConcurrentDictionary<Guid, FailureBackoffState> _failureBackoffs = new();
 
     private static readonly JsonSerializerOptions SnakeCase = new(JsonSerializerDefaults.Web)
     {
@@ -71,11 +76,16 @@ public sealed class CompanionAutonomyService(
             resolution = companion.ModelProviderId is { } providerId
                 ? await chatClients.ResolveModelChatAsync(providerId, companion.ModelName, cancellationToken).ConfigureAwait(false)
                 : await chatClients.ResolveChatAsync(companion.ModelPurpose, cancellationToken).ConfigureAwait(false);
-            if (!resolution.IsAvailable) return Refused("model_unavailable");
+            if (!resolution.IsAvailable)
+            {
+                RecordModelFailureBackoff(companion, isQuotaOrAuth: false);
+                return Refused("model_unavailable");
+            }
 
             var facts = await BuildFactsAsync(companion, state.UsedToday, cancellationToken).ConfigureAwait(false);
             using var client = await chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
             reply = await RunAutonomyTurnAsync(companion, facts, client, cancellationToken).ConfigureAwait(false);
+            _failureBackoffs.TryRemove(companion.Id, out _);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -83,8 +93,14 @@ public sealed class CompanionAutonomyService(
         }
         catch (Exception exception)
         {
-            // There was no usable decision, so there is nothing to validate and nothing to write.
-            logger.LogWarning(exception, "Companion autonomy could not obtain a decision for companion {CompanionId}.", companion.Id);
+            // There was no usable decision, so there is nothing to validate and nothing to write,
+            // but record bounded in-memory backoff so repeated quota/auth or outage errors do not
+            // re-trigger on every 60 s worker poll.
+            var quotaOrAuth = IsQuotaOrAuthFailure(exception);
+            var nextUntil = RecordModelFailureBackoff(companion, quotaOrAuth);
+            logger.LogWarning(exception,
+                "Companion autonomy could not obtain a decision for companion {CompanionId}; backing off automatic ticks until {BackoffUntil:O}.",
+                companion.Id, nextUntil);
             return Refused("model_unavailable");
         }
 
@@ -402,9 +418,53 @@ public sealed class CompanionAutonomyService(
                 : 0;
             var interval = BackedOffInterval(companion.AutonomyIntervalMinutes, trailingSkips);
             if (now < basis.Add(interval)) continue;
+            if (_failureBackoffs.TryGetValue(companion.Id, out var failureState))
+            {
+                if (companion.UpdatedAt > failureState.CompanionUpdatedAt)
+                {
+                    _failureBackoffs.TryRemove(companion.Id, out _);
+                }
+                else if (now < failureState.BackoffUntil)
+                {
+                    continue;
+                }
+            }
             due.Add(companion.Id);
         }
         return due;
+    }
+
+    private DateTimeOffset RecordModelFailureBackoff(CompanionAgentRecord companion, bool isQuotaOrAuth)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var updated = _failureBackoffs.AddOrUpdate(
+            companion.Id,
+            _ => new FailureBackoffState(1, now.Add(ComputeFailureDelay(companion.AutonomyIntervalMinutes, 1, isQuotaOrAuth)), companion.UpdatedAt),
+            (_, existing) =>
+            {
+                var count = companion.UpdatedAt > existing.CompanionUpdatedAt ? 1 : existing.ConsecutiveFailures + 1;
+                return new FailureBackoffState(count, now.Add(ComputeFailureDelay(companion.AutonomyIntervalMinutes, count, isQuotaOrAuth)), companion.UpdatedAt);
+            });
+        return updated.BackoffUntil;
+    }
+
+    internal static TimeSpan ComputeFailureDelay(int intervalMinutes, int consecutiveFailures, bool isQuotaOrAuth)
+    {
+        var baseMinutes = isQuotaOrAuth ? Math.Max(intervalMinutes, 15) : Math.Max(intervalMinutes, 2);
+        var shift = Math.Min(Math.Max(0, consecutiveFailures - 1), 4);
+        var delay = TimeSpan.FromMinutes(baseMinutes * (1L << shift));
+        return delay <= MaxFailureBackoff ? delay : MaxFailureBackoff;
+    }
+
+    private static bool IsQuotaOrAuthFailure(Exception exception)
+    {
+        var message = exception.ToString();
+        return message.Contains("403", StringComparison.Ordinal)
+            || message.Contains("401", StringComparison.Ordinal)
+            || message.Contains("402", StringComparison.Ordinal)
+            || message.Contains("quota", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("insufficient", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -1,6 +1,6 @@
 import type { AnyElysia } from 'elysia';
 import { proxyRaw, proxySse } from './coreClient.js';
-import { wrapSseWithKeepalive } from './streaming.js';
+import { createSseResponse } from './streaming.js';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullableRef = (name: string) => ({ anyOf: [ref(name), { type: 'null' }] });
@@ -855,19 +855,9 @@ function registerSseRoute(
       set.status = response.status;
       set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
       set.headers['cache-control'] = 'no-cache, no-transform';
-      set.headers['connection'] = 'keep-alive';
       set.headers['x-accel-buffering'] = 'no';
 
-      const sseHeaders = new Headers(response.headers);
-      sseHeaders.set('content-type', response.headers.get('content-type') ?? 'text/event-stream');
-      sseHeaders.set('cache-control', 'no-cache, no-transform');
-      sseHeaders.set('connection', 'keep-alive');
-      sseHeaders.set('x-accel-buffering', 'no');
-
-      return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), {
-        status: response.status,
-        headers: sseHeaders,
-      });
+      return createSseResponse(response, request.signal, set.headers);
     },
     {
       detail: {

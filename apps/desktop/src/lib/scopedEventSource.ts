@@ -68,6 +68,9 @@ export class ScopedEventSource {
   private readonly cursorStreamKey: string
   private readonly trackAfterSeqQuery: boolean
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempts = 0
+  private static readonly BASE_RETRY_MS = 1_000
+  private static readonly MAX_RETRY_MS = 30_000
   constructor(url: string, private readonly storageId: string, private readonly fetchImpl: typeof fetch = fetch,
     private readonly idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS, options?: ScopedEventSourceOptions) {
     const inferredFromUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(url)
@@ -95,7 +98,7 @@ export class ScopedEventSource {
     void this.connect()
   }
   get lastAfterSeq(): number | null { return this.afterSeq }
-  close() { this.closed = true; this.readyState = 2; this.abort?.abort(); if (this.retryTimer) clearTimeout(this.retryTimer) }
+  close() { this.closed = true; this.readyState = 2; this.abort?.abort(); if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null } }
   addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) { this.events.addEventListener(type, listener, options) }
   removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) { this.events.removeEventListener(type, listener, options) }
   dispatchEvent(event: Event) { return this.events.dispatchEvent(event) }
@@ -192,7 +195,7 @@ export class ScopedEventSource {
         'x-tinadec-endpoint-id': this.endpointId,
         ...(cursor ? { 'last-event-id': cursor } : {}),
       } })
-      if (this.closed || request.signal.aborted) { await response.body?.cancel(); return }
+      if (this.closed || request.signal.aborted) { await response.body?.cancel().catch(() => {}); return }
       // A rejected cursor must be dropped, not resent: retrying with the same unreadable value
       // would loop on 400 forever. Falling back to a full replay is the pre-cursor behaviour.
       if (response.status === 400) {
@@ -203,6 +206,7 @@ export class ScopedEventSource {
       }
       if (!response.ok || !response.body) throw new Error(`Event stream returned ${response.status}`)
       this.readyState = 1
+      this.reconnectAttempts = 0
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''
       // Any bytes (a frame, a comment, a heartbeat) prove the connection alive; silence past
       // the idle timeout aborts it and the retry below resumes from the last event id.
@@ -214,13 +218,27 @@ export class ScopedEventSource {
         const { done, value } = await reader.read()
         arm()
         if (this.closed || request.signal.aborted) break
-        buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n')
+        const normalizedChunk = value ? decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n') : decoder.decode(undefined, { stream: false }).replace(/\r\n/g, '\n')
+        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
+          ? buffer.slice(0, -1) + normalizedChunk
+          : buffer + normalizedChunk
+        if (buffer.includes('\r')) buffer = buffer.replace(/\r\n/g, '\n')
         let boundary: number
         while ((boundary = buffer.indexOf('\n\n')) >= 0) { this.dispatchBlock(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2) }
         if (done) { if (buffer.trim()) this.dispatchBlock(buffer); break }
       }
       if (idle) clearTimeout(idle)
     } catch { if (!this.closed) this.onerror?.(new Event('error')) }
-    if (!this.closed) { this.readyState = 0; this.retryTimer = setTimeout(() => void this.connect(), 1000) }
+    if (!this.closed) {
+      this.readyState = 0
+      const delayMs = this.reconnectAttempts < 2
+        ? ScopedEventSource.BASE_RETRY_MS
+        : Math.min(
+            ScopedEventSource.MAX_RETRY_MS,
+            Math.round(ScopedEventSource.BASE_RETRY_MS * (2 ** Math.min(this.reconnectAttempts - 1, 5)) * (0.75 + Math.random() * 0.5)),
+          )
+      this.reconnectAttempts += 1
+      this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.connect() }, delayMs)
+    }
   }
 }

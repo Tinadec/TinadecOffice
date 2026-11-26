@@ -396,14 +396,39 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 }
             }
 
-            var delay = Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
+            TimeSpan waitDelay;
+            if (running.Count > 0)
+            {
+                waitDelay = TimeSpan.FromMilliseconds(100);
+            }
+            else
+            {
+                var now = DateTimeOffset.UtcNow;
+                var nextWake = nextScan;
+                foreach (var retryAt in _scheduledModelRetries.Values)
+                {
+                    if (retryAt < nextWake) nextWake = retryAt;
+                }
+                waitDelay = nextWake - now;
+                if (waitDelay < TimeSpan.FromMilliseconds(50))
+                    waitDelay = TimeSpan.FromMilliseconds(50);
+                else if (waitDelay > ScanInterval)
+                    waitDelay = ScanInterval;
+            }
+
             try
             {
-                await Task.WhenAny(delay, _queue.Reader.WaitToReadAsync(stoppingToken).AsTask()).ConfigureAwait(false);
+                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                waitCts.CancelAfter(waitDelay);
+                await _queue.Reader.WaitToReadAsync(waitCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                // Wake timeout elapsed cleanly; re-evaluate due scans/retries/running completions.
             }
         }
 

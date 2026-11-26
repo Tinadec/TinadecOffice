@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using TinadecCore.Abstractions.Ports;
@@ -12,6 +13,8 @@ public sealed class ScopeConfigurationDocuments(
     IEnumerable<IConfigurationDocumentValidator> validators,
     IConfigurationDocumentRedirects? redirects = null) : IScopeConfigurationDocuments
 {
+    private sealed record CachedFileHash(long Length, long LastWriteTimeUtcTicks, string Hash);
+    private static readonly ConcurrentDictionary<string, CachedFileHash> FileHashCache = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Where a document lives: this scope, or the scope it is redirected to.</summary>
     private IScopeStorageLocations LocationsFor(string id) => redirects?.For(id) ?? locations;
 
@@ -29,6 +32,14 @@ public sealed class ScopeConfigurationDocuments(
     internal Task<ScopeConfigurationDocument> ReadForProjectionAsync(string id, ScopeConfigurationDocument? applied,
         CancellationToken cancellationToken) => ReadCoreAsync(id, applied, cancellationToken);
 
+    internal async Task<(string Path, string Hash, bool Exists)> HashForProjectionAsync(string id, CancellationToken cancellationToken)
+    {
+        var path = ResolvePath(id);
+        if (!File.Exists(path)) return (path, string.Empty, false);
+        var streamHash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
+        return (path, streamHash, true);
+    }
+
     internal async Task<bool> IsProjectionUnchangedAsync(string id, ScopeConfigurationDocument applied, CancellationToken cancellationToken)
     {
         if (applied.Id != id || applied.ContentHash.Length == 0 || applied.Diagnostics.Any(d => d.Severity == "error"))
@@ -42,9 +53,29 @@ public sealed class ScopeConfigurationDocuments(
 
     private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-        return Convert.ToHexStringLower(digest);
+        var fullPath = Path.GetFullPath(path);
+        var info = new FileInfo(fullPath);
+        if (info.Exists)
+        {
+            var length = info.Length;
+            var mtimeTicks = info.LastWriteTimeUtc.Ticks;
+            if (DateTime.UtcNow.Ticks - mtimeTicks >= TimeSpan.TicksPerSecond * 2
+                && FileHashCache.TryGetValue(fullPath, out var cached)
+                && cached.Length == length
+                && cached.LastWriteTimeUtcTicks == mtimeTicks)
+            {
+                return cached.Hash;
+            }
+            await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+            var hash = Convert.ToHexStringLower(digest);
+            if (FileHashCache.Count >= 512) FileHashCache.Clear();
+            FileHashCache[fullPath] = new CachedFileHash(length, mtimeTicks, hash);
+            return hash;
+        }
+        await using var fallback = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var fallbackDigest = await SHA256.HashDataAsync(fallback, cancellationToken).ConfigureAwait(false);
+        return Convert.ToHexStringLower(fallbackDigest);
     }
 
     private async Task<ScopeConfigurationDocument> ReadCoreAsync(string id, ScopeConfigurationDocument? applied, CancellationToken cancellationToken)
@@ -60,12 +91,19 @@ public sealed class ScopeConfigurationDocuments(
         {
             var streamHash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
             if (streamHash == applied.ContentHash)
-                return applied;
+            {
+                if (applied.Text.Length > 0)
+                    return applied;
+                var cachedText = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Hash(cachedText) == applied.ContentHash)
+                    return new(id, path, cachedText, applied.ContentHash, applied.Diagnostics, DocumentVersion(cachedText));
+            }
         }
         var text = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var hash = Hash(text);
-        if (applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash)
+        if (applied is not null && applied.Id == id && applied.Path == path && applied.ContentHash == hash && applied.Text.Length > 0)
             return applied;
         var diagnostics = await ValidateAsync(id, text, cancellationToken).ConfigureAwait(false);
         return new(id, path, text, hash, diagnostics, DocumentVersion(text));
@@ -120,6 +158,7 @@ public sealed class ScopeConfigurationDocuments(
                 }
                 AssertNoLinks(target, path);
                 File.Move(temporary, path, overwrite: true);
+                FileHashCache.TryRemove(Path.GetFullPath(path), out _);
                 await MarkEstablishedAsync(id, CancellationToken.None).ConfigureAwait(false);
             }
             finally
@@ -196,6 +235,25 @@ public sealed class ScopeConfigurationDocuments(
     internal static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
     private static long DocumentVersion(string text)
     {
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line)
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.Length == 0 || trimmed[0] == '#') continue;
+            if (trimmed[0] == '[') break;
+            if (trimmed.StartsWith("version", StringComparison.Ordinal))
+            {
+                var eq = trimmed.IndexOf('=');
+                if (eq > 0 && trimmed[..eq].Trim().Equals("version", StringComparison.Ordinal))
+                {
+                    var rhs = trimmed[(eq + 1)..];
+                    var comment = rhs.IndexOf('#');
+                    if (comment >= 0) rhs = rhs[..comment];
+                    if (long.TryParse(rhs.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var fastVersion))
+                        return fastVersion;
+                }
+            }
+        }
         try
         {
             var table = TomlSerializer.Deserialize<TomlTable>(text);

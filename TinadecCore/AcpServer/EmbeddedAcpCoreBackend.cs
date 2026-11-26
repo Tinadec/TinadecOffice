@@ -809,10 +809,17 @@ internal sealed class EmbeddedAcpCoreBackend : IAcpCoreBackend
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            var signalTask = lifecycle.GetEventSignalTask();
             var batch = await lifecycle.FollowEventsAsync(sessionId, watermarks, cancellationToken).ConfigureAwait(false);
             if (batch.Count == 0)
             {
-                await Task.Delay(40, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await signalTask.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                }
                 continue;
             }
 

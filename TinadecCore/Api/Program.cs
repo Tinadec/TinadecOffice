@@ -25,6 +25,10 @@ if (userScope is not null) builder.Services.AddSingleton<IScopeStorageLocations>
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+if (string.IsNullOrWhiteSpace(builder.Configuration["Logging:LogLevel:Microsoft.AspNetCore"]))
+    builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+if (string.IsNullOrWhiteSpace(builder.Configuration["Logging:LogLevel:Microsoft.EntityFrameworkCore"]))
+    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 if (userScope is not null) builder.Logging.AddProvider(new ScopeDiagnosticLoggerProvider(userScope));
 if (OperatingSystem.IsWindows() && builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
 {

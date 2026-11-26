@@ -85,9 +85,9 @@ const CALLOUT_MARKER = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i
 /** Fences whose "language" says nothing useful keep the header free of a label. */
 const UNLABELLED_LANGUAGES = new Set(['text', 'txt', 'plain', 'plaintext', 'none', ''])
 
-const marked = new Marked()
-marked.use(markedKatex({ throwOnError: false, strict: 'ignore' }))
-marked.use(markedFootnote())
+const sharedMarked = new Marked()
+sharedMarked.use(markedKatex({ throwOnError: false, strict: 'ignore' }))
+sharedMarked.use(markedFootnote())
 
 /**
  * Document references: an inline code span or a relative link whose text resolves to a
@@ -252,7 +252,7 @@ const blocks = computed<MarkdownBlock[]>(() => {
   // Late reference verifications bump this counter; reading it here re-parses the reply
   // exactly once per settled batch instead of once per streaming delta.
   void props.docRefsVersion
-  const raw = marked.parse(parsedContent.value, {
+  const raw = sharedMarked.parse(parsedContent.value, {
     breaks: true,
     gfm: true,
     async: false,

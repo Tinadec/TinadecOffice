@@ -24,26 +24,53 @@ internal static class ConfigurationLiveSourceValidation
             ("skills", "workspace_extensions", "current_version_id", "skills", "workspace_extension_versions"),
             ("skills", "integration_instances", "current_version_id", "skills", "integration_instance_versions")
         };
+        var liveIdsByTarget = new Dictionary<(string Document, string Table), HashSet<string>>();
         foreach (var rule in rules)
+        {
+            var key = (rule.TargetDocument, rule.TargetTable);
+            if (!liveIdsByTarget.TryGetValue(key, out var liveIds))
+            {
+                liveIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var version in Rows(documents, rule.TargetDocument, rule.TargetTable))
+                {
+                    if (IsLive(version) && Text(version, "id") is { } id)
+                        liveIds.Add(id);
+                }
+                liveIdsByTarget[key] = liveIds;
+            }
             foreach (var row in Rows(documents, rule.Document, rule.Table).Where(IsLive))
             {
                 if (!row.TryGetValue(rule.Reference, out var value) || value is not string reference) continue;
-                if (!Rows(documents, rule.TargetDocument, rule.TargetTable).Any(version => Text(version, "id") == reference && IsLive(version)))
+                if (!liveIds.Contains(reference))
                     Throw(rule.Document + "." + rule.Table + "." + rule.Reference,
                         "The active reference is absent from " + rule.TargetDocument + ".toml. Historical SQL rows cannot supply new configuration.");
             }
+        }
         foreach (var (table, versions, owner) in new[]
             { ("agent_definitions", "agent_versions", "agent_definition_id"), ("agent_modes", "mode_versions", "agent_mode_id"),
               ("prompt_pipelines", "prompt_versions", "prompt_pipeline_id"), ("agent_templates", "agent_template_versions", "agent_template_id"),
               ("tool_definitions", "tool_definition_versions", "tool_definition_id") })
-            foreach (var row in Rows(documents, "agents", table).Where(row => IsLive(row) && Text(row, "status") == "published"))
+        {
+            var publishedRows = Rows(documents, "agents", table)
+                .Where(row => IsLive(row) && Text(row, "status") == "published")
+                .ToList();
+            if (publishedRows.Count == 0) continue;
+
+            var liveVersions = new HashSet<(string? OwnerId, long Version)>();
+            foreach (var version in Rows(documents, "agents", versions))
+            {
+                if (IsLive(version) && version.TryGetValue("version", out var current))
+                    liveVersions.Add((Text(version, owner), Convert.ToInt64(current, CultureInfo.InvariantCulture)));
+            }
+
+            foreach (var row in publishedRows)
             {
                 var number = row.TryGetValue("version", out var value) ? Convert.ToInt64(value, CultureInfo.InvariantCulture) : 0L;
                 if (number <= 0) continue;
-                if (!Rows(documents, "agents", versions).Any(version => Text(version, owner) == Text(row, "id")
-                    && version.TryGetValue("version", out var current) && Convert.ToInt64(current, CultureInfo.InvariantCulture) == number && IsLive(version)))
+                if (!liveVersions.Contains((Text(row, "id"), number)))
                     Throw("agents." + table, "A published definition's current version is absent from agents.toml.");
             }
+        }
     }
 
     private static IEnumerable<TomlTable> Rows(IReadOnlyDictionary<string, TomlTable> documents, string document, string table)

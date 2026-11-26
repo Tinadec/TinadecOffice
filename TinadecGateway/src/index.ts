@@ -16,7 +16,7 @@ import {
   type AuthContext,
 } from './auth.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
-import { proxyStream, setStreamHeaders, wrapSseWithKeepalive } from './streaming.js';
+import { createSseResponse, proxyStream, setStreamHeaders } from './streaming.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
 import {
   buildCorePrincipalForwardHeaders,
@@ -1088,14 +1088,10 @@ const app = new Elysia()
     setStatus(set, response.status);
     set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
     set.headers['cache-control'] = 'no-cache, no-transform';
-    set.headers['connection'] = 'keep-alive';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     // Preserve the upstream Response while ensuring 15s keepalives (< Cloudflare 100s timeout).
-    const sseHeaders = new Headers(response.headers);
-    sseHeaders.set('cache-control', 'no-cache, no-transform');
-    sseHeaders.set('x-accel-buffering', 'no');
-    return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
+    return createSseResponse(response, request.signal, set.headers as Record<string, string | number>);
   }, { detail: { summary: 'Run stream (SSE)', tags: ['Runs'], description: 'Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor' } })
   .get('/api/v1/runs/:runId/task-nodes', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
@@ -1288,14 +1284,19 @@ const app = new Elysia()
     const cursor = (q.cursor as string) ?? (q.after_seq as string) ?? request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID');
     if (cursor) params.set('cursor', String(cursor));
     const response = await proxySse(`/api/v1/events?${params.toString()}`, { headers: { ...headers, ...(cursor ? { 'last-event-id': String(cursor) } : {}) }, signal: request.signal });
+    if (response.status >= 400) {
+      const text = await response.text();
+      let data: unknown = null; try { data = JSON.parse(text); } catch { data = { message: text }; }
+      setStatus(set, response.status);
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+      return mapCoreErrorToExternal(response.status, data, '/api/v1/events');
+    }
     set.headers['content-type'] = 'text/event-stream';
     set.headers['cache-control'] = 'no-cache, no-transform';
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    const sseHeaders = new Headers(response.headers);
-    sseHeaders.set('cache-control', 'no-cache, no-transform');
-    sseHeaders.set('x-accel-buffering', 'no');
-    return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), { status: response.status, headers: sseHeaders });
+    return createSseResponse(response, request.signal, set.headers as Record<string, string | number>);
   }, { detail: { summary: 'Session events SSE', tags: ['System'], description: 'Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume' } })
   .get('/api/v1/approvals', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);

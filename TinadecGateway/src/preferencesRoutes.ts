@@ -16,7 +16,7 @@ import {
 } from './externalDtoOpenApi.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
 import { mapCoreErrorToExternal, toProblemDetails } from './mappers/errorMapper.js';
-import { setStreamHeaders, wrapSseWithKeepalive } from './streaming.js';
+import { createSseResponse, setStreamHeaders } from './streaming.js';
 
 export { uiPreferencesOpenApiSchemas as preferencesSchemas };
 
@@ -483,18 +483,7 @@ export function registerPreferencesRoutes(
       set.headers['x-request-id'] = rid;
       set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
 
-      const sseHeaders = new Headers(response.headers);
-      sseHeaders.set('content-type', response.headers.get('content-type') ?? 'text/event-stream');
-      sseHeaders.set('cache-control', 'no-cache, no-transform');
-      sseHeaders.set('connection', 'keep-alive');
-      sseHeaders.set('x-accel-buffering', 'no');
-      sseHeaders.set('x-request-id', rid);
-      sseHeaders.set('x-tinadec-principal', PRINCIPAL_VALUE);
-
-      return new Response(wrapSseWithKeepalive(response.body, 15_000, request.signal), {
-        status: response.status,
-        headers: sseHeaders,
-      });
+      return createSseResponse(response, request.signal, set.headers);
     },
     {
       detail: {

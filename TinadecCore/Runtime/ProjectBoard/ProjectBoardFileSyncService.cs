@@ -44,6 +44,9 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
     private readonly ILogger<ProjectBoardFileSyncService>? _logger;
 
     private readonly ConcurrentDictionary<Guid, ProjectWatcherRegistration> _watchers = new();
+    private readonly object _startupGate = new();
+    private CancellationTokenSource? _startupCts;
+    private Task? _startupTask;
     private volatile bool _disposed;
 
     private sealed class ProjectWatcherRegistration : IDisposable
@@ -87,7 +90,21 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         _coordinator.AttachSyncHook(this);
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (_disposed) return Task.CompletedTask;
+        lock (_startupGate)
+        {
+            if (_disposed || _startupTask is not null)
+                return Task.CompletedTask;
+            _startupCts = new CancellationTokenSource();
+            var ct = _startupCts.Token;
+            _startupTask = Task.Run(() => RunStartupReconciliationAsync(ct), CancellationToken.None);
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task RunStartupReconciliationAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -96,14 +113,16 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             if (projects.Count == 0)
                 return;
 
+            Dictionary<Guid, ProjectBoardSettingsRecord> settingsByProject;
             HashSet<Guid> presentInDb;
             await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
             {
-                var settingsIds = await db.BoardSettings.AsNoTracking().Select(x => x.ProjectId).ToListAsync(cancellationToken).ConfigureAwait(false);
+                var settingsRows = await db.BoardSettings.AsNoTracking().ToListAsync(cancellationToken).ConfigureAwait(false);
+                settingsByProject = settingsRows.ToDictionary(x => x.ProjectId);
                 var taskIds = await db.BoardTasks.AsNoTracking().Where(x => !x.Deleted).Select(x => x.ProjectId).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
                 var notesIds = await db.NotesMeta.AsNoTracking().Select(x => x.ProjectId).ToListAsync(cancellationToken).ConfigureAwait(false);
-                presentInDb = new HashSet<Guid>(settingsIds.Count + taskIds.Count + notesIds.Count);
-                foreach (var id in settingsIds) presentInDb.Add(id);
+                presentInDb = new HashSet<Guid>(settingsRows.Count + taskIds.Count + notesIds.Count);
+                foreach (var row in settingsRows) presentInDb.Add(row.ProjectId);
                 foreach (var id in taskIds) presentInDb.Add(id);
                 foreach (var id in notesIds) presentInDb.Add(id);
             }
@@ -112,9 +131,22 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             foreach (var project in projects)
             {
                 if (cancellationToken.IsCancellationRequested) break;
+                var rootExists = !string.IsNullOrWhiteSpace(project.RootPath) && Directory.Exists(project.RootPath);
+                settingsByProject.TryGetValue(project.Id, out var settings);
+                if (!rootExists)
+                {
+                    var hasLiveExternalSyncRoot = settings is not null
+                        && (settings.StorageMode == ProjectBoardStorageModes.AppData
+                            || (settings.StorageMode == ProjectBoardStorageModes.CustomDir
+                                && !string.IsNullOrWhiteSpace(settings.CustomSyncRoot)
+                                && Directory.Exists(settings.CustomSyncRoot)));
+                    if (!hasLiveExternalSyncRoot)
+                        continue;
+                }
                 if (presentInDb.Contains(project.Id)
-                    || Directory.Exists(Path.Combine(project.RootPath, ".tinadec", "board", "tasks"))
-                    || File.Exists(Path.Combine(project.RootPath, ".tinadec", "project", "notes.md")))
+                    || (rootExists
+                        && (Directory.Exists(Path.Combine(project.RootPath, ".tinadec", "board", "tasks"))
+                            || File.Exists(Path.Combine(project.RootPath, ".tinadec", "project", "notes.md")))))
                 {
                     toSync.Add(project);
                 }
@@ -138,22 +170,46 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
                     }
                 }).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "ProjectBoardFileSyncService startup pass encountered an error.");
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
+        Task? startupTask;
+        lock (_startupGate)
+        {
+            _startupCts?.Cancel();
+            startupTask = _startupTask;
+        }
+        if (startupTask is not null)
+        {
+            try
+            {
+                await startupTask.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+        }
         DisposeAllWatchers();
-        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        lock (_startupGate)
+        {
+            _startupCts?.Cancel();
+            _startupCts?.Dispose();
+            _startupCts = null;
+        }
         DisposeAllWatchers();
     }
 

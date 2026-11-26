@@ -42,7 +42,7 @@ const businessReady = computed(
 
 let timeoutHandle: ReturnType<typeof setTimeout> | undefined
 let pollHandle: ReturnType<typeof setInterval> | undefined
-let watchHandle: ReturnType<typeof setInterval> | undefined
+let watchHandle: ReturnType<typeof setTimeout> | undefined
 let checkingGraceHandle: ReturnType<typeof setTimeout> | undefined
 let unsubscribeHost: (() => void) | undefined
 let pendingProbe: Promise<boolean> | undefined
@@ -50,6 +50,7 @@ let pendingRetry: Promise<boolean> | undefined
 let started = false
 let generation = 0
 let hostRevision = 0
+let consecutiveHostUnavailable = 0
 
 watch(
   connectionState,
@@ -86,7 +87,12 @@ function applyHostStatus(next: HostConnectionStatus) {
   hostRevision++
   hostStatus.value = next
   setHostAccessStatus(next)
-  if (next.state === 'ready') return
+  if (next.state === 'ready') {
+    consecutiveHostUnavailable = 0
+    return
+  }
+  if (next.state === 'unavailable') consecutiveHostUnavailable++
+  else consecutiveHostUnavailable = 0
   connectionState.value =
     next.state === 'preview'
       ? 'preview'
@@ -105,8 +111,10 @@ function applyHostStatus(next: HostConnectionStatus) {
   if (next.state !== 'checking') {
     clearStartupTimers()
     if (next.state === 'preview' || next.state === 'restart_required') {
-      clearInterval(watchHandle)
-      watchHandle = undefined
+      if (watchHandle !== undefined) {
+        clearTimeout(watchHandle)
+        watchHandle = undefined
+      }
     } else {
       startHealthWatch()
     }
@@ -163,11 +171,28 @@ function probe(refreshHost = true, recoverUnavailableHost = false): Promise<bool
   return pendingProbe
 }
 
-function startHealthWatch() {
+function nextHealthWatchDelayMs(): number {
+  const base = CONNECTION_POLL_INTERVAL_MS * 4
+  if (consecutiveHostUnavailable < 2) return base
+  return Math.min(30_000, base * (2 ** Math.min(consecutiveHostUnavailable - 1, 3)))
+}
+
+function scheduleHealthWatch() {
   if (watchHandle !== undefined || !started) return
-  watchHandle = setInterval(() => {
-    void probe(true, true)
-  }, CONNECTION_POLL_INTERVAL_MS * 4)
+  const epoch = generation
+  watchHandle = setTimeout(() => {
+    watchHandle = undefined
+    if (!started || epoch !== generation) return
+    void probe(true, true).finally(() => {
+      if (started && epoch === generation && hostStatus.value.state !== 'preview' && hostStatus.value.state !== 'restart_required') {
+        scheduleHealthWatch()
+      }
+    })
+  }, nextHealthWatchDelayMs())
+}
+
+function startHealthWatch() {
+  scheduleHealthWatch()
 }
 
 export function retryConnection(): Promise<boolean> {
@@ -426,7 +451,7 @@ export function __resetConnectionForTests() {
   generation++
   clearStartupTimers()
   clearConnectionNotificationTimers()
-  clearInterval(watchHandle)
+  clearTimeout(watchHandle)
   watchHandle = undefined
   unsubscribeHost?.()
   unsubscribeHost = undefined
@@ -434,6 +459,7 @@ export function __resetConnectionForTests() {
   pendingRetry = undefined
   started = false
   hostRevision = 0
+  consecutiveHostUnavailable = 0
   connectionState.value = 'connecting'
   hostStatus.value = { state: 'checking', managed: true }
   setGatewayConnectionLiveness(false, true)

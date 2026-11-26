@@ -84,12 +84,28 @@ function createTrustedHostRequests({ token, devServerUrl, isManagedHost = () => 
       // Include other destinations so redirects cannot carry the private header away from loopback.
       contents.session.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, beforeSendHeaders);
     }
+    const syncTrustedFromUrl = () => {
+      if (contents.isDestroyed?.()) return;
+      entry.suspended = !isTrustedDocument(contents.getURL());
+    };
     contents.on('did-start-navigation', (details, _url, legacyInPlace, legacyMainFrame) => {
       const main = details.isMainFrame ?? legacyMainFrame;
       const inPlace = details.isInPlace ?? legacyInPlace;
       if (main && !inPlace) entry.suspended = true;
     });
     contents.on('did-navigate', (_event, url) => { entry.suspended = !isTrustedDocument(url); });
+    contents.on('did-navigate-in-page', (eventOrDetails, url, legacyMainFrame) => {
+      const main = eventOrDetails?.isMainFrame ?? legacyMainFrame ?? true;
+      const targetUrl = eventOrDetails?.url ?? url;
+      if (main) entry.suspended = !isTrustedDocument(targetUrl);
+    });
+    contents.on('did-fail-load', (eventOrDetails, _errorCode, _errorDescription, _validatedUrl, legacyMainFrame) => {
+      const main = eventOrDetails?.isMainFrame ?? legacyMainFrame ?? true;
+      if (main) syncTrustedFromUrl();
+    });
+    contents.on('did-stop-loading', () => {
+      if (!contents.isLoadingMainFrame?.()) syncTrustedFromUrl();
+    });
     contents.on('destroyed', () => { windows.delete(contents.id); });
   }
 

@@ -61,6 +61,62 @@ export function setStreamHeaders(
   set.headers['x-accel-buffering'] = 'no';
 }
 
+const HOP_BY_HOP_SSE_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+  'content-encoding',
+]);
+
+/**
+ * Build headers for a proxied SSE Response, preserving CORS/telemetry headers
+ * populated on Elysia's `set.headers` while stripping HTTP/1.1 hop-by-hop
+ * headers (`transfer-encoding`, `connection`, etc.) from the upstream response.
+ */
+export function buildSseResponseHeaders(
+  sourceResponse: Response,
+  setHeaders?: Record<string, string | number>,
+): Headers {
+  const headers = new Headers();
+  sourceResponse.headers.forEach((value, key) => {
+    if (!HOP_BY_HOP_SSE_HEADERS.has(key.toLowerCase())) {
+      headers.set(key, value);
+    }
+  });
+  if (setHeaders) {
+    for (const [key, value] of Object.entries(setHeaders)) {
+      if (!HOP_BY_HOP_SSE_HEADERS.has(key.toLowerCase())) {
+        headers.set(key, String(value));
+      }
+    }
+  }
+  headers.set('content-type', sourceResponse.headers.get('content-type') ?? 'text/event-stream');
+  headers.set('cache-control', 'no-cache, no-transform');
+  headers.set('x-accel-buffering', 'no');
+  return headers;
+}
+
+/**
+ * Wrap an upstream SSE response with periodic keepalive comments and clean headers.
+ */
+export function createSseResponse(
+  sourceResponse: Response,
+  signal: AbortSignal,
+  setHeaders?: Record<string, string | number>,
+  intervalMs = 15_000,
+): Response {
+  return new Response(wrapSseWithKeepalive(sourceResponse.body, intervalMs, signal), {
+    status: sourceResponse.status,
+    headers: buildSseResponseHeaders(sourceResponse, setHeaders),
+  });
+}
+
 const SSE_KEEPALIVE_CHUNK = new TextEncoder().encode(': keepalive\n\n');
 
 /**

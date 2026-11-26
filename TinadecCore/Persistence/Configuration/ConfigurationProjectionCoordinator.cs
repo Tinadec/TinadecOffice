@@ -1,12 +1,15 @@
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using TinadecCore.Abstractions.Ports;
 using Tomlyn;
 using Tomlyn.Model;
@@ -17,6 +20,7 @@ namespace TinadecCore.Persistence;
 /// <summary>Files are the edit commit point; current rows are rebuildable projections and historical versions remain facts.</summary>
 public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectionCoordinator
 {
+    private const string StampTableName = "_tinadec_projection_stamps";
     private readonly ScopeConfigurationDocuments _documents;
     private readonly IScopeStorageLocations _locations;
     private readonly IContentStore _content;
@@ -29,6 +33,8 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     // once per context type instead of once per attached context.
     private readonly HashSet<Type> _migrationsSettled = new();
     private readonly ConcurrentDictionary<Type, string[]> _schemaSettled = new();
+    private readonly ConcurrentDictionary<Type, string> _schemaStamps = new();
+    private volatile EffectiveConfigurationSnapshot? _compiledSnapshot;
     private static readonly MethodInfo QueryMethod = typeof(ConfigurationProjectionCoordinator).GetMethod(nameof(QueryRows), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -53,6 +59,30 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     public async Task<EffectiveConfigurationSnapshot> CompileAsync(CancellationToken cancellationToken = default)
     {
         await ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        var cached = _compiledSnapshot;
+        if (cached is not null && string.Equals(cached.StorageId, _locations.StorageId, StringComparison.Ordinal))
+        {
+            var matchesAll = true;
+            foreach (var id in _documents.DocumentIds)
+            {
+                var (_, fileHash, exists) = await _documents.HashForProjectionAsync(id, cancellationToken).ConfigureAwait(false);
+                if (!exists && (id is "storage" or "logging" || id == "runtime" && _documents.RequiresRuntimeDocument))
+                {
+                    matchesAll = false;
+                    break;
+                }
+                if (!cached.Documents.TryGetValue(id, out var cachedHash) || cachedHash != fileHash)
+                {
+                    matchesAll = false;
+                    break;
+                }
+            }
+            if (matchesAll)
+            {
+                return cached;
+            }
+        }
+
         var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var models = new Dictionary<string, TomlTable>(StringComparer.Ordinal);
         foreach (var id in _documents.DocumentIds)
@@ -67,12 +97,16 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             hashes[id] = document.ContentHash;
             if (document.ContentHash.Length > 0)
             {
+                if (projected is null || projected.Text.Length == 0 && projected.ContentHash == document.ContentHash)
+                    _projectedDocuments[id] = document;
                 await _documents.MarkEstablishedAsync(id, cancellationToken).ConfigureAwait(false);
                 models[id] = TomlSerializer.Deserialize<TomlTable>(document.Text)!;
             }
         }
         ConfigurationLiveSourceValidation.Validate(models);
-        return new(_locations.StorageId, ScopeConfigurationDocuments.Hash(string.Join('\n', hashes.Select(x => x.Key + ":" + x.Value))), hashes);
+        var snapshot = new EffectiveConfigurationSnapshot(_locations.StorageId, ScopeConfigurationDocuments.Hash(string.Join('\n', hashes.Select(x => x.Key + ":" + x.Value))), hashes);
+        _compiledSnapshot = snapshot;
+        return snapshot;
     }
 
     public async Task VerifyAsync(EffectiveConfigurationSnapshot snapshot, CancellationToken cancellationToken = default)
@@ -143,10 +177,11 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 // additive reconciliation, which then only fills what no migration covers.
                 if (!_migrationsSettled.Contains(dbType))
                 {
-                    if (db.Database.GetPendingMigrations().Any())
+                    if ((await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Any())
                     {
                         await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
                         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+                        _schemaStamps.TryRemove(dbType, out _);
                     }
                     _migrationsSettled.Add(dbType);
                 }
@@ -156,10 +191,32 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 if (!await TablesExistAsync(db, entities, cancellationToken).ConfigureAwait(false)) return;
                 _schemaSettled.TryAdd(dbType, entities.Select(e => DocumentId(db, e)).Distinct(StringComparer.Ordinal).ToArray());
             }
+            var schemaStamp = await GetOrComputeSchemaStampAsync(db, dbType, entities, cancellationToken).ConfigureAwait(false);
+            Dictionary<string, (string Hash, string SchemaStamp)>? storedStamps = null;
             Dictionary<Type, List<object>>? existing = null;
+            List<(string DocumentId, string ContentHash)>? updatedStamps = null;
             foreach (var group in entities.GroupBy(e => DocumentId(db, e)))
             {
                 _projectedDocuments.TryGetValue(group.Key, out var applied);
+                if (applied is not null && await _documents.IsProjectionUnchangedAsync(group.Key, applied, cancellationToken).ConfigureAwait(false))
+                { db.ConfigurationDocumentHashes[group.Key] = applied.ContentHash; continue; }
+
+                if (applied is null)
+                {
+                    storedStamps ??= await LoadProjectionStampsAsync(db, cancellationToken).ConfigureAwait(false);
+                    var (path, fileHash, exists) = await _documents.HashForProjectionAsync(group.Key, cancellationToken).ConfigureAwait(false);
+                    if (exists && fileHash.Length > 0
+                        && storedStamps.TryGetValue(group.Key, out var stored)
+                        && stored.Hash == fileHash
+                        && stored.SchemaStamp == schemaStamp)
+                    {
+                        await _documents.MarkEstablishedAsync(group.Key, cancellationToken).ConfigureAwait(false);
+                        _projectedDocuments[group.Key] = new(group.Key, path, string.Empty, fileHash, [], 1);
+                        db.ConfigurationDocumentHashes[group.Key] = fileHash;
+                        continue;
+                    }
+                }
+
                 var document = await _documents.ReadForProjectionAsync(group.Key, applied, cancellationToken).ConfigureAwait(false);
                 ThrowDiagnostics(document);
                 if (document.ContentHash.Length > 0 && applied?.ContentHash == document.ContentHash)
@@ -182,7 +239,10 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 await _documents.MarkEstablishedAsync(group.Key, cancellationToken).ConfigureAwait(false);
                 db.ConfigurationDocumentHashes[group.Key] = document.ContentHash;
                 _projectedDocuments[group.Key] = document;
+                (updatedStamps ??= []).Add((group.Key, document.ContentHash));
             }
+            if (updatedStamps is { Count: > 0 })
+                await UpsertProjectionStampsAsync(db, updatedStamps, schemaStamp, cancellationToken).ConfigureAwait(false);
             db.ConfigurationCoordinator = this;
         }
         finally { _gate.Release(); }
@@ -229,12 +289,24 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 model["version"] = Convert.ToInt64(model.TryGetValue("version", out var revision) ? revision : 0, CultureInfo.InvariantCulture) + 1;
                 var updated = await _documents.SaveIfMatchAsync(id, TomlSerializer.Serialize(model, options), document.ContentHash, cancellationToken).ConfigureAwait(false);
                 db.ConfigurationDocumentHashes[id] = updated.ContentHash;
+                db.PendingProjectionStampUpdates[id] = updated.ContentHash;
                 // The file is durable even if the following SQL projection update fails.
                 // A later read always repairs that projection from these authoritative bytes.
                 _projectedDocuments.TryRemove(id, out _);
+                _compiledSnapshot = null;
             }
         }
         finally { _gate.Release(); }
+    }
+
+    internal async Task RecordSavedProjectionStampsAsync(ConfigurationProjectionDbContext db, CancellationToken cancellationToken)
+    {
+        if (db.PendingProjectionStampUpdates.Count == 0) return;
+        var updates = db.PendingProjectionStampUpdates.Select(pair => (pair.Key, pair.Value)).ToArray();
+        db.PendingProjectionStampUpdates.Clear();
+        var entities = SelectedEntities(db).ToArray();
+        var schemaStamp = await GetOrComputeSchemaStampAsync(db, db.GetType(), entities, cancellationToken).ConfigureAwait(false);
+        await UpsertProjectionStampsAsync(db, updates, schemaStamp, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ApplyProjectionAsync(ConfigurationProjectionDbContext db, IEntityType[] entities,
@@ -261,6 +333,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
         db.ApplyingConfigurationProjection = true;
         try
         {
+            var isNpgsql = db.Database.IsNpgsql();
             foreach (var (entity, rows) in incoming)
             {
                 var byKey = existing[entity.ClrType].ToDictionary(r => EntityKey(entity, r), StringComparer.Ordinal);
@@ -271,8 +344,10 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                     if (byKey.TryGetValue(key, out var current))
                     {
                         // Published history is immutable. Edits must use a fresh version identity.
-                        if (IsHistorical(entity) && !Same(entity, current, row, db.Database.IsNpgsql()))
+                        if (IsHistorical(entity) && !Same(entity, current, row, isNpgsql))
                             throw Invalid(entity.GetTableName()!, "Published versions are immutable; create a new version id instead of editing historical content.");
+                        if (AllPropertiesSame(entity, current, row, isNpgsql))
+                            continue;
                         db.Attach(current);
                         db.Entry(current).CurrentValues.SetValues(row);
                     }
@@ -428,9 +503,15 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     internal static bool IsHistorical(IEntityType entity) => entity.GetTableName()!.EndsWith("_versions", StringComparison.Ordinal);
     internal static bool Same(IEntityType entity, object a, object b, bool postgreSql = false) => entity.GetProperties().Where(p => p.Name is not
         ("Status" or "Revision" or "UpdatedAt" or "UpdatedByPrincipalId" or "ArchivedAt" or "DeletedAt")).All(p =>
+        PropertySame(p, a, b, postgreSql));
+
+    private static bool AllPropertiesSame(IEntityType entity, object a, object b, bool postgreSql) =>
+        entity.GetProperties().All(p => PropertySame(p, a, b, postgreSql));
+
+    private static bool PropertySame(IProperty p, object a, object b, bool postgreSql) =>
         p.Name.EndsWith("Json", StringComparison.Ordinal)
             ? JsonSame(p.PropertyInfo?.GetValue(a) as string, p.PropertyInfo?.GetValue(b) as string)
-            : ScalarSame(p.PropertyInfo?.GetValue(a), p.PropertyInfo?.GetValue(b), postgreSql));
+            : ScalarSame(p.PropertyInfo?.GetValue(a), p.PropertyInfo?.GetValue(b), postgreSql);
     private static bool ScalarSame(object? left, object? right, bool postgreSql)
     {
         // PostgreSQL/Npgsql retains microseconds, while TOML retains .NET's 100ns
@@ -486,19 +567,133 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     {
         if (!await db.Database.CanConnectAsync(cancellationToken).ConfigureAwait(false)) return false;
         var connection = db.Database.GetDbConnection();
-        var opened = connection.State != System.Data.ConnectionState.Open;
+        var opened = connection.State != ConnectionState.Open;
         if (opened) await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (db.Database.IsSqlite())
+            {
+                await using var cmd = connection.CreateCommand();
+                cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table'";
+                var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    existing.Add(reader.GetString(0));
+                return entities.All(e => existing.Contains(e.GetTableName()!));
+            }
             foreach (var entity in entities)
             {
                 await using var command = connection.CreateCommand();
-                command.CommandText = db.Database.IsSqlite() ? "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@table"
-                    : "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=@table";
+                command.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=@table";
                 var parameter = command.CreateParameter(); parameter.ParameterName = "@table"; parameter.Value = entity.GetTableName()!; command.Parameters.Add(parameter);
                 if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture) == 0) return false;
             }
             return true;
+        }
+        finally { if (opened) await connection.CloseAsync().ConfigureAwait(false); }
+    }
+
+    private async Task<string> GetOrComputeSchemaStampAsync(
+        DbContext db,
+        Type dbType,
+        IEntityType[] entities,
+        CancellationToken cancellationToken)
+    {
+        if (_schemaStamps.TryGetValue(dbType, out var cached)) return cached;
+        var sb = new StringBuilder();
+        try
+        {
+            foreach (var migration in await db.Database.GetAppliedMigrationsAsync(cancellationToken).ConfigureAwait(false))
+                sb.Append(migration).Append('\n');
+        }
+        catch (Exception)
+        {
+            // Contexts without migration history hash solely by their current EF model signature.
+        }
+        foreach (var entity in entities.OrderBy(e => e.GetTableName(), StringComparer.Ordinal))
+        {
+            sb.Append(entity.GetTableName()).Append(':');
+            foreach (var prop in entity.GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal))
+                sb.Append(prop.Name).Append('=').Append(prop.ClrType.FullName).Append(',');
+            sb.Append('\n');
+        }
+        var stamp = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+        _schemaStamps[dbType] = stamp;
+        return stamp;
+    }
+
+    private static async Task<Dictionary<string, (string Hash, string SchemaStamp)>> LoadProjectionStampsAsync(
+        DbContext db,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, (string Hash, string SchemaStamp)>(StringComparer.Ordinal);
+        var connection = db.Database.GetDbConnection();
+        var opened = connection.State != ConnectionState.Open;
+        if (opened) await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var existsCmd = connection.CreateCommand();
+            existsCmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            existsCmd.CommandText = db.Database.IsSqlite()
+                ? "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@table"
+                : "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=@table";
+            var tableParam = existsCmd.CreateParameter();
+            tableParam.ParameterName = "@table";
+            tableParam.Value = StampTableName;
+            existsCmd.Parameters.Add(tableParam);
+            if (Convert.ToInt64(await existsCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture) == 0)
+                return result;
+
+            await using var selectCmd = connection.CreateCommand();
+            selectCmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            selectCmd.CommandText = $"SELECT \"document_id\", \"content_hash\", \"schema_stamp\" FROM \"{StampTableName}\"";
+            await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                result[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2));
+            return result;
+        }
+        finally { if (opened) await connection.CloseAsync().ConfigureAwait(false); }
+    }
+
+    private static async Task UpsertProjectionStampsAsync(
+        DbContext db,
+        IReadOnlyCollection<(string DocumentId, string ContentHash)> updates,
+        string schemaStamp,
+        CancellationToken cancellationToken)
+    {
+        if (updates.Count == 0) return;
+        var connection = db.Database.GetDbConnection();
+        var opened = connection.State != ConnectionState.Open;
+        if (opened) await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var createCmd = connection.CreateCommand();
+            createCmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            createCmd.CommandText = $"""
+                CREATE TABLE IF NOT EXISTS "{StampTableName}" (
+                    "document_id" TEXT NOT NULL PRIMARY KEY,
+                    "content_hash" TEXT NOT NULL,
+                    "schema_stamp" TEXT NOT NULL
+                )
+                """;
+            await createCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var (docId, contentHash) in updates)
+            {
+                await using var upsertCmd = connection.CreateCommand();
+                upsertCmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+                upsertCmd.CommandText = $"""
+                    INSERT INTO "{StampTableName}" ("document_id", "content_hash", "schema_stamp")
+                    VALUES (@doc, @hash, @schema)
+                    ON CONFLICT("document_id") DO UPDATE SET
+                        "content_hash" = excluded."content_hash",
+                        "schema_stamp" = excluded."schema_stamp"
+                    """;
+                var pDoc = upsertCmd.CreateParameter(); pDoc.ParameterName = "@doc"; pDoc.Value = docId; upsertCmd.Parameters.Add(pDoc);
+                var pHash = upsertCmd.CreateParameter(); pHash.ParameterName = "@hash"; pHash.Value = contentHash; upsertCmd.Parameters.Add(pHash);
+                var pSchema = upsertCmd.CreateParameter(); pSchema.ParameterName = "@schema"; pSchema.Value = schemaStamp; upsertCmd.Parameters.Add(pSchema);
+                await upsertCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
         finally { if (opened) await connection.CloseAsync().ConfigureAwait(false); }
     }

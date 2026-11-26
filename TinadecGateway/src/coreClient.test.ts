@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { coreEndpoint, proxyJson, proxyRaw, proxySse, proxySseWithCursor, proxyStream } from './coreClient.js';
-import { proxyStream as proxyTargetedStream, wrapSseWithKeepalive } from './streaming.js';
+import { createSseResponse, proxyStream as proxyTargetedStream, wrapSseWithKeepalive } from './streaming.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -88,5 +88,37 @@ test('wrapSseWithKeepalive absorbs AbortError from reader.cancel() and aborted r
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }
+});
+
+test('createSseResponse strips hop-by-hop headers and preserves CORS and telemetry headers from set', () => {
+  const upstream = new Response('data: ok\n\n', {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'transfer-encoding': 'chunked',
+      'connection': 'keep-alive',
+      'content-length': '10',
+      'x-upstream-custom': 'yes',
+    },
+  });
+  const controller = new AbortController();
+  const proxied = createSseResponse(upstream, controller.signal, {
+    'access-control-allow-origin': 'app://bundle',
+    'x-request-id': 'req-123',
+    'x-tinadec-storage-id': 'storage-1',
+    'connection': 'close',
+  });
+  controller.abort();
+
+  assert.equal(proxied.status, 200);
+  assert.equal(proxied.headers.get('transfer-encoding'), null);
+  assert.equal(proxied.headers.get('connection'), null);
+  assert.equal(proxied.headers.get('content-length'), null);
+  assert.equal(proxied.headers.get('access-control-allow-origin'), 'app://bundle');
+  assert.equal(proxied.headers.get('x-request-id'), 'req-123');
+  assert.equal(proxied.headers.get('x-tinadec-storage-id'), 'storage-1');
+  assert.equal(proxied.headers.get('x-upstream-custom'), 'yes');
+  assert.equal(proxied.headers.get('cache-control'), 'no-cache, no-transform');
+  assert.equal(proxied.headers.get('x-accel-buffering'), 'no');
 });
 

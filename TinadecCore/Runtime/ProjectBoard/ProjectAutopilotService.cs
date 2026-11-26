@@ -77,10 +77,20 @@ public sealed class ProjectAutopilotService : IHostedService, IProjectAutopilotW
         _coordinator.AttachAutopilotHook(this);
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         EnsureBackgroundLoopRunning();
+        CancellationToken ct;
+        lock (_loopGate)
+        {
+            ct = _loopCts?.Token ?? CancellationToken.None;
+        }
+        _ = Task.Run(() => ReconcileStartupEnabledAsync(ct), CancellationToken.None);
+        return Task.CompletedTask;
+    }
 
+    private async Task ReconcileStartupEnabledAsync(CancellationToken cancellationToken)
+    {
         try
         {
             await _coordinator.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
@@ -97,6 +107,9 @@ public sealed class ProjectAutopilotService : IHostedService, IProjectAutopilotW
                     }
                 }
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -729,9 +742,11 @@ public sealed class ProjectAutopilotService : IHostedService, IProjectAutopilotW
         IEnumerable<ProjectBoardTaskDto> tasks,
         ConcurrentDictionary<Guid, InFlightEntry> inFlightMap)
     {
-        var set = new HashSet<Guid>(inFlightMap.Keys);
+        var byId = new Dictionary<Guid, ProjectBoardTaskDto>();
+        var set = new HashSet<Guid>();
         foreach (var t in tasks)
         {
+            byId[t.TaskId] = t;
             if (t.Blocked)
                 continue;
             if (t.Status == ProjectBoardTaskStatuses.InProgress
@@ -740,6 +755,20 @@ public sealed class ProjectAutopilotService : IHostedService, IProjectAutopilotW
             {
                 set.Add(t.TaskId);
             }
+        }
+        foreach (var taskId in inFlightMap.Keys)
+        {
+            if (byId.TryGetValue(taskId, out var t))
+            {
+                if (t.Blocked
+                    || t.Status == ProjectBoardTaskStatuses.InReview
+                    || t.Status == ProjectBoardTaskStatuses.Done
+                    || t.RunStatus is "completed" or "failed" or "cancelled")
+                {
+                    continue;
+                }
+            }
+            set.Add(taskId);
         }
         return set;
     }

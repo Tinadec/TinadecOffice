@@ -292,7 +292,13 @@ export function createAgentTerminalBridgeSession(options: {
       while (!closed && !abort.signal.aborted) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+        const normalizedChunk = decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
+          ? buffer.slice(0, -1) + normalizedChunk
+          : buffer + normalizedChunk;
+        if (buffer.includes('\r')) {
+          buffer = buffer.replace(/\r\n/g, '\n');
+        }
         let idx: number;
         while ((idx = buffer.indexOf('\n\n')) >= 0) {
           const block = buffer.slice(0, idx);

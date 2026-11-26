@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
+using System.Data;
 using System.Data.Common;
+using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using SQLitePCL;
 
 namespace TinadecCore.Persistence;
 
@@ -16,7 +19,10 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
 {
     public const int DefaultBusyTimeoutMs = 15_000;
 
+    private sealed record AppliedPragmaState(int BusyTimeoutMs, bool EnableWal);
+
     private static readonly ConcurrentDictionary<(string Path, long CreationTicks), byte> WalInitializedFiles = new();
+    private static readonly ConditionalWeakTable<sqlite3, AppliedPragmaState> ConfiguredHandles = new();
 
     private readonly int _busyTimeoutMs;
     private readonly bool _enableWal;
@@ -55,6 +61,15 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
     {
         ArgumentNullException.ThrowIfNull(connection);
         var clampedTimeout = Math.Clamp(busyTimeoutMs, 1_000, 120_000);
+        var handle = connection.State == ConnectionState.Open ? connection.Handle : null;
+        if (handle is { IsInvalid: false, IsClosed: false }
+            && ConfiguredHandles.TryGetValue(handle, out var applied)
+            && applied.BusyTimeoutMs == clampedTimeout
+            && (!enableWal || applied.EnableWal))
+        {
+            return;
+        }
+
         (string Path, long CreationTicks) walKey = (string.Empty, 0);
         var needsWal = enableWal && ShouldEnsureWal(connection, out walKey);
 
@@ -68,6 +83,10 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
         {
             WalInitializedFiles.TryAdd(walKey, 1);
         }
+        if (handle is { IsInvalid: false, IsClosed: false })
+        {
+            ConfiguredHandles.AddOrUpdate(handle, new AppliedPragmaState(clampedTimeout, enableWal));
+        }
     }
 
     public static async Task ApplyPragmasAsync(
@@ -78,6 +97,15 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
     {
         ArgumentNullException.ThrowIfNull(connection);
         var clampedTimeout = Math.Clamp(busyTimeoutMs, 1_000, 120_000);
+        var handle = connection.State == ConnectionState.Open ? connection.Handle : null;
+        if (handle is { IsInvalid: false, IsClosed: false }
+            && ConfiguredHandles.TryGetValue(handle, out var applied)
+            && applied.BusyTimeoutMs == clampedTimeout
+            && (!enableWal || applied.EnableWal))
+        {
+            return;
+        }
+
         (string Path, long CreationTicks) walKey = (string.Empty, 0);
         var needsWal = enableWal && ShouldEnsureWal(connection, out walKey);
 
@@ -90,6 +118,10 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
         if (needsWal && walKey.Path.Length > 0)
         {
             WalInitializedFiles.TryAdd(walKey, 1);
+        }
+        if (handle is { IsInvalid: false, IsClosed: false })
+        {
+            ConfiguredHandles.AddOrUpdate(handle, new AppliedPragmaState(clampedTimeout, enableWal));
         }
     }
 

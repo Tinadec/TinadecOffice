@@ -20,6 +20,27 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     private readonly StoragePaths _paths;
     private readonly StorageDiagnostics _diagnostics;
     private readonly ITenantContextAccessor _tenant;
+    private readonly object _eventSignalGate = new();
+    private TaskCompletionSource<bool> _eventSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task GetEventSignalTask()
+    {
+        lock (_eventSignalGate)
+        {
+            return _eventSignal.Task;
+        }
+    }
+
+    private void SignalEventSubscribers()
+    {
+        TaskCompletionSource<bool> previous;
+        lock (_eventSignalGate)
+        {
+            previous = _eventSignal;
+            _eventSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        previous.TrySetResult(true);
+    }
 
     public StorageLifecycleService(
         IDbContextFactory<LifecycleDbContext> dbFactory,
@@ -472,7 +493,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             // line, so re-running it would leave an orphan line for reconcile to skip; the index
             // record and its sequence are stable, and the run head is set by a keyed update
             // rather than through the pre-read's tracked entity.
-            return await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
+            var persisted = await Persistence.SqliteTransientRetry.WriteInTransactionAsync(async ct =>
             {
                 await using var txDb = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
                 await using var transaction = await txDb.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
@@ -485,6 +506,8 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 await transaction.CommitAsync(ct).ConfigureAwait(false);
                 return index;
             }, cancellationToken).ConfigureAwait(false);
+            SignalEventSubscribers();
+            return persisted;
         }
         finally { gate.Release(); }
     }
@@ -1453,7 +1476,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         if (File.Exists(path))
         {
             await using var s = File.OpenRead(path);
-            snapshot = JsonSerializer.DeserializeAsync<TaskSnapshotFile>(s, JsonOptions, cancellationToken).ConfigureAwait(false).GetAwaiter().GetResult() ?? new TaskSnapshotFile { RunId = runId };
+            snapshot = await JsonSerializer.DeserializeAsync<TaskSnapshotFile>(s, JsonOptions, cancellationToken).ConfigureAwait(false) ?? new TaskSnapshotFile { RunId = runId };
         }
         else
         {

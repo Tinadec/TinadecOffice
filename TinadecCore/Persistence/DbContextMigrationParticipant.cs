@@ -16,8 +16,8 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
     public async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var migrations = db.Database.GetMigrations().ToArray();
-        if (migrations.Length != 0)
+        var pending = await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false);
+        if (pending.Any())
         {
             await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
             await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
@@ -99,11 +99,41 @@ public static class DbContextSchemaBootstrapper
         // a migrations-era table does not have yet, which aborts the whole
         // script before reconciliation ever gets a chance to add them.
         await EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+        if (db.Database.IsSqlite() && await AllSqliteTablesAndIndexesExistAsync(db, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
         var script = db.Database.GenerateCreateScript()
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
         if (!string.IsNullOrWhiteSpace(script)) await db.Database.ExecuteSqlRawAsync(script, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> AllSqliteTablesAndIndexesExistAsync(DbContext db, CancellationToken cancellationToken)
+    {
+        var names = await db.Database
+            .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type IN ('table', 'index')")
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (names.Count == 0) return false;
+
+        var existing = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+        foreach (var entityType in db.Model.GetEntityTypes())
+        {
+            var tableName = entityType.GetTableName();
+            if (string.IsNullOrEmpty(tableName)) continue;
+            if (!existing.Contains(tableName)) return false;
+
+            var table = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
+            foreach (var index in entityType.GetIndexes())
+            {
+                var indexName = index.GetDatabaseName(table);
+                if (!string.IsNullOrEmpty(indexName) && !existing.Contains(indexName))
+                    return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>

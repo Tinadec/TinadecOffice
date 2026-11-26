@@ -452,6 +452,7 @@ public static class StorageEndpoints
 
                 while (!ct.IsCancellationRequested)
                 {
+                    var signalTask = lifecycle.GetEventSignalTask();
                     var events = await lifecycle.FollowEventsAsync(selectedSessionId, followWatermarks, ct).ConfigureAwait(false);
                     var wrote = false;
                     foreach (var item in events)
@@ -477,7 +478,16 @@ public static class StorageEndpoints
                     }
                     initialReplay = false;
                     if (wrote) await context.Response.Body.FlushAsync(ct).ConfigureAwait(false);
-                    await Task.Delay(EventFollowPollInterval, ct).ConfigureAwait(false);
+                    if (events.Count == 0)
+                    {
+                        try
+                        {
+                            await signalTask.WaitAsync(EventFollowPollInterval, ct).ConfigureAwait(false);
+                        }
+                        catch (TimeoutException)
+                        {
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -733,7 +743,7 @@ public static class StorageEndpoints
     };
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 
-    private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EventHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 

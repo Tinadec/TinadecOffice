@@ -8,6 +8,7 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
 {
     private readonly IDatabaseConnectionInfo _connectionInfo;
     private readonly TinadecPersistenceOptions _options;
+    private readonly SqliteConnectionPragmaInterceptor _sqliteInterceptor;
 
     public TinadecDatabaseConfigurer(
         IDatabaseConnectionInfo connectionInfo,
@@ -15,6 +16,7 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
     {
         _connectionInfo = connectionInfo;
         _options = options.Value;
+        _sqliteInterceptor = new SqliteConnectionPragmaInterceptor(_options.Sqlite.BusyTimeoutMs, _options.Sqlite.EnableWal);
     }
 
     public void Configure(DbContextOptionsBuilder options)
@@ -61,7 +63,7 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
                     db.MigrationsAssembly("TinadecCore.Storage.Migrations.Sqlite");
                     db.CommandTimeout(commandTimeoutSeconds);
                 });
-                options.AddInterceptors(new SqliteConnectionPragmaInterceptor(_options.Sqlite.BusyTimeoutMs, _options.Sqlite.EnableWal));
+                options.AddInterceptors(_sqliteInterceptor);
                 break;
         }
     }

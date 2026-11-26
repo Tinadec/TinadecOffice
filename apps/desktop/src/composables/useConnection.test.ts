@@ -258,4 +258,27 @@ describe('useConnection', () => {
     expect(connectionState.value).toBe('connected')
     expect(businessReady.value).toBe(true)
   })
+
+  it('backs off repeated unavailable host health-watch polls and resets after recovery', async () => {
+    getHostStatus.mockResolvedValue({ state: 'unavailable', managed: true, error: { code: 'host_unavailable', message: 'busy' } })
+    retryHost.mockResolvedValue({ state: 'unavailable', managed: true, error: { code: 'host_unavailable', message: 'busy' } })
+    const { start, connectionState } = useConnection()
+    await start()
+    expect(connectionState.value).toBe('host_unavailable')
+    const baseMs = CONNECTION_POLL_INTERVAL_MS * 4 // 6000ms
+    const initialCalls = getHostStatus.mock.calls.length
+
+    // Consecutive failures >= 2 triggers exponential backoff (6000ms * 2 = 12000ms)
+    await vi.advanceTimersByTimeAsync(baseMs)
+    const afterFirstWatch = getHostStatus.mock.calls.length
+    expect(afterFirstWatch).toBeGreaterThan(initialCalls)
+    await vi.advanceTimersByTimeAsync(baseMs)
+    expect(getHostStatus.mock.calls.length).toBe(afterFirstWatch) // still backed off at +6000ms
+
+    getHostStatus.mockResolvedValue({ state: 'ready', managed: true })
+    retryHost.mockResolvedValue({ state: 'ready', managed: true })
+    vi.mocked(api.health).mockResolvedValue({ status: 'ok' })
+    await vi.advanceTimersByTimeAsync(baseMs) // total +12000ms fires
+    expect(connectionState.value).toBe('connected')
+  })
 })

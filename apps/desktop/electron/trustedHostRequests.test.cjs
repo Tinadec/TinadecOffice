@@ -151,3 +151,29 @@ test('host IPC requires the same registered trusted main frame and loses authori
   contents.emit('did-start-navigation', { isMainFrame: true, isInPlace: false });
   assert.equal(controller.isTrustedDocumentSender(event), false);
 });
+
+test('aborted or failed main-frame navigation restores trusted suspension without permanent deadlock', () => {
+  const { controller, contents } = hostFixture();
+  contents.loadingMainFrame = true;
+  contents.isLoadingMainFrame = () => contents.loadingMainFrame;
+  const event = { sender: contents, senderFrame: contents.mainFrame };
+  assert.equal(controller.isTrustedDocumentSender(event), true);
+
+  contents.emit('did-start-navigation', { isMainFrame: true, isInPlace: false });
+  assert.equal(controller.isTrustedDocumentSender(event), false);
+
+  // Stopping while main frame is still loading keeps suspension active.
+  contents.emit('did-stop-loading');
+  assert.equal(controller.isTrustedDocumentSender(event), false);
+
+  // Main-frame load failure on the trusted document clears the transient suspension.
+  contents.emit('did-fail-load', { isMainFrame: true });
+  assert.equal(controller.isTrustedDocumentSender(event), true);
+
+  // Stop-loading once main frame is no longer loading also clears transient suspension.
+  contents.emit('did-start-navigation', { isMainFrame: true, isInPlace: false });
+  assert.equal(controller.isTrustedDocumentSender(event), false);
+  contents.loadingMainFrame = false;
+  contents.emit('did-stop-loading');
+  assert.equal(controller.isTrustedDocumentSender(event), true);
+});

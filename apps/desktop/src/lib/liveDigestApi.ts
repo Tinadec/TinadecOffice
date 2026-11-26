@@ -650,7 +650,11 @@ export function openLiveDigestStream(
         const { done, value } = await reader.read()
         armIdle()
         if (closed || controller.signal.aborted) break
-        buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n')
+        const normalizedChunk = value ? decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n') : decoder.decode(undefined, { stream: false }).replace(/\r\n/g, '\n')
+        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
+          ? buffer.slice(0, -1) + normalizedChunk
+          : buffer + normalizedChunk
+        if (buffer.includes('\r')) buffer = buffer.replace(/\r\n/g, '\n')
         let boundary: number
         while ((boundary = buffer.indexOf('\n\n')) >= 0) {
           dispatchBlock(buffer.slice(0, boundary))

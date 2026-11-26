@@ -54,7 +54,7 @@ public static class DmaeaEndpoints
             context.Response.Headers.CacheControl = "no-cache";
             try
             {
-                await foreach (var chunk in coordinator.FollowAsync(runGuid, turn_id, cursor, CancellationToken.None))
+                await foreach (var chunk in coordinator.FollowAsync(runGuid, turn_id, cursor, context.RequestAborted))
                 {
                     if (chunk.Kind is "heartbeat")
                     {

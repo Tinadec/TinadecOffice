@@ -222,3 +222,38 @@ it('drops a rejected cursor instead of retrying with it forever', async () => {
   expect(calls).toHaveLength(3)
   expect(new Headers(calls[2]?.headers).get('last-event-id')).toBeNull()
 })
+it('applies exponential backoff on repeated connection failures and normalizes split CRLF chunks', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  Object.defineProperty(window, 'tinadec', { configurable: true, value: { getHostStatus: vi.fn(async () => ready) } })
+  let calls = 0
+  const encoder = new TextEncoder()
+  const fakeFetch = vi.fn<typeof fetch>(async () => {
+    calls++
+    if (calls < 4) return new Response('unavailable', { status: 503 })
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: ping\r'))
+        controller.enqueue(encoder.encode('\ndata: {"ok":true}\r\n\r\n'))
+        controller.close()
+      },
+    })
+    return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+  })
+  const source = new ScopedEventSource('http://gateway.local/api/v1/events', 'scope', fakeFetch)
+  const received: string[] = []
+  source.addEventListener('ping', event => received.push((event as MessageEvent).data))
+
+  await vi.advanceTimersByTimeAsync(0)
+  expect(calls).toBe(1) // attempt 0 -> 1000ms
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(calls).toBe(2) // attempt 1 -> 1000ms
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(calls).toBe(3) // attempt 2 -> 2000ms (with random=0.5 -> factor 1.0)
+  await vi.advanceTimersByTimeAsync(1500)
+  expect(calls).toBe(3) // still backing off before 2000ms
+  await vi.advanceTimersByTimeAsync(500)
+  expect(calls).toBe(4)
+  expect(received).toEqual(['{"ok":true}'])
+  source.close()
+})

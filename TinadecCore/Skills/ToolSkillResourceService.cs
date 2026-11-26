@@ -48,7 +48,9 @@ public sealed class ToolSkillResourceService(
         // repository that already keeps skills under .agents/skills does not need a migration.
         var userRoot = Path.GetFullPath(StorageScopePaths.UserRoot());
         if (project is not null) AddExternal(Path.GetFullPath(project.RootPath), "compat", 400, readOnly: true, [".agents/skills"]);
-        AddExternal(userRoot, "user", 300, readOnly: true, ["skills"]);
+        if (!string.Equals(WorkspacePathSpelling.Canonical(userRoot), WorkspacePathSpelling.Canonical(storage.Locations.Root),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            AddExternal(userRoot, "user", 300, readOnly: true, ["skills"]);
         AddExternal(userRoot, "compat", 500, readOnly: true, [".agents/skills"]);
 
         // Built-ins are embedded and always available; every other root can shadow them by name.
@@ -553,7 +555,7 @@ public sealed class ToolSkillResourceService(
         var seed = $"{tenants.Current.TenantId:N}/{tenants.Current.WorkspaceId:N}/{sourceKind}/{entry.RelativePath}";
         var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(seed)).AsSpan(0, 16));
         var root = Path.GetDirectoryName(entry.FullPath)!;
-        var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
+        var (packageFiles, hash) = entry.Valid ? InspectPackage(root) : ([], entry.ContentHash);
         var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new()
         {
@@ -563,7 +565,7 @@ public sealed class ToolSkillResourceService(
             PackageHash = hash, Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid",
             Source = sourceKind, SourceKind = sourceKind, Rank = rank, ReadOnly = readOnly,
             HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
-            PackageFiles = entry.Valid ? PackageFiles(root) : [],
+            PackageFiles = packageFiles,
         };
     }
 
@@ -571,8 +573,7 @@ public sealed class ToolSkillResourceService(
     {
         var root = Path.Combine(storage.Locations.Skills, row.Name);
         var entry = WorkspaceSkillDiscovery.Read(root, Path.Combine(root, "SKILL.md"));
-        var packageFiles = PackageFiles(root);
-        var actualHash = Directory.Exists(root) ? ActualPackageHash(root) : "";
+        var (packageFiles, actualHash) = InspectPackage(root);
         var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new() { ResourceId = row.Id, Scope = "shared", Name = row.Name, Description = entry.Description ?? row.Description,
             Enabled = row.Enabled && entry.Enabled, Valid = entry.Valid, Reason = entry.Valid ? row.Enabled ? entry.Reason : "disabled in Core" : entry.Reason,
@@ -588,7 +589,7 @@ public sealed class ToolSkillResourceService(
         var seed = $"{tenants.Current.TenantId:N}/{tenants.Current.WorkspaceId:N}/shared/{entry.RelativePath}";
         var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(seed)).AsSpan(0, 16));
         var root = Path.GetDirectoryName(entry.FullPath)!;
-        var hash = entry.Valid ? ActualPackageHash(root) : entry.ContentHash;
+        var (packageFiles, hash) = entry.Valid ? InspectPackage(root) : ([], entry.ContentHash);
         var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new() { ResourceId = id, Scope = "shared", Name = entry.Name, Description = entry.Description,
             Enabled = entry.Enabled, Valid = entry.Valid, Reason = entry.Reason, ReasonCode = entry.ReasonCode, ReasonData = entry.ReasonData, Path = entry.FullPath,
@@ -596,7 +597,7 @@ public sealed class ToolSkillResourceService(
             HasHiddenUnicode = unicodeScan.HasHiddenUnicode, SecurityWarnings = unicodeScan.Warnings,
             Availability = entry.Valid ? entry.Enabled ? "available" : "disabled" : "invalid", Source = "source",
             SourceKind = "scope", Rank = 200,
-            PackageFiles = entry.Valid ? PackageFiles(root) : [] };
+            PackageFiles = packageFiles };
     }
 
     private async Task ReplaceLivePackageAsync(string name, IReadOnlyDictionary<string, byte[]> files, Func<Task> commit, CancellationToken ct)
@@ -634,8 +635,7 @@ public sealed class ToolSkillResourceService(
     private static ToolSkillResourceDto ProjectDto(ProjectReference project, WorkspaceSkillDiscovery.Entry entry)
     {
         var packageRoot = Path.GetDirectoryName(entry.FullPath)!;
-        var packageFiles = entry.Valid ? PackageFiles(packageRoot) : [];
-        var packageHash = entry.Valid ? ActualPackageHash(packageRoot) : entry.ContentHash;
+        var (packageFiles, packageHash) = entry.Valid ? InspectPackage(packageRoot) : ([], entry.ContentHash);
         var unicodeScan = UnicodeSafetyScanner.ScanText(entry.Content, "SKILL.md");
         return new()
         {
@@ -667,10 +667,10 @@ public sealed class ToolSkillResourceService(
             Params = JsonSerializer.SerializeToElement(new { filepath = path }) }, TimeSpan.FromSeconds(30), ct);
         return response.IsSuccess && response.Result is { } result && result.TryGetProperty("file_hash", out var hash) ? hash.GetString() : null;
     }
-    private static IReadOnlyList<ToolSkillPackageFileDto> PackageFiles(string root)
+    private static (IReadOnlyList<ToolSkillPackageFileDto> Files, string PackageHash) InspectPackage(string root)
     {
-        if (!Directory.Exists(root)) return [];
-        var files = new List<ToolSkillPackageFileDto>();
+        if (!Directory.Exists(root)) return ([], string.Empty);
+        var files = new List<(ToolSkillPackageFileDto Dto, byte[] Bytes)>();
         long total = 0;
         foreach (var file in SafePackagePaths(root))
         {
@@ -678,26 +678,27 @@ public sealed class ToolSkillResourceService(
             total += new FileInfo(file).Length;
             if (files.Count >= 256 || total > 16 * 1024 * 1024) throw new ToolSettingsException("skill_package_budget", "Skill packages are limited to 256 files and 16 MiB.");
             var bytes = File.ReadAllBytes(file);
-            files.Add(new ToolSkillPackageFileDto
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            files.Add((new ToolSkillPackageFileDto
             {
-                Path = Path.GetRelativePath(root, file).Replace('\\', '/'),
+                Path = relative,
                 ContentHash = Convert.ToHexStringLower(SHA256.HashData(bytes)),
                 SizeBytes = bytes.LongLength,
-            });
+            }, bytes));
         }
-        return files.OrderBy(x => x.Path, StringComparer.Ordinal).ToArray();
+        files.Sort(static (a, b) => string.CompareOrdinal(a.Dto.Path, b.Dto.Path));
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var (dto, bytes) in files)
+        {
+            digest.AppendData(Encoding.UTF8.GetBytes(dto.Path + "\0" + bytes.Length + "\0"));
+            digest.AppendData(bytes);
+        }
+        return (files.Select(x => x.Dto).ToArray(), Convert.ToHexStringLower(digest.GetHashAndReset()));
     }
 
-    private static string ActualPackageHash(string root)
-    {
-        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var path in SafePackagePaths(root).OrderBy(x => Path.GetRelativePath(root,x).Replace('\\','/'), StringComparer.Ordinal))
-        {
-            var relative = Path.GetRelativePath(root,path).Replace('\\','/'); var bytes = File.ReadAllBytes(path);
-            digest.AppendData(Encoding.UTF8.GetBytes(relative + "\0" + bytes.Length + "\0")); digest.AppendData(bytes);
-        }
-        return Convert.ToHexStringLower(digest.GetHashAndReset());
-    }
+    private static IReadOnlyList<ToolSkillPackageFileDto> PackageFiles(string root) => InspectPackage(root).Files;
+
+    private static string ActualPackageHash(string root) => InspectPackage(root).PackageHash;
 
     private static IEnumerable<string> SafePackagePaths(string root)
     {

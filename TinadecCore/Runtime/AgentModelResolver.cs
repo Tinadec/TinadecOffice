@@ -96,6 +96,8 @@ internal sealed class AgentModelResolver : IAgentModelResolver
     {
         public Dictionary<string, Task<FrozenModelPlan>> Plans { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, Task<IReadOnlyList<ChatResolution>>> Resolutions { get; } = new(StringComparer.Ordinal);
+        public Dictionary<Guid, IReadOnlyDictionary<string, ModelStrategyDto?>> ParsedModeNodeStrategies { get; } = new();
+        public Dictionary<Guid, ModelStrategyDto> ParsedAgentStrategies { get; } = new();
     }
 
     private static async Task<PreviewBatch> LoadBatchAsync(
@@ -199,7 +201,20 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 version = await FindFirstAsync(db => db.ModeVersions
                     .Where(x => x.Id == modeVersionId
                         && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId), cancellationToken).ConfigureAwait(false);
-            var strategy = version is null ? null : ReadModeNodeStrategy(version.SnapshotJson, request.NodeKey!);
+            ModelStrategyDto? strategy = null;
+            if (version is not null)
+            {
+                if (batch is not null)
+                {
+                    if (!batch.ParsedModeNodeStrategies.TryGetValue(modeVersionId, out var nodeMap))
+                        batch.ParsedModeNodeStrategies[modeVersionId] = nodeMap = ReadModeNodeStrategies(version.SnapshotJson);
+                    nodeMap.TryGetValue(request.NodeKey!, out strategy);
+                }
+                else
+                {
+                    strategy = ReadModeNodeStrategy(version.SnapshotJson, request.NodeKey!);
+                }
+            }
             Consider("mode_node_override", strategy);
         }
 
@@ -211,7 +226,21 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 version = await FindFirstAsync(db => db.AgentVersions
                     .Where(x => x.Id == agentVersionId
                         && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId), cancellationToken).ConfigureAwait(false);
-            Consider("agent_version", version is null ? null : ReadAgentStrategy(version.SnapshotJson));
+            ModelStrategyDto? agentStrategy = null;
+            if (version is not null)
+            {
+                if (batch is not null)
+                {
+                    if (!batch.ParsedAgentStrategies.TryGetValue(agentVersionId, out var parsedAgentStrategy))
+                        batch.ParsedAgentStrategies[agentVersionId] = parsedAgentStrategy = ReadAgentStrategy(version.SnapshotJson);
+                    agentStrategy = parsedAgentStrategy;
+                }
+                else
+                {
+                    agentStrategy = ReadAgentStrategy(version.SnapshotJson);
+                }
+            }
+            Consider("agent_version", agentStrategy);
         }
         else if (request.AgentDefinitionId is { } agentDefinitionId)
         {
@@ -803,6 +832,23 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
         string? Text(string key) => document.RootElement.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.String ? property.GetString() : null;
         return HarnessCatalog.ResolveProtocol(Text("protocol"), provider.Driver, Text("channel"));
+    }
+
+    private static IReadOnlyDictionary<string, ModelStrategyDto?> ReadModeNodeStrategies(string? snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot)) return new Dictionary<string, ModelStrategyDto?>(StringComparer.Ordinal);
+        using var document = JsonDocument.Parse(snapshot);
+        if (!document.RootElement.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array)
+            return new Dictionary<string, ModelStrategyDto?>(StringComparer.Ordinal);
+        var map = new Dictionary<string, ModelStrategyDto?>(StringComparer.Ordinal);
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!node.TryGetProperty("node_key", out var key) || key.GetString() is not { } nodeKey) continue;
+            map[nodeKey] = node.TryGetProperty("model_strategy_override", out var strategy) && strategy.ValueKind == JsonValueKind.Object
+                ? ModelStrategyJson.Parse(strategy)
+                : null;
+        }
+        return map;
     }
 
     private static ModelStrategyDto? ReadModeNodeStrategy(string? snapshot, string nodeKey)
