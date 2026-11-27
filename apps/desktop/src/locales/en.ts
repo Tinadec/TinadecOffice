@@ -903,6 +903,8 @@ export default {
     retryConnection: 'Retry connection',
     loadFailed: 'Failed to load',
     loadFailedMessage: 'The required data is temporarily unavailable. Check the service and retry.',
+    connectingBackend: 'Connecting to backend…',
+    connectingBackendMessage: 'Waiting for Core/Gateway to become ready. Content will load automatically once connected.',
     backendNotConnected: 'Backend not connected',
     backendNotConnectedMessage: 'Could not reach Core/Gateway within 30 seconds. Some features may be unavailable.',
     backendDisconnected: 'Backend disconnected',

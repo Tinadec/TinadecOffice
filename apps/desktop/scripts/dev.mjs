@@ -1,15 +1,16 @@
 import { spawn } from "child_process";
+import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import http from "http";
+import net from "net";
 import { ensureFreshViteCache, installedVersionResolver } from "./viteCacheGuard.mjs";
 import { developmentCdpPort, developmentEnvironment } from "./developmentEnvironment.mjs";
 import { developmentBackendIsReady } from "./backendReadiness.mjs";
 
+const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
-
-const isWindows = process.platform === "win32";
 
 // Must run before Vite starts: a dep cache pre-bundled with an older Vue silently serves the old
 // runtime against newly compiled SFCs, and the failure shows up as a blank window, not an error.
@@ -31,15 +32,14 @@ function createSpawnOpts(extraEnv = {}, trustedHost = false) {
   // 该变量对 Vite/Node 无意义，这里统一从子进程环境中剔除。
   return {
     cwd: rootDir,
-    shell: isWindows,
+    shell: false,
     stdio: "pipe",
     env,
   };
 }
 
-const viteProcess = isWindows
-  ? spawn("bunx vite --host 127.0.0.1", [], createSpawnOpts())
-  : spawn("bunx", ["vite", "--host", "127.0.0.1"], createSpawnOpts());
+const viteCliPath = resolve(dirname(require.resolve("vite/package.json")), "bin/vite.js");
+const viteProcess = spawn("node", [viteCliPath, "--host", "127.0.0.1"], createSpawnOpts());
 
 viteProcess.stdout.on("data", (data) => {
   process.stdout.write(`[vite] ${data}`);
@@ -52,39 +52,87 @@ viteProcess.stderr.on("data", (data) => {
 function waitForVite() {
   // 依赖缓存为空时 Vite 要先做一次依赖预构建：本机实测首次启动 9–120s，视 release/、
   // runtime/ 是否被一起扫描而定（见 .tinadec_dev/evidence/2026-10-18-perf-dev/）。
-  // 原来的 30s 上限在这段时间里就会超时，把一个还在正常启动的 Vite 当失败处理。
-  // 真正的“起不来”仍然立刻报错：子进程退出后 exitCode 在几十毫秒内就变成非 null
-  // （实测 82ms），这里每秒检查一次，所以放宽上限不会变成 180s 才报错。
+  // 使用回环 TCP 建连探活（并监听 Vite stdout 的 5173 就绪行即时触发）代替 HTTP GET /，
+  // 避免 Bun 下首个 HTTP 请求等待中间件/预热导致 Electron 启动被多拖延十几秒。
   const deadline = Date.now() + 180_000;
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let pollTimer;
+    let currentSocket;
+
+    const cleanup = () => {
+      if (pollTimer !== undefined) {
+        clearTimeout(pollTimer);
+        pollTimer = undefined;
+      }
+      viteProcess.stdout.off("data", onViteOutput);
+      currentSocket?.destroy();
+      currentSocket = undefined;
+    };
+
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const scheduleCheck = (delayMs) => {
+      if (settled || pollTimer !== undefined) return;
+      pollTimer = setTimeout(() => {
+        pollTimer = undefined;
+        check();
+      }, delayMs);
+    };
+
+    const onViteOutput = (data) => {
+      if (String(data).includes("127.0.0.1:5173")) {
+        if (pollTimer !== undefined) {
+          clearTimeout(pollTimer);
+          pollTimer = undefined;
+        }
+        check();
+      }
+    };
+
     const check = () => {
+      if (settled) return;
       if (viteProcess.exitCode !== null) {
-        reject(new Error(`Vite dev server exited before it started listening (exit code ${viteProcess.exitCode})`));
+        finish(new Error(`Vite dev server exited before it started listening (exit code ${viteProcess.exitCode})`));
         return;
       }
       if (Date.now() > deadline) {
-        reject(new Error("Vite dev server did not start within 180 seconds"));
+        finish(new Error("Vite dev server did not start within 180 seconds"));
         return;
       }
 
-      http
-        .get("http://127.0.0.1:5173", (res) => {
-          res.resume();
-          resolve();
-        })
-        .on("error", () => {
-          setTimeout(check, 1000);
-        });
+      const socket = net.createConnection({ host: "127.0.0.1", port: 5173 });
+      currentSocket = socket;
+      socket.setTimeout(500);
+      socket.once("connect", () => {
+        socket.destroy();
+        if (currentSocket === socket) currentSocket = undefined;
+        finish();
+      });
+      const retry = () => {
+        socket.destroy();
+        if (currentSocket === socket) currentSocket = undefined;
+        scheduleCheck(250);
+      };
+      socket.once("timeout", retry);
+      socket.once("error", retry);
     };
 
-    setTimeout(check, 1000);
+    viteProcess.stdout.on("data", onViteOutput);
+    scheduleCheck(250);
   });
 }
 
 const GATEWAY_URL = (process.env.TINADEC_GATEWAY_URL ?? "http://127.0.0.1:48730").replace(/\/+$/, "");
 const CORE_URL = (process.env.TINADEC_CORE_URL ?? "http://127.0.0.1:48731").replace(/\/+$/, "");
-const BACKEND_WAIT_MS = Number.parseInt(process.env.TINADEC_DEV_BACKEND_WAIT_MS ?? "120000", 10);
+const BACKEND_WAIT_MS = Number.parseInt(process.env.TINADEC_DEV_BACKEND_WAIT_MS ?? "0", 10);
 
 function probeJson(url) {
   return new Promise((resolve) => {
@@ -120,7 +168,7 @@ async function backendIsReady() {
 
 async function waitForBackend() {
   if (!Number.isFinite(BACKEND_WAIT_MS) || BACKEND_WAIT_MS <= 0) {
-    console.log("[dev] Backend readiness wait skipped (TINADEC_DEV_BACKEND_WAIT_MS<=0).");
+    console.log("[dev] Launching Electron immediately once Vite is ready (set TINADEC_DEV_BACKEND_WAIT_MS>0 to wait for backend first).");
     return false;
   }
 
@@ -161,15 +209,15 @@ async function main() {
 
   console.log(backendReady
     ? "[dev] Vite and the shared backend are ready, starting Electron..."
-    : "[dev] Vite is ready, starting the Electron recovery interface...");
+    : "[dev] Vite is ready, starting Electron immediately (AppSplash will hold until backend connects or 15s fallback)...");
 
+  const electronBinary = require("electron");
   const electronArgs = [
-    "electron",
     ...(cdpPort ? [`--remote-debugging-port=${cdpPort}`] : []),
     ".",
   ];
   const electronProcess = spawn(
-    "bunx",
+    electronBinary,
     electronArgs,
     createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }, true),
   );

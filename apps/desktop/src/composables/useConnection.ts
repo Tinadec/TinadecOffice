@@ -17,6 +17,7 @@ import {
   setGlobalConnectionBlocked,
   useNotifications,
 } from '@/composables/useNotifications'
+import { SPLASH_MAX_WAIT_MS } from '@/lib/startupSplashGate'
 
 /** Public liveness and private host readiness are separate. Only both admit business work. */
 export type ConnectionState =
@@ -29,6 +30,7 @@ export type ConnectionState =
   | 'host_restart_required'
   | 'preview'
 
+export { SPLASH_MAX_WAIT_MS }
 export const CONNECTION_TIMEOUT_MS = 30_000
 export const CONNECTION_POLL_INTERVAL_MS = 1_500
 export const CONNECTION_CHECKING_GRACE_MS = 1_200
@@ -238,7 +240,9 @@ export function retryConnection(): Promise<boolean> {
  * Single projector mapping all host & Gateway states onto the sole
  * `CONNECTION_BANNER_KEY = 'backend-connection'` Dynamic Island status capsule.
  */
-export function syncConnectionNotifications(options: { isAuthRequired?: boolean } = {}): void {
+export function syncConnectionNotifications(
+  options: { isAuthRequired?: boolean; coldStartConnecting?: boolean } = {},
+): void {
   const { items, status, dismissByKey } = useNotifications()
   const { status: hostAccessStatus } = useHostAccess()
   const t = i18n.global.t
@@ -325,21 +329,6 @@ export function syncConnectionNotifications(options: { isAuthRequired?: boolean 
     return
   }
 
-  if (state === 'host_unavailable' || currentHost.state === 'unavailable') {
-    clearConnectionNotificationTimers()
-    status.error({
-      key: CONNECTION_BANNER_KEY,
-      category: 'connection',
-      broadcast: true,
-      source: 'desktop',
-      title: t('hostBanner.unavailableTitle'),
-      message: t('hostBanner.unavailableText'),
-      details: currentHost.error?.message,
-      action: { label: t('hostBanner.retry'), run: () => retryConnection() },
-    })
-    return
-  }
-
   if (state === 'timeout') {
     clearConnectionNotificationTimers()
     status.error({
@@ -364,6 +353,41 @@ export function syncConnectionNotifications(options: { isAuthRequired?: boolean 
       title: t('app.backendDisconnected'),
       message: t('app.backendDisconnectedMessage'),
       action: { label: t('app.retryConnection'), run: () => retryConnection() },
+    })
+    return
+  }
+
+  // After the 15s cold-start splash fallback, surface a calm "connecting to backend" capsule
+  // immediately instead of waiting for another grace timer or showing an alarmist disconnect banner
+  // while Core is still compiling/booting.
+  if (
+    options.coldStartConnecting &&
+    (state === 'connecting' || state === 'host_unavailable')
+  ) {
+    clearConnectionNotificationTimers()
+    status.info({
+      key: CONNECTION_BANNER_KEY,
+      category: 'connection',
+      broadcast: true,
+      source: 'gateway',
+      title: t('app.connectingBackend'),
+      message: t('app.connectingBackendMessage'),
+      action: { label: t('app.retryConnection'), run: () => retryConnection() },
+    })
+    return
+  }
+
+  if (state === 'host_unavailable' || currentHost.state === 'unavailable') {
+    clearConnectionNotificationTimers()
+    status.error({
+      key: CONNECTION_BANNER_KEY,
+      category: 'connection',
+      broadcast: true,
+      source: 'desktop',
+      title: t('hostBanner.unavailableTitle'),
+      message: t('hostBanner.unavailableText'),
+      details: currentHost.error?.message,
+      action: { label: t('hostBanner.retry'), run: () => retryConnection() },
     })
     return
   }

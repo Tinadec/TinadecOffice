@@ -9,10 +9,14 @@ import {
   type Ref,
 } from 'vue'
 import * as VueRouter from 'vue-router'
+import {
+  SPLASH_CURTAIN_LEAD_IN_MS,
+  waitForStartupSplashGate,
+} from '@/lib/startupSplashGate'
 
-export const PAGE_ENTER_DURATION_MS = 280
+export const PAGE_ENTER_DURATION_MS = 380
 export const PAGE_EXIT_DURATION_MS = 190
-export const PAGE_STAGGER_STEP_MS = 35
+export const PAGE_STAGGER_STEP_MS = 55
 
 export type PageTransitionPhase = 'preparing' | 'entering' | 'idle' | 'exiting'
 
@@ -116,6 +120,8 @@ export function usePageTransition(options: UsePageTransitionOptions = {}): PageT
   let alive = true
   let frameId: number | undefined
   let releaseFrame: ((painted: boolean) => void) | undefined
+  let leadInTimer: ReturnType<typeof setTimeout> | undefined
+  let releaseLeadIn: ((proceeded: boolean) => void) | undefined
   let enterTimer: ReturnType<typeof setTimeout> | undefined
   let exitTimer: ReturnType<typeof setTimeout> | undefined
   let releaseExit: (() => void) | undefined
@@ -130,6 +136,13 @@ export function usePageTransition(options: UsePageTransitionOptions = {}): PageT
     releaseFrame?.(false)
     releaseFrame = undefined
 
+    if (leadInTimer !== undefined) {
+      clearTimeout(leadInTimer)
+      leadInTimer = undefined
+    }
+    releaseLeadIn?.(false)
+    releaseLeadIn = undefined
+
     if (enterTimer !== undefined) {
       clearTimeout(enterTimer)
       enterTimer = undefined
@@ -140,6 +153,18 @@ export function usePageTransition(options: UsePageTransitionOptions = {}): PageT
     }
     releaseExit?.()
     releaseExit = undefined
+  }
+
+  function waitLeadIn(ms: number): Promise<boolean> {
+    if (ms <= 0 || prefersReducedMotion()) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      releaseLeadIn = resolve
+      leadInTimer = setTimeout(() => {
+        leadInTimer = undefined
+        releaseLeadIn = undefined
+        resolve(true)
+      }, ms)
+    })
   }
 
   function nextPaintFrame(): Promise<boolean> {
@@ -254,6 +279,10 @@ export function usePageTransition(options: UsePageTransitionOptions = {}): PageT
     await nextTick()
     if (isStoppedOrExiting()) return
     if (!(await nextPaintFrame()) || isStoppedOrExiting()) return
+    const isInitialUnveil = await waitForStartupSplashGate(() => !isStoppedOrExiting())
+    if (isStoppedOrExiting()) return
+    if (isInitialUnveil && !await waitLeadIn(SPLASH_CURTAIN_LEAD_IN_MS)) return
+    if (isStoppedOrExiting()) return
     if (prefersReducedMotion()) {
       phase.value = 'idle'
       return

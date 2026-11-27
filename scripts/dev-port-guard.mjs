@@ -95,7 +95,7 @@ const PS_QUERY = [
   'Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue |',
   "ForEach-Object { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_.OwningProcess) -ErrorAction SilentlyContinue;",
   '$items += [pscustomobject]@{ port = $_.LocalPort; pid = [int]$_.OwningProcess; name = $p.Name; execPath = $p.ExecutablePath; cmdline = $p.CommandLine } };',
-  "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'TinadecCore.Api.exe' } |",
+  "Get-Process -Name 'TinadecCore.Api' -ErrorAction SilentlyContinue | ForEach-Object { Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_.Id) -ErrorAction SilentlyContinue } |",
   'ForEach-Object { $proc = $_; if (-not ($items | Where-Object { $_.pid -eq [int]$proc.ProcessId })) {',
   '$items += [pscustomobject]@{ port = 0; pid = [int]$proc.ProcessId; name = $proc.Name; execPath = $proc.ExecutablePath; cmdline = $proc.CommandLine } } };',
   'if ($items.Count -gt 0) { $items | ConvertTo-Json -Compress }',

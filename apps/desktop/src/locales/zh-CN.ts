@@ -903,6 +903,8 @@ export default {
     retryConnection: '重新连接',
     loadFailed: '加载失败',
     loadFailedMessage: '暂时无法加载所需数据，请检查服务状态后重试。',
+    connectingBackend: '正在连接后端…',
+    connectingBackendMessage: '正在等待 Core/Gateway 就绪，连接成功后将自动加载。',
     backendNotConnected: '后端未连接',
     backendNotConnectedMessage: '30 秒内无法连接 Core/Gateway，部分功能可能不可用。',
     backendDisconnected: '后端已断开',

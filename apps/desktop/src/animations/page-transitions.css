@@ -19,11 +19,11 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 ==================================================================== */
 
 :root {
-  --motion-enter-duration: var(--duration-panel, 240ms);
-  --motion-enter-ease: var(--ease-snappy, cubic-bezier(0.2, 0, 0, 1));
+  --motion-enter-duration: 380ms;
+  --motion-enter-ease: var(--ease-spring-soft, cubic-bezier(0.16, 1, 0.3, 1));
   --motion-exit-duration: var(--duration-pop, 180ms);
   --motion-exit-ease: var(--ease-exit, cubic-bezier(0.4, 0, 1, 1));
-  --motion-stagger-step: 28ms;
+  --motion-stagger-step: 55ms;
 }
 
 /* ----------------------------------------------------------------------------
@@ -76,7 +76,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 @keyframes home-up-enter {
   from {
-    transform: translateY(14px) scale(0.985);
+    transform: translateY(38px) scale(0.965);
     opacity: 0;
   }
   to {
@@ -87,7 +87,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  transform: translateY(14px) scale(0.985);
+  transform: translateY(38px) scale(0.965);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -101,11 +101,20 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 .home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(1) :is(.uie-stack, .uie-column-rail) {
   animation-delay: 0ms;
 }
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(1) .uie-stack ~ .uie-stack {
+  animation-delay: 35ms;
+}
 .home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(2) :is(.uie-stack, .uie-column-rail) {
   animation-delay: var(--motion-stagger-step);
 }
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(2) .uie-stack ~ .uie-stack {
+  animation-delay: calc(var(--motion-stagger-step) + 35ms);
+}
 .home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(3) :is(.uie-stack, .uie-column-rail) {
   animation-delay: calc(var(--motion-stagger-step) * 2);
+}
+.home-page-container:is(.home-entering, .route-entering) .uie-column:nth-child(3) .uie-stack ~ .uie-stack {
+  animation-delay: calc(var(--motion-stagger-step) * 2 + 35ms);
 }
 
 .home-page-container.route-idle:not(.home-preparing):not(.home-entering):not(.home-exiting) :is(.uie-stack, .uie-column-rail) {
@@ -127,7 +136,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 @keyframes companion-island-enter {
   from {
-    transform: translateY(14px) scale(0.985);
+    transform: translateY(32px) scale(0.97);
     opacity: 0;
   }
   to {
@@ -149,7 +158,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 .companion-center-page.route-preparing :is(.companion-center-rail, .companion-thread, .companion-dock) {
   will-change: transform, opacity;
-  transform: translateY(14px) scale(0.985);
+  transform: translateY(32px) scale(0.97);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -207,7 +216,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 @keyframes space-island-enter {
   from {
-    transform: translateY(12px) scale(0.985);
+    transform: translateY(28px) scale(0.97);
     opacity: 0;
   }
   to {
@@ -229,7 +238,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 @keyframes space-card-enter {
   from {
-    transform: translateY(10px) scale(0.98);
+    transform: translateY(24px) scale(0.97);
     opacity: 0;
   }
   to {
@@ -270,7 +279,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 /* Spatial preparing state */
 .spatial-page.route-preparing :is(.uie-stack, .uie-column-rail) {
   will-change: transform, opacity;
-  transform: translateY(12px) scale(0.985);
+  transform: translateY(28px) scale(0.97);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -294,7 +303,7 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
 
 .spatial-page.route-preparing .space-flow-area .spatial-work-card {
   will-change: transform, opacity;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(24px) scale(0.97);
   opacity: 0;
   pointer-events: none;
   transition: none;
@@ -432,17 +441,55 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
    5. REDUCED MOTION ACCESSIBILITY — Instant Zero-Motion Bypass
    ---------------------------------------------------------------------------- */
 
+:root[data-reduced-motion='true'] {
+  --motion-enter-duration: 0ms;
+  --motion-exit-duration: 0ms;
+  --motion-stagger-step: 0ms;
+}
+
+:root[data-reduced-motion='true'] .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail),
+:root[data-reduced-motion='true'] .home-page-container:is(.home-entering, .route-entering, .home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail),
+:root[data-reduced-motion='true'] .companion-center-page:is(.route-preparing, .route-entering, .route-exiting) :is(.companion-center-rail, .companion-thread, .companion-dock),
+:root[data-reduced-motion='true'] .spatial-page:is(.route-preparing, .route-entering, .route-exiting) :is(
+  .uie-stack,
+  .uie-column-rail,
+  .space-island,
+  .space-goal-controls,
+  .space-controls,
+  .space-data-status,
+  .space-inspector,
+  .space-layers-drawer,
+  .space-detail,
+  .space-plan-drawer,
+  .space-hide-terminal,
+  .space-composer-pill,
+  .space-index-button
+),
+:root[data-reduced-motion='true'] .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-flow-area :is(
+  .spatial-work-card,
+  .vue-flow__background,
+  .vue-flow__edges
+),
+:root[data-reduced-motion='true'] .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-composer-dock .composer-box,
+:root[data-reduced-motion='true'] .settings-page:is(.route-preparing, .route-entering, .route-exiting) :is(.settings-nav, .settings-content, .settings-main) {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  will-change: auto !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  :root {
+  :root:not([data-reduced-motion='false']) {
     --motion-enter-duration: 0ms;
     --motion-exit-duration: 0ms;
     --motion-stagger-step: 0ms;
   }
 
-  .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail),
-  .home-page-container:is(.home-entering, .route-entering, .home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail),
-  .companion-center-page:is(.route-preparing, .route-entering, .route-exiting) :is(.companion-center-rail, .companion-thread, .companion-dock),
-  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) :is(
+  :root:not([data-reduced-motion='false']) .home-page-container:is(.home-preparing, .route-preparing) :is(.uie-stack, .uie-column-rail),
+  :root:not([data-reduced-motion='false']) .home-page-container:is(.home-entering, .route-entering, .home-exiting, .route-exiting) :is(.uie-stack, .uie-column-rail),
+  :root:not([data-reduced-motion='false']) .companion-center-page:is(.route-preparing, .route-entering, .route-exiting) :is(.companion-center-rail, .companion-thread, .companion-dock),
+  :root:not([data-reduced-motion='false']) .spatial-page:is(.route-preparing, .route-entering, .route-exiting) :is(
     .uie-stack,
     .uie-column-rail,
     .space-island,
@@ -457,13 +504,13 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
     .space-composer-pill,
     .space-index-button
   ),
-  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-flow-area :is(
+  :root:not([data-reduced-motion='false']) .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-flow-area :is(
     .spatial-work-card,
     .vue-flow__background,
     .vue-flow__edges
   ),
-  .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-composer-dock .composer-box,
-  .settings-page:is(.route-preparing, .route-entering, .route-exiting) :is(.settings-nav, .settings-content, .settings-main) {
+  :root:not([data-reduced-motion='false']) .spatial-page:is(.route-preparing, .route-entering, .route-exiting) .space-composer-dock .composer-box,
+  :root:not([data-reduced-motion='false']) .settings-page:is(.route-preparing, .route-entering, .route-exiting) :is(.settings-nav, .settings-content, .settings-main) {
     animation: none !important;
     transition: none !important;
     transform: none !important;
@@ -471,8 +518,8 @@ DESIGN PRINCIPLES (Apple HIG / Material Design 3 / T3 Code):
     will-change: auto !important;
   }
 
-  ::view-transition-old(root),
-  ::view-transition-new(root) {
+  :root:not([data-reduced-motion='false'])::view-transition-old(root),
+  :root:not([data-reduced-motion='false'])::view-transition-new(root) {
     animation: none !important;
   }
 }

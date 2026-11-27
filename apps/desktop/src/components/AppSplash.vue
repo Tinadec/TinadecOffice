@@ -30,9 +30,10 @@
   justify-content: center;
   background: var(--bg-primary);
   z-index: 9999;
+  will-change: transform, opacity;
   transition:
-    transform 600ms cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 400ms ease-out;
+    transform 540ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 420ms ease-out 90ms;
   pointer-events: auto;
 }
 .app-splash--leaving {
@@ -66,14 +67,26 @@
     opacity: 1;
   }
 }
+:global(:root[data-reduced-motion='true']) .app-splash {
+  transition: opacity 200ms ease-out;
+}
+:global(:root[data-reduced-motion='true']) .app-splash--leaving {
+  transform: none;
+}
+:global(:root[data-reduced-motion='true']) .app-splash__logo {
+  animation: none;
+  /* 静态显示 logo，保留基础光晕（非动画） */
+  filter: drop-shadow(0 0 5px var(--accent-brand));
+  opacity: 1;
+}
 @media (prefers-reduced-motion: reduce) {
-  .app-splash {
+  :global(:root:not([data-reduced-motion='false'])) .app-splash {
     transition: opacity 200ms ease-out;
   }
-  .app-splash--leaving {
+  :global(:root:not([data-reduced-motion='false'])) .app-splash--leaving {
     transform: none;
   }
-  .app-splash__logo {
+  :global(:root:not([data-reduced-motion='false'])) .app-splash__logo {
     animation: none;
     /* 静态显示 logo，保留基础光晕（非动画） */
     filter: drop-shadow(0 0 5px var(--accent-brand));

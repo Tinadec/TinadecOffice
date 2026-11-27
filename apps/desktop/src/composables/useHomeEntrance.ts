@@ -1,8 +1,13 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import {
+  SPLASH_CURTAIN_LEAD_IN_MS,
+  waitForStartupSplashGate,
+} from '@/lib/startupSplashGate'
+import {
   PAGE_ENTER_DURATION_MS,
   PAGE_EXIT_DURATION_MS,
   PAGE_STAGGER_STEP_MS,
+  prefersReducedMotion,
 } from './usePageTransition'
 
 export { PAGE_ENTER_DURATION_MS, PAGE_EXIT_DURATION_MS, PAGE_STAGGER_STEP_MS }
@@ -20,8 +25,13 @@ export function useHomeEntrance(
   let alive = true
   let frameId: number | undefined
   let releaseFrame: ((painted: boolean) => void) | undefined
+  let leadInTimer: ReturnType<typeof setTimeout> | undefined
+  let releaseLeadIn: ((proceeded: boolean) => void) | undefined
 
   function nextFrame(): Promise<boolean> {
+    if (typeof requestAnimationFrame !== 'function') {
+      return Promise.resolve(true)
+    }
     return new Promise((resolve) => {
       releaseFrame = resolve
       frameId = requestAnimationFrame(() => {
@@ -29,6 +39,18 @@ export function useHomeEntrance(
         releaseFrame = undefined
         resolve(true)
       })
+    })
+  }
+
+  function waitLeadIn(ms: number): Promise<boolean> {
+    if (ms <= 0 || prefersReducedMotion()) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      releaseLeadIn = resolve
+      leadInTimer = setTimeout(() => {
+        leadInTimer = undefined
+        releaseLeadIn = undefined
+        resolve(true)
+      }, ms)
     })
   }
 
@@ -43,12 +65,21 @@ export function useHomeEntrance(
     // its controls while the column animation is already playing.
     await document.fonts?.ready
     if (!alive || !await nextFrame() || !alive || !await nextFrame() || !alive) return
-    phase.value = 'entering'
+    // Notify App.vue that the measured frame is ready underneath the splash.
     onReady()
+    const isInitialUnveil = await waitForStartupSplashGate(() => alive)
+    if (!alive) return
+    if (isInitialUnveil && !await waitLeadIn(SPLASH_CURTAIN_LEAD_IN_MS)) return
+    if (!alive) return
+    if (prefersReducedMotion()) {
+      phase.value = 'settled'
+      return
+    }
+    phase.value = 'entering'
     await nextTick()
 
     while (alive) {
-      const animations = (root.value?.getAnimations({ subtree: true }) ?? [])
+      const animations = (root.value?.getAnimations?.({ subtree: true }) ?? [])
         .filter((animation) => 'animationName' in animation
           && animation.animationName === 'home-up-enter'
           && animation.playState !== 'finished' && animation.playState !== 'idle')
@@ -63,9 +94,18 @@ export function useHomeEntrance(
 
   onBeforeUnmount(() => {
     alive = false
-    if (frameId !== undefined) cancelAnimationFrame(frameId)
+    if (frameId !== undefined && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(frameId)
+    }
+    frameId = undefined
     releaseFrame?.(false)
     releaseFrame = undefined
+    if (leadInTimer !== undefined) {
+      clearTimeout(leadInTimer)
+      leadInTimer = undefined
+    }
+    releaseLeadIn?.(false)
+    releaseLeadIn = undefined
   })
 
   return { contentReady, phase }

@@ -5,12 +5,20 @@ import { useI18n } from 'vue-i18n'
 import { useBackground } from '@/composables/useBackground'
 import { useUiPreferences } from '@/composables/useUiPreferences'
 import {
+  CONNECTION_TIMEOUT_MS,
+  SPLASH_MAX_WAIT_MS,
   useConnection,
   retryConnection,
 } from '@/composables/useConnection'
-import { startStatusSync } from '@/composables/useNotifications'
+import { startStatusSync, setGlobalConnectionBlocked } from '@/composables/useNotifications'
 import { initPlatform } from '@/composables/usePlatform'
 import { setHostAccessStatus, useHostAccess } from '@/lib/hostAccess'
+import {
+  armStartupSplashGate,
+  openStartupSplashGate,
+  splashFallbackTriggered,
+  splashGateOpen,
+} from '@/lib/startupSplashGate'
 import { ensureGraphSeedPack, setGraphSeedPackTranslator } from '@/agentPacks/graphSeedPackBootstrap'
 import { evaluateOobeAdmission } from '@/composables/useOobe'
 import AppSplash from '@/components/AppSplash.vue'
@@ -41,13 +49,12 @@ import { homeController } from '@/controllers/HomeController'
 const { settings: backgroundSettings, applyBackground } = useBackground()
 watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true })
 
-// ---- Backend connection gating ----
-// The shell mounts on the first frame, whatever the backend is doing. Main no longer blocks the
-// window on backend startup, so waiting for "connected" here would park the splash for up to the
-// 30 s timeout on a slow or broken host. What the user gets instead is the real interface plus
-// NotificationIslandHost (`backend-connection` status capsule), which names the state and offers
-// the retry even during cold start. Business reads stay gated on host access (useHostAccess /
-// assertHostAccess), and the splash leaves when the mounted route reports its prepared frame.
+// ---- Startup splash gate & backend connection gating ----
+// The shell opens immediately with the breathing-Logo AppSplash while backend hosts start in the
+// background. AppSplash holds cleanly (with zero Dynamic Island overlay) until either:
+//   1. Backend + host verification succeed (or hit a terminal state requiring UI, e.g. login/preview), or
+//   2. The 15 s cold-start fallback expires — at which point the Logo flies up, modules fly in,
+//      and NotificationIslandHost displays `app.connectingBackend` until connected.
 // 子窗口（?splash=0，如 Debug Studio / Detached Panel）跳过 splash：
 // 它们复用主窗口已建立的后端连接，不应重播首次启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -63,6 +70,11 @@ function hashRoutePath(hash: string): string {
 }
 const isCompanionWindow = hashRoutePath(window.location.hash) === '#/companion'
 const isStandaloneWindow = isPetWindow || isCompanionWindow
+if (!isChildWindow && !isStandaloneWindow) {
+  armStartupSplashGate()
+} else {
+  openStartupSplashGate('bypass')
+}
 if (!isStandaloneWindow) {
   useUiPreferences({ streamEvents: !isChildWindow })
 }
@@ -78,6 +90,8 @@ const {
 } = useConnection()
 let graphSeedBootstrapped = false
 let graphSeedBootstrapping = false
+let splashFallbackTimer: ReturnType<typeof setTimeout> | undefined
+let coldStartWindowTimer: ReturnType<typeof setTimeout> | undefined
 let unsubscribeStatusSync: (() => void) | undefined
 let uninstallPaletteKeys: (() => void) | undefined
 let unsubscribeFocusSession: (() => void) | undefined
@@ -86,7 +100,10 @@ const disposePlatform = initPlatform()
 const route = useRoute()
 const router = useRouter()
 // Startup happens once. Retrying a lost backend must preserve the live page.
-const entryReady = ref(isChildWindow)
+const routePrepared = ref(isChildWindow || isStandaloneWindow)
+const entryReady = ref(isChildWindow || isStandaloneWindow)
+const everBusinessReady = ref(false)
+const coldStartWindowActive = ref(!isChildWindow && !isStandaloneWindow)
 const recoveryDialogOpen = ref(false)
 const recoveryActionId = ref<string | null>(null)
 
@@ -131,8 +148,15 @@ watch(
   { immediate: true },
 )
 
+function syncEntryReady() {
+  if (!entryReady.value && routePrepared.value && splashGateOpen.value) {
+    entryReady.value = true
+  }
+}
+
 function onPageReady() {
-  entryReady.value = true
+  routePrepared.value = true
+  syncEntryReady()
 }
 
 function onRouteMounted() {
@@ -152,6 +176,37 @@ function onRouteMounted() {
   }
 }
 
+// Open the splash gate once the backend/host reaches a decisive state.
+watch(
+  [businessReady, isAuthRequired, connectionState, hostStatus],
+  ([ready, authRequired, state, host]) => {
+    if (isStandaloneWindow || isChildWindow) return
+    if (ready) {
+      everBusinessReady.value = true
+      coldStartWindowActive.value = false
+    }
+    const hostTerminal =
+      host.state === 'preview' ||
+      host.state === 'rejected' ||
+      host.state === 'restart_required' ||
+      host.state === 'auth_required'
+    const connDecisive =
+      state === 'preview' ||
+      state === 'host_rejected' ||
+      state === 'host_restart_required' ||
+      state === 'timeout'
+    if (ready || authRequired || hostTerminal || connDecisive) {
+      if (splashFallbackTimer !== undefined) {
+        clearTimeout(splashFallbackTimer)
+        splashFallbackTimer = undefined
+      }
+      openStartupSplashGate('ready')
+      syncEntryReady()
+    }
+  },
+  { immediate: true },
+)
+
 // OOBE admission runs ONLY after AppSplash has left (entryReady) AND backend is connected.
 watch(
   [entryReady, businessReady],
@@ -164,10 +219,26 @@ watch(
 )
 
 watch(
-  [businessReady, isAuthRequired, connectionState, hostStatus],
-  ([ready, authRequired]) => {
+  [
+    entryReady,
+    businessReady,
+    isAuthRequired,
+    connectionState,
+    hostStatus,
+    coldStartWindowActive,
+    splashFallbackTriggered,
+  ],
+  ([unveiled, ready, authRequired, _state, _host, coldStartActive, fallback]) => {
     if (isStandaloneWindow || isChildWindow) return
-    syncConnectionNotifications({ isAuthRequired: authRequired })
+    if (!unveiled) {
+      // Keep the breathing-Logo splash clean (no floating capsule above it) until unveil.
+      setGlobalConnectionBlocked(!ready)
+    } else {
+      syncConnectionNotifications({
+        isAuthRequired: authRequired,
+        coldStartConnecting: !everBusinessReady.value && coldStartActive && fallback,
+      })
+    }
     if (ready && !authRequired && !graphSeedBootstrapped && !graphSeedBootstrapping) {
       graphSeedBootstrapping = true
       void ensureGraphSeedPack()
@@ -185,8 +256,21 @@ watch(
 )
 
 onMounted(() => {
-  if (!isStandaloneWindow) void startConnection()
   if (!isStandaloneWindow) {
+    if (!isChildWindow && !splashGateOpen.value) {
+      splashFallbackTimer = setTimeout(() => {
+        splashFallbackTimer = undefined
+        openStartupSplashGate('fallback')
+        syncEntryReady()
+      }, SPLASH_MAX_WAIT_MS)
+    }
+    if (!isChildWindow) {
+      coldStartWindowTimer = setTimeout(() => {
+        coldStartWindowTimer = undefined
+        coldStartWindowActive.value = false
+      }, CONNECTION_TIMEOUT_MS)
+    }
+    void startConnection()
     unsubscribeStatusSync = startStatusSync()
     // The palette is the window's command surface, and a pet has no commands to run.
     uninstallPaletteKeys = installPaletteKeybinding()
@@ -221,6 +305,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (splashFallbackTimer !== undefined) {
+    clearTimeout(splashFallbackTimer)
+    splashFallbackTimer = undefined
+  }
+  if (coldStartWindowTimer !== undefined) {
+    clearTimeout(coldStartWindowTimer)
+    coldStartWindowTimer = undefined
+  }
   clearConnectionNotificationTimers()
   disposePlatform()
   unsubscribeStatusSync?.()

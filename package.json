@@ -52,6 +52,12 @@
     "@vue/shared": "3.6.0-rc.10",
     "vue": "3.6.0-rc.10"
   },
+  "trustedDependencies": [
+    "electron",
+    "esbuild",
+    "node-pty",
+    "msw"
+  ],
   "allowScripts": {
     "msw@2.14.6": true,
     "node-pty@1.1.0": true,

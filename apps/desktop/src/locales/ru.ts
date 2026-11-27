@@ -1122,6 +1122,8 @@ export default {
     retryConnection: "Переподключиться",
     loadFailed: "Не удалось загрузить",
     loadFailedMessage: "Нужные данные временно недоступны. Проверьте сервис и повторите попытку.",
+    connectingBackend: "Подключение к серверу…",
+    connectingBackendMessage: "Ожидание готовности Core/Gateway. Данные загрузятся автоматически после подключения.",
     backendNotConnected: "Нет подключения к серверу",
     backendNotConnectedMessage: "Не удалось подключиться к Core/Gateway за 30 секунд. Некоторые функции могут быть недоступны.",
     backendDisconnected: "Соединение с сервером потеряно",

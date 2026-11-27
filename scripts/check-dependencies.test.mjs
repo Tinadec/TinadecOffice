@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { staleDependencies } from './check-dependencies.mjs';
+import { staleDependencies, describe } from './check-dependencies.mjs';
 
 function checkout(lockWorkspaces, lockPackages, installed) {
   const root = mkdtempSync(path.join(tmpdir(), 'tinadec-deps-'));
@@ -32,6 +32,37 @@ test('names a dependency the lockfile has but node_modules lacks, and one left a
       { name: 'vue', expected: '3.6.0', installed: '3.5.0' },
     ]);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('flags electron when its package manifest matches bun.lock but dist binary is missing', () => {
+  const prevOverride = process.env.ELECTRON_OVERRIDE_DIST_PATH;
+  delete process.env.ELECTRON_OVERRIDE_DIST_PATH;
+  const root = checkout({
+    'apps/desktop': { devDependencies: { electron: '^40.0.0' } },
+  }, {
+    'node_modules/electron': ['electron@40.0.0', '', {}, 'sha'],
+  }, { 'node_modules/electron': '40.0.0' });
+  try {
+    const problems = staleDependencies(root);
+    assert.deepEqual(problems, [
+      { name: 'electron', expected: '40.0.0', installed: '40.0.0 (missing binary)' },
+    ]);
+    assert.match(describe(problems), /node_modules\/electron\/install\.js/);
+
+    mkdirSync(path.join(root, 'node_modules/electron/dist'), { recursive: true });
+    writeFileSync(path.join(root, 'node_modules/electron/path.txt'), 'electron.exe');
+    writeFileSync(path.join(root, 'node_modules/electron/dist/electron.exe'), '');
+    writeFileSync(path.join(root, 'node_modules/electron/dist/version'), '39.0.0');
+    assert.deepEqual(staleDependencies(root), [
+      { name: 'electron', expected: '40.0.0', installed: '40.0.0 (missing binary)' },
+    ]);
+
+    writeFileSync(path.join(root, 'node_modules/electron/dist/version'), '40.0.0');
+    assert.deepEqual(staleDependencies(root), []);
+  } finally {
+    if (prevOverride !== undefined) process.env.ELECTRON_OVERRIDE_DIST_PATH = prevOverride;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('finds nothing to report in this checkout, so `bun run dev` is not held back here', () => {

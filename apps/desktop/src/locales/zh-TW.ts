@@ -1122,6 +1122,8 @@ export default {
     retryConnection: "重新連線",
     loadFailed: "載入失敗",
     loadFailedMessage: "暫時無法載入所需資料，請檢查服務狀態後重試。",
+    connectingBackend: "正在連線後端…",
+    connectingBackendMessage: "正在等待 Core/Gateway 就緒，連線成功後將自動載入。",
     backendNotConnected: "後端未連線",
     backendNotConnectedMessage: "30 秒內無法連線 Core/Gateway，部分功能可能不可用。",
     backendDisconnected: "後端已斷開",

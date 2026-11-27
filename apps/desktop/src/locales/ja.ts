@@ -1122,6 +1122,8 @@ export default {
     retryConnection: "再接続",
     loadFailed: "読み込みに失敗しました",
     loadFailedMessage: "必要なデータを一時的に読み込めません。サービスの状態を確認してから再試行してください。",
+    connectingBackend: "バックエンドに接続中…",
+    connectingBackendMessage: "Core/Gateway の準備を待機しています。接続完了後に自動で読み込まれます。",
     backendNotConnected: "バックエンドに接続されていません",
     backendNotConnectedMessage: "30 秒以内に Core/Gateway に接続できませんでした。一部の機能が使えない可能性があります。",
     backendDisconnected: "バックエンドとの接続が切れました",

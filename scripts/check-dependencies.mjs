@@ -23,6 +23,21 @@ const readJson = (file) => {
   }
 }
 
+function electronBinaryInstalled(packageDir, lockedVersion) {
+  if (process.env.ELECTRON_OVERRIDE_DIST_PATH) {
+    return existsSync(path.join(process.env.ELECTRON_OVERRIDE_DIST_PATH, process.platform === 'win32' ? 'electron.exe' : 'electron'))
+  }
+  const versionFile = path.join(packageDir, 'dist', 'version')
+  if (!existsSync(versionFile)) return false
+  const binaryVersion = readFileSync(versionFile, 'utf8').trim().replace(/^v/, '')
+  if (lockedVersion && binaryVersion !== lockedVersion) return false
+  const pathFile = path.join(packageDir, 'path.txt')
+  if (!existsSync(pathFile)) return false
+  const executableRel = readFileSync(pathFile, 'utf8').trim()
+  if (!executableRel) return false
+  return existsSync(path.join(packageDir, 'dist', executableRel))
+}
+
 /** `[{ name, expected, installed }]` for every direct dependency that does not match the lockfile. */
 export function staleDependencies(root) {
   const lock = readJson(path.join(root, 'bun.lock'))
@@ -49,21 +64,29 @@ export function staleDependencies(root) {
         continue
       }
       const lockedVersion = Array.isArray(locked) ? locked[0].split('@').pop() : locked.version
-      const manifest = path.join(root, location, 'package.json')
+      const packageDir = path.join(root, location)
+      const manifest = path.join(packageDir, 'package.json')
       const installed = existsSync(manifest) ? readJson(manifest).version : null
-      if (installed !== lockedVersion) problems.push({ name, expected: lockedVersion, installed })
+      if (installed !== lockedVersion) {
+        problems.push({ name, expected: lockedVersion, installed })
+      } else if (name === 'electron' && !electronBinaryInstalled(packageDir, lockedVersion)) {
+        problems.push({ name, expected: lockedVersion, installed: `${installed} (missing binary)` })
+      }
     }
   }
   return problems
 }
 
 export function describe(problems) {
+  const hasMissingElectronBinary = problems.some(({ installed }) => String(installed).includes('missing binary'))
   const lines = problems.map(({ name, expected, installed }) =>
     `  - ${name}: ${installed ? `installed ${installed}, lockfile ${expected}` : `missing (lockfile ${expected})`}`)
   return [
     '[check-dependencies] node_modules does not match bun.lock / 依赖与 bun.lock 不一致:',
     ...lines,
-    'Run `bun install` in the repository root, then start again. / 请在仓库根目录运行 bun install 后再启动。',
+    ...(hasMissingElectronBinary
+      ? ['Electron postinstall binary is missing. Run `bun install` or `node node_modules/electron/install.js` in the repository root. / Electron 可执行文件缺失，请在仓库根目录运行 bun install 或 node node_modules/electron/install.js。']
+      : ['Run `bun install` in the repository root, then start again. / 请在仓库根目录运行 bun install 后再启动。']),
   ].join('\n')
 }
 
