@@ -7,11 +7,11 @@
  * - Immediately fails/closes all in-flight streams when a peer disconnects or revokes access.
  */
 
-import tls, { type TLSSocket } from 'node:tls';
 import { ensureRequestId } from '../headers.js';
 import type { WsTerminalClient } from '../wsTerminalProxy.js';
 import { performClientHandshake } from './peerHandshake.js';
 import {
+  DevServerFramedStream,
   DevServerRequestError,
   type DialDevServerTunnelParams,
   type DialedDevServerStream,
@@ -22,16 +22,27 @@ import {
   type WorkerDevServerLeaseDto,
 } from './peerDevServerTunnel.js';
 import {
-  DEFAULT_PEER_LISTEN_PORT,
   type DecodedPeerFrame,
+  extractPeerCertFingerprint,
   generateSelfSignedP256TlsMaterial,
   isPeerErrorCode,
+  PEER_ALPN_DEVSERVER,
   PEER_ALPN_HTTP,
   type PeerErrorCode,
   PeerFrameConnection,
   PeerProtocolError,
+  verifyPinnedFingerprint,
 } from './peerProtocol.js';
 import type { LocalTlsMaterialDto } from './peerTlsServer.js';
+import {
+  BlindRelayTransport,
+  inferPeerTransportKind,
+  type IPeerTransportChannel,
+  LanMtlsTransport,
+  parseLanPeerAddress,
+  type PeerTransportKind,
+} from './peerTransport.js';
+import type { PeerProviderProxyRuntime } from './peerProviderProxy.js';
 
 export type PeerConnectionState =
   | 'disconnected'
@@ -74,6 +85,7 @@ export interface PeerProbeResultDto {
 
 export interface PairPeerDeviceInput {
   address: string;
+  transport?: PeerTransportKind;
   pairing_code: string;
   expected_fingerprint: string;
   display_name?: string;
@@ -105,6 +117,16 @@ export interface PeerClientPoolOptions {
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   reconnectBaseDelayMs?: number;
+  /** Optional custom `IPeerTransportChannel` for `'lan'` connections (defaults to `LanMtlsTransport`). */
+  lanTransport?: IPeerTransportChannel;
+  /** Optional `IPeerTransportChannel` for `'relay'` connections (defaults to `BlindRelayTransport`). */
+  relayTransport?: IPeerTransportChannel;
+  /** Default stateless Relay base URL used when dialing shorthand `'relay'` addresses. */
+  relayUrl?: string | (() => string | undefined);
+  /** Additional custom `IPeerTransportChannel` plugins matched via `canHandleAddress`. */
+  customTransports?: readonly IPeerTransportChannel[];
+  /** Optional Wave 3 provider-proxy runtime handling reverse mTLS completion callbacks. */
+  providerProxy?: PeerProviderProxyRuntime;
 }
 
 interface PendingHttpClientStream {
@@ -126,6 +148,8 @@ interface PendingWsClientStream {
 
 interface PooledPeerEntry {
   deviceId: string;
+  remoteDeviceId: string;
+  transport: PeerTransportKind;
   address: string;
   pinnedFingerprint: string;
   connectionDesired: boolean;
@@ -142,40 +166,7 @@ interface PooledPeerEntry {
 }
 
 export function parsePeerAddress(rawAddress: string): { host: string; port: number; normalized: string } {
-  const trimmed = rawAddress.trim();
-  if (!trimmed) {
-    throw new PeerProtocolError('unreachable', 'Peer address is empty.');
-  }
-
-  let host = '';
-  let port = DEFAULT_PEER_LISTEN_PORT;
-
-  if (trimmed.startsWith('[')) {
-    const closeIdx = trimmed.indexOf(']');
-    if (closeIdx <= 1) {
-      throw new PeerProtocolError('unreachable', `Malformed IPv6 peer address '${rawAddress}'.`);
-    }
-    host = trimmed.slice(1, closeIdx);
-    const rest = trimmed.slice(closeIdx + 1);
-    if (rest.startsWith(':')) {
-      port = Number(rest.slice(1));
-    }
-  } else {
-    const colonIdx = trimmed.lastIndexOf(':');
-    if (colonIdx > 0 && trimmed.indexOf(':') === colonIdx) {
-      host = trimmed.slice(0, colonIdx).trim();
-      port = Number(trimmed.slice(colonIdx + 1).trim());
-    } else {
-      host = trimmed;
-    }
-  }
-
-  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new PeerProtocolError('unreachable', `Invalid peer host:port '${rawAddress}'.`);
-  }
-
-  const normalized = host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
-  return { host, port, normalized };
+  return parseLanPeerAddress(rawAddress);
 }
 
 function mapErrorToConnectionState(err: unknown): {
@@ -205,6 +196,9 @@ export class PeerClientPool {
   private readonly options: PeerClientPoolOptions;
   private readonly entries = new Map<string, PooledPeerEntry>();
   private readonly devServerMapper: PeerDevServerPortMapper;
+  private readonly defaultLanTransport: IPeerTransportChannel;
+  private readonly defaultRelayTransport: IPeerTransportChannel;
+  private providerProxy: PeerProviderProxyRuntime | null;
   private fallbackIdentity: {
     deviceId: string;
     displayName: string;
@@ -215,6 +209,15 @@ export class PeerClientPool {
 
   constructor(options: PeerClientPoolOptions) {
     this.options = options;
+    this.providerProxy = options.providerProxy ?? null;
+    this.defaultLanTransport = options.lanTransport ?? new LanMtlsTransport();
+    this.defaultRelayTransport =
+      options.relayTransport ??
+      new BlindRelayTransport({
+        relayUrl: options.relayUrl,
+        connectTimeoutMs: options.connectTimeoutMs,
+        handshakeTimeoutMs: options.handshakeTimeoutMs,
+      });
     this.devServerMapper = new PeerDevServerPortMapper({
       dialDevServerStream: (params) => this.dialDevServerTunnelStream(params),
       isDeviceControlReady: (deviceId) => {
@@ -280,9 +283,20 @@ export class PeerClientPool {
     };
   }
 
+  setProviderProxyRuntime(runtime: PeerProviderProxyRuntime | null): void {
+    this.providerProxy = runtime;
+  }
+
+  getRemoteDeviceId(deviceId: string): string | null {
+    return this.entries.get(deviceId)?.remoteDeviceId ?? null;
+  }
+
   upsertMetadata(device: PeerDeviceRecord): void {
+    const resolvedTransport = inferPeerTransportKind(device.address, device.transport);
     const existing = this.entries.get(device.device_id);
     if (existing) {
+      existing.remoteDeviceId = device.remote_device_id || existing.remoteDeviceId;
+      existing.transport = resolvedTransport;
       existing.address = device.address;
       existing.pinnedFingerprint = device.certificate_fingerprint;
       existing.connectionDesired = Boolean(device.connection_desired);
@@ -290,6 +304,8 @@ export class PeerClientPool {
     }
     this.entries.set(device.device_id, {
       deviceId: device.device_id,
+      remoteDeviceId: device.remote_device_id || device.device_id,
+      transport: resolvedTransport,
       address: device.address,
       pinnedFingerprint: device.certificate_fingerprint,
       connectionDesired: Boolean(device.connection_desired),
@@ -307,20 +323,26 @@ export class PeerClientPool {
   }
 
   /**
-   * Probe a remote `IP:Port` over TLS, extracting its real X.509 DER SHA-256 fingerprint
-   * and self-reported identity without consuming any active pairing code.
+   * Probe a remote peer (`IP:Port` or Relay address) over end-to-end TLS, extracting its real
+   * X.509 DER SHA-256 fingerprint and self-reported identity without consuming any pairing code.
    */
-  async probeAddress(rawAddress: string): Promise<PeerProbeResultDto> {
-    const { host, port, normalized } = parsePeerAddress(rawAddress);
+  async probeAddress(rawAddress: string, explicitTransport?: PeerTransportKind): Promise<PeerProbeResultDto> {
     const localIdentity = await this.resolveLocalIdentity();
-    const tlsSocket = await this.openTlsSocket(host, port, localIdentity.certPem, localIdentity.privateKeyPem);
-    const connection = new PeerFrameConnection(tlsSocket, {
+    const channel = this.resolveTransportChannel(rawAddress, explicitTransport);
+    const dialed = await channel.connect({
+      address: rawAddress,
+      certPem: localIdentity.certPem,
+      privateKeyPem: localIdentity.privateKeyPem,
+      alpnProtocols: [PEER_ALPN_HTTP],
+      connectTimeoutMs: this.options.connectTimeoutMs,
+    });
+    const connection = new PeerFrameConnection(dialed.tlsSocket, {
       heartbeatIntervalMs: 0,
     });
 
     const result = await performClientHandshake({
       connection,
-      tlsSocket,
+      tlsSocket: dialed.tlsSocket,
       localDeviceId: localIdentity.deviceId,
       localDeviceName: localIdentity.displayName,
       pairingMode: 'probe',
@@ -329,7 +351,7 @@ export class PeerClientPool {
 
     return {
       reachable: true,
-      address: normalized,
+      address: dialed.normalizedAddress,
       remote_device_id: result.remoteDeviceId,
       display_name: result.remoteDeviceName,
       certificate_fingerprint: result.remoteFingerprint,
@@ -344,7 +366,6 @@ export class PeerClientPool {
    * persist the paired device in Core, and adopt the live tunnel into the pool.
    */
   async pairWithPeer(input: PairPeerDeviceInput): Promise<PeerDeviceRecord> {
-    const { host, port, normalized } = parsePeerAddress(input.address);
     const pairingCode = input.pairing_code?.trim();
     if (!pairingCode) {
       throw new PeerProtocolError('pairing_code_rejected', 'Pairing code is required.');
@@ -358,15 +379,23 @@ export class PeerClientPool {
     }
 
     const localIdentity = await this.resolveLocalIdentity();
-    const tlsSocket = await this.openTlsSocket(host, port, localIdentity.certPem, localIdentity.privateKeyPem);
-    const connection = new PeerFrameConnection(tlsSocket, {
+    const channel = this.resolveTransportChannel(input.address, input.transport);
+    const dialed = await channel.connect({
+      address: input.address,
+      certPem: localIdentity.certPem,
+      privateKeyPem: localIdentity.privateKeyPem,
+      alpnProtocols: [PEER_ALPN_HTTP],
+      connectTimeoutMs: this.options.connectTimeoutMs,
+      pairingCode,
+    });
+    const connection = new PeerFrameConnection(dialed.tlsSocket, {
       heartbeatIntervalMs: this.options.heartbeatIntervalMs,
       heartbeatTimeoutMs: this.options.heartbeatTimeoutMs,
     });
 
     const handshake = await performClientHandshake({
       connection,
-      tlsSocket,
+      tlsSocket: dialed.tlsSocket,
       localDeviceId: localIdentity.deviceId,
       localDeviceName: localIdentity.displayName,
       pairingMode: 'code',
@@ -388,8 +417,8 @@ export class PeerClientPool {
     const saved = await this.persistPairedDeviceInCore({
       remote_device_id: handshake.remoteDeviceId,
       display_name: displayName,
-      transport: 'lan',
-      address: normalized,
+      transport: dialed.transport,
+      address: dialed.normalizedAddress,
       certificate_fingerprint: handshake.remoteFingerprint,
       protocol_major: handshake.protocolMajor,
       protocol_minor: handshake.protocolMinor,
@@ -457,6 +486,7 @@ export class PeerClientPool {
     await this.devServerMapper.closeDeviceMappings(deviceId, 'Peer device disconnected.');
     const entry = this.entries.get(deviceId);
     if (entry) {
+      this.providerProxy?.revokeDeviceTokens(entry.remoteDeviceId || deviceId);
       entry.connectionDesired = false;
       if (entry.reconnectTimer) {
         clearTimeout(entry.reconnectTimer);
@@ -476,6 +506,7 @@ export class PeerClientPool {
     void this.devServerMapper.closeDeviceMappings(deviceId, 'Peer device removed.');
     const entry = this.entries.get(deviceId);
     if (!entry) return;
+    this.providerProxy?.revokeDeviceTokens(entry.remoteDeviceId || deviceId);
     entry.connectionDesired = false;
     if (entry.reconnectTimer) {
       clearTimeout(entry.reconnectTimer);
@@ -642,20 +673,34 @@ export class PeerClientPool {
     if (!entry || entry.state !== 'ready' || !entry.connection || entry.connection.isClosed) {
       throw new PeerProtocolError('device_offline', `Peer device '${params.deviceId}' is offline.`);
     }
-    const { host, port } = parsePeerAddress(entry.address);
     const localIdentity = await this.resolveLocalIdentity();
-    return await openClientDevServerAlpnStream({
-      host,
-      port,
-      certPem: localIdentity.certPem,
-      privateKeyPem: localIdentity.privateKeyPem,
-      pinnedServerFingerprint: entry.pinnedFingerprint,
-      leaseId: params.leaseId,
-      ticket: params.ticket,
-      controllerDeviceId: params.controllerDeviceId || localIdentity.deviceId,
-      connectTimeoutMs: this.options.connectTimeoutMs,
-      handshakeTimeoutMs: this.options.handshakeTimeoutMs,
-    });
+    if (
+      entry.transport === 'lan' &&
+      !this.options.lanTransport &&
+      !this.options.customTransports?.some((ch) => ch.canHandleAddress(entry.address))
+    ) {
+      const { host, port } = parsePeerAddress(entry.address);
+      return await openClientDevServerAlpnStream({
+        host,
+        port,
+        certPem: localIdentity.certPem,
+        privateKeyPem: localIdentity.privateKeyPem,
+        pinnedServerFingerprint: entry.pinnedFingerprint,
+        leaseId: params.leaseId,
+        ticket: params.ticket,
+        controllerDeviceId: params.controllerDeviceId || localIdentity.deviceId,
+        connectTimeoutMs: this.options.connectTimeoutMs,
+        handshakeTimeoutMs: this.options.handshakeTimeoutMs,
+      });
+    }
+
+    return await this.dialDevServerOverTransportChannel(
+      entry,
+      localIdentity,
+      params.leaseId,
+      params.ticket,
+      params.controllerDeviceId || localIdentity.deviceId,
+    );
   }
 
   /**
@@ -821,19 +866,27 @@ export class PeerClientPool {
     void this.reportControllerStateToCore(entry.deviceId, 'connecting', null, null, entry.accessRevision);
 
     try {
-      const { host, port } = parsePeerAddress(entry.address);
       const localIdentity = await this.resolveLocalIdentity();
-      const tlsSocket = await this.openTlsSocket(host, port, localIdentity.certPem, localIdentity.privateKeyPem);
+      const channel = this.resolveTransportChannel(entry.address, entry.transport);
+      const dialed = await channel.connect({
+        address: entry.address,
+        certPem: localIdentity.certPem,
+        privateKeyPem: localIdentity.privateKeyPem,
+        alpnProtocols: [PEER_ALPN_HTTP],
+        connectTimeoutMs: this.options.connectTimeoutMs,
+      });
+      entry.transport = dialed.transport;
+      entry.address = dialed.normalizedAddress;
 
       entry.state = 'handshaking';
-      const connection = new PeerFrameConnection(tlsSocket, {
+      const connection = new PeerFrameConnection(dialed.tlsSocket, {
         heartbeatIntervalMs: this.options.heartbeatIntervalMs,
         heartbeatTimeoutMs: this.options.heartbeatTimeoutMs,
       });
 
       const handshake = await performClientHandshake({
         connection,
-        tlsSocket,
+        tlsSocket: dialed.tlsSocket,
         localDeviceId: localIdentity.deviceId,
         localDeviceName: localIdentity.displayName,
         pairingMode: 'grant',
@@ -844,6 +897,10 @@ export class PeerClientPool {
       if (handshake.mode === 'probe') {
         connection.destroy();
         throw new PeerProtocolError('handshake_failed', 'Unexpected probe response on grant connect.');
+      }
+
+      if (handshake.remoteDeviceId) {
+        entry.remoteDeviceId = handshake.remoteDeviceId;
       }
 
       const now = Date.now();
@@ -1088,6 +1145,51 @@ export class PeerClientPool {
         return;
       }
 
+      case 'http.req':
+      case 'http.req.chunk':
+      case 'http.req.end':
+      case 'http.req.abort': {
+        const conn = entry.connection;
+        if (!conn || conn.isClosed) return;
+        if (this.providerProxy) {
+          this.providerProxy.handleControllerReverseRequestFrame(
+            {
+              deviceId: entry.deviceId,
+              remoteDeviceId: entry.remoteDeviceId || entry.deviceId,
+              connection: conn,
+            },
+            frame,
+          );
+          return;
+        }
+        if (h.type === 'http.req') {
+          const payload = Buffer.from(
+            JSON.stringify({
+              type: 'https://tinadec.dev/errors/policy_denied',
+              title: 'policy_denied',
+              status: 403,
+              code: 'policy_denied',
+              detail: 'Controller provider proxy runtime is not enabled.',
+              instance: h.path,
+            }),
+            'utf8',
+          );
+          try {
+            conn.sendFrame({
+              type: 'http.res.head',
+              streamId: h.streamId,
+              status: 403,
+              headers: { 'content-type': 'application/problem+json' },
+            });
+            conn.sendFrame({ type: 'http.res.chunk', streamId: h.streamId }, payload);
+            conn.sendFrame({ type: 'http.res.end', streamId: h.streamId });
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
+
       default:
         return;
     }
@@ -1168,56 +1270,85 @@ export class PeerClientPool {
     entry.reconnectTimer.unref?.();
   }
 
-  private openTlsSocket(
-    host: string,
-    port: number,
-    certPem: string,
-    privateKeyPem: string,
-  ): Promise<TLSSocket> {
-    const timeoutMs = this.options.connectTimeoutMs ?? 5_000;
-    return new Promise<TLSSocket>((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        try {
-          sock.destroy();
-        } catch {
-          // ignore
+  private resolveTransportChannel(
+    rawAddress: string,
+    explicitTransport?: PeerTransportKind | null,
+  ): IPeerTransportChannel {
+    if (this.options.customTransports?.length) {
+      for (const ch of this.options.customTransports) {
+        if (explicitTransport && ch.kind === explicitTransport && ch.canHandleAddress(rawAddress)) {
+          return ch;
         }
-        reject(new PeerProtocolError('timeout', `TLS connection to ${host}:${port} timed out after ${timeoutMs}ms.`));
-      }, timeoutMs);
-      timer.unref?.();
+      }
+      for (const ch of this.options.customTransports) {
+        if (ch.canHandleAddress(rawAddress)) {
+          return ch;
+        }
+      }
+    }
+    const kind = inferPeerTransportKind(rawAddress, explicitTransport);
+    return kind === 'relay' ? this.defaultRelayTransport : this.defaultLanTransport;
+  }
 
-      const sock = tls.connect(
-        {
-          host,
-          port,
-          cert: certPem,
-          key: privateKeyPem,
-          rejectUnauthorized: false,
-          ALPNProtocols: [PEER_ALPN_HTTP],
-        },
-        () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(sock);
-        },
+  private async dialDevServerOverTransportChannel(
+    entry: PooledPeerEntry,
+    localIdentity: { certPem: string; privateKeyPem: string },
+    leaseId: string,
+    ticket: string,
+    controllerDeviceId: string,
+  ): Promise<DialedDevServerStream> {
+    const channel = this.resolveTransportChannel(entry.address, entry.transport);
+    const dialed = await channel.connect({
+      address: entry.address,
+      certPem: localIdentity.certPem,
+      privateKeyPem: localIdentity.privateKeyPem,
+      alpnProtocols: [PEER_ALPN_DEVSERVER],
+      connectTimeoutMs: this.options.connectTimeoutMs,
+    });
+
+    const tlsSocket = dialed.tlsSocket;
+    const tlsStream = new DevServerFramedStream(tlsSocket);
+    const handshakeTimeoutMs = this.options.handshakeTimeoutMs ?? 8_000;
+
+    try {
+      if (tlsSocket.alpnProtocol !== PEER_ALPN_DEVSERVER) {
+        throw new PeerProtocolError(
+          'handshake_failed',
+          `Remote peer did not negotiate ALPN '${PEER_ALPN_DEVSERVER}' (got '${String(tlsSocket.alpnProtocol)}').`,
+        );
+      }
+
+      const actualServerFp = extractPeerCertFingerprint(tlsSocket);
+      verifyPinnedFingerprint(
+        actualServerFp,
+        entry.pinnedFingerprint,
+        'Remote DevServer TLS server certificate',
       );
 
-      sock.once('error', (err: NodeJS.ErrnoException) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        const code = err.code ?? '';
-        if (code === 'ETIMEDOUT') {
-          reject(new PeerProtocolError('timeout', `Connection to ${host}:${port} timed out.`));
-          return;
-        }
-        reject(new PeerProtocolError('unreachable', `Cannot reach peer ${host}:${port}: ${err.message}`));
+      tlsStream.sendHandshake({
+        type: 'devserver.open',
+        lease_id: leaseId,
+        ticket,
+        controller_device_id: controllerDeviceId,
       });
-    });
+
+      const frame = await tlsStream.readHandshake(handshakeTimeoutMs);
+      if (frame.type === 'devserver.open-reject') {
+        const code = isPeerErrorCode(frame.code) ? frame.code : 'unauthorized';
+        throw new PeerProtocolError(code, frame.message || 'Remote peer rejected DevServer tunnel.');
+      }
+      if (frame.type !== 'devserver.open-ack') {
+        throw new PeerProtocolError(
+          'handshake_failed',
+          `Expected devserver.open-ack, received '${frame.type}'.`,
+        );
+      }
+      return { tlsStream };
+    } catch (err) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      tlsStream.destroy();
+      throw err;
+    }
   }
 
   private getOrCreateEntry(record: PeerDeviceRecord): PooledPeerEntry {

@@ -279,6 +279,11 @@ internal sealed partial class FullDuplexRunEngine
                 }
                 continue;
             }
+            if (pendingTurn is not null && PeerDelegationTools.IsPeerDelegationTool(pendingTurn.ToolId))
+            {
+                checkpoint = await HandlePeerDelegationToolAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
 
             // Legacy Core-owned virtual tools (preserved for backward compatibility)
             if (pendingTurn is not null && CoreVirtualToolPolicy.IsTaskWait(pendingTurn.ToolId))
@@ -813,6 +818,16 @@ internal sealed partial class FullDuplexRunEngine
         var carriesTeamSurface = authorized.Any(e => CoreVirtualToolPolicy.IsTeamPlan(e.Id) || CoreVirtualToolPolicy.IsTeamMessage(e.Id) || CoreVirtualToolPolicy.IsTeamSpawn(e.Id))
             || !string.IsNullOrWhiteSpace(task.TeammateHandle);
 
+        var carriesPeerDelegationSurface = _peerDelegation is not null
+            && !task.IsSpacePreparation
+            && (task.IsCoordinatorTask
+                || carriesTeamSurface
+                || authorized.Any(e => CoreVirtualToolPolicy.IsTaskDispatch(e.Id))
+                || (string.Equals(task.TaskKey, "solo", StringComparison.OrdinalIgnoreCase)
+                    && (authorized.Count > 0 || worker.AllowedTools.Contains("*", StringComparer.Ordinal)))
+                || worker.AllowedTools.Any(PeerDelegationTools.IsPeerDelegationTool)
+                || task.RequiredTools.Any(PeerDelegationTools.IsPeerDelegationTool));
+
         if (task.RequiredTools.Count == 0)
         {
             var descriptors = authorized
@@ -822,6 +837,16 @@ internal sealed partial class FullDuplexRunEngine
             {
                 var teamTasksEntry = TeamTaskBoardProtocol.ManifestEntry();
                 descriptors.Add(new WorkerToolDescriptor(teamTasksEntry.Id, teamTasksEntry.Description, teamTasksEntry.InputSchema));
+            }
+            if (carriesPeerDelegationSurface)
+            {
+                foreach (var peerTool in PeerDelegationTools.ManifestEntries())
+                {
+                    if (!descriptors.Any(d => string.Equals(d.ToolId, peerTool.Id, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        descriptors.Add(new WorkerToolDescriptor(peerTool.Id, peerTool.Description, peerTool.InputSchema));
+                    }
+                }
             }
             return descriptors;
         }
@@ -841,9 +866,271 @@ internal sealed partial class FullDuplexRunEngine
                 entries.Add(new WorkerToolDescriptor(teamTasksEntry.Id, teamTasksEntry.Description, teamTasksEntry.InputSchema));
                 continue;
             }
+            if (_peerDelegation is not null && PeerDelegationTools.IsPeerDelegationTool(required))
+            {
+                var peerEntry = PeerDelegationTools.ManifestEntries().First(e => string.Equals(e.Id, required, StringComparison.OrdinalIgnoreCase));
+                entries.Add(new WorkerToolDescriptor(peerEntry.Id, peerEntry.Description, peerEntry.InputSchema));
+                continue;
+            }
             throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{required}', which is not authorized for the assigned worker instance.");
         }
         return entries;
+    }
+
+    private async Task<FullDuplexCheckpointV1> HandlePeerDelegationToolAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode callerTask,
+        WorkerToolTurn turn,
+        IReadOnlyList<WorkerToolDescriptor> declared,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        if (_peerDelegation is null
+            || !declared.Any(d => string.Equals(d.ToolId, turn.ToolId, StringComparison.OrdinalIgnoreCase)))
+        {
+            await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+            {
+                return await FeedToolFailureBackAsync(
+                    run,
+                    callerTask,
+                    turn,
+                    RunErrorTaxonomy.InvalidToolArguments,
+                    $"Peer delegation tool '{turn.ToolId}' is not available in this run.",
+                    checkpoint,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        JsonElement args;
+        if (string.IsNullOrWhiteSpace(turn.ArgumentsJson))
+        {
+            using var emptyDoc = JsonDocument.Parse("{}");
+            args = emptyDoc.RootElement.Clone();
+        }
+        else if (!TryParseJsonObject(turn.ArgumentsJson, out args))
+        {
+            await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+            {
+                return await FeedToolFailureBackAsync(
+                    run,
+                    callerTask,
+                    turn,
+                    RunErrorTaxonomy.InvalidToolArguments,
+                    $"'{turn.ToolId}' requires a valid JSON object.",
+                    checkpoint,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        var currentHop = _peerDelegation.ResolveCurrentHopDepth(checkpoint.SessionId, runId);
+        var outcome = await PeerDelegationTools.ExecuteAsync(
+            _peerDelegation,
+            turn.ToolId,
+            args,
+            runId,
+            checkpoint.SessionId,
+            currentHop,
+            cancellationToken).ConfigureAwait(false);
+
+        await using (await EnterCheckpointGateAsync(runId, cancellationToken).ConfigureAwait(false))
+        {
+            turn.ResultJson = outcome.ResultJson;
+            turn.DispatchStatus = ToolDispatchStatus.Completed;
+            turn.ToolSuccess = outcome.Success;
+            if (!outcome.Success)
+            {
+                turn.ErrorCategory = outcome.ErrorCode ?? RunErrorTaxonomy.ToolError;
+            }
+
+            if (outcome.DelegatedLink is { } link)
+            {
+                UpsertCheckpointPeerTeammate(
+                    checkpoint,
+                    link.TeammateHandle,
+                    link.RemoteDeviceName,
+                    link.RuntimeBadge,
+                    link.Status,
+                    link.AwaitingApproval,
+                    link.WriteScope,
+                    link.HopDepth,
+                    link.SummaryText ?? link.Goal);
+            }
+
+            if (outcome.ReadOrCancelledTask is { } singleTask)
+            {
+                UpsertCheckpointPeerTeammate(
+                    checkpoint,
+                    singleTask.TeammateHandle,
+                    singleTask.RemoteDeviceName,
+                    singleTask.RuntimeBadge,
+                    singleTask.Status,
+                    singleTask.AwaitingApproval,
+                    singleTask.WriteScope,
+                    singleTask.HopDepth,
+                    singleTask.SummaryText ?? singleTask.Goal);
+            }
+
+            if (outcome.WaitResult is { } waitRes)
+            {
+                foreach (var st in waitRes.Tasks)
+                {
+                    UpsertCheckpointPeerTeammate(
+                        checkpoint,
+                        st.TeammateHandle,
+                        st.RemoteDeviceName,
+                        st.RuntimeBadge,
+                        st.Status,
+                        st.AwaitingApproval,
+                        st.WriteScope,
+                        st.HopDepth,
+                        st.SummaryText ?? st.Goal);
+                }
+            }
+
+            callerTask.PendingToolExecutionId = null;
+            callerTask.PendingToolApprovalId = null;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, $"peer-tool-{turn.ToolId}", cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!outcome.Success)
+        {
+            await AppendEventAsync(
+                runId,
+                "peer.delegation_rejected",
+                outcome.ErrorMessage ?? $"Peer delegation tool '{turn.ToolId}' returned error '{outcome.ErrorCode}'.",
+                new
+                {
+                    run_id = runId,
+                    task_id = callerTask.TaskId,
+                    tool_id = turn.ToolId,
+                    code = outcome.ErrorCode,
+                    message = outcome.ErrorMessage
+                },
+                cancellationToken,
+                callerTask.TaskId,
+                idempotencyKey: $"peer-err:{callerTask.TaskId}:{turn.CallId}").ConfigureAwait(false);
+            return checkpoint;
+        }
+
+        if (outcome.DelegatedLink is { } delegated)
+        {
+            await AppendEventAsync(
+                runId,
+                "peer.task_delegated",
+                $"Delegated task to {delegated.RuntimeBadge} (@{delegated.TeammateHandle}, hop={delegated.HopDepth}).",
+                new
+                {
+                    run_id = runId,
+                    task_id = callerTask.TaskId,
+                    delegation_id = delegated.DelegationId,
+                    handle = delegated.TeammateHandle,
+                    runtime_badge = delegated.RuntimeBadge,
+                    remote_device_id = delegated.RemoteDeviceId,
+                    remote_device_name = delegated.RemoteDeviceName,
+                    remote_session_id = delegated.RemoteSessionId,
+                    remote_run_id = delegated.RemoteRunId,
+                    hop_depth = delegated.HopDepth,
+                    provider_proxy_enabled = delegated.ProviderProxyEnabled,
+                    write_scope = delegated.WriteScope,
+                    status = delegated.Status
+                },
+                cancellationToken,
+                callerTask.TaskId,
+                idempotencyKey: $"peer-del:{callerTask.TaskId}:{turn.CallId}").ConfigureAwait(false);
+        }
+
+        var observedStatuses = new List<PeerDelegationTaskStatusDto>();
+        if (outcome.ReadOrCancelledTask is not null) observedStatuses.Add(outcome.ReadOrCancelledTask);
+        if (outcome.WaitResult is not null) observedStatuses.AddRange(outcome.WaitResult.Tasks);
+
+        foreach (var st in observedStatuses)
+        {
+            if (st.AwaitingApproval)
+            {
+                await AppendEventAsync(
+                    runId,
+                    "peer.task_awaiting_approval",
+                    $"Remote peer {st.RuntimeBadge} (@{st.TeammateHandle}) is awaiting approval.",
+                    new
+                    {
+                        run_id = runId,
+                        task_id = callerTask.TaskId,
+                        delegation_id = st.DelegationId,
+                        handle = st.TeammateHandle,
+                        runtime_badge = st.RuntimeBadge,
+                        awaiting_approval = true,
+                        remote_session_id = st.RemoteSessionId,
+                        remote_run_id = st.RemoteRunId,
+                        pending_approvals = st.PendingApprovals,
+                        summary_text = st.SummaryText
+                    },
+                    cancellationToken,
+                    callerTask.TaskId).ConfigureAwait(false);
+            }
+            else if (st.Status is "completed" or "failed" or "cancelled")
+            {
+                await AppendEventAsync(
+                    runId,
+                    $"peer.task_{st.Status}",
+                    $"Remote peer {st.RuntimeBadge} (@{st.TeammateHandle}) {st.Status}.",
+                    new
+                    {
+                        run_id = runId,
+                        task_id = callerTask.TaskId,
+                        delegation_id = st.DelegationId,
+                        handle = st.TeammateHandle,
+                        runtime_badge = st.RuntimeBadge,
+                        status = st.Status,
+                        summary_text = st.SummaryText,
+                        remote_session_id = st.RemoteSessionId,
+                        remote_run_id = st.RemoteRunId
+                    },
+                    cancellationToken,
+                    callerTask.TaskId).ConfigureAwait(false);
+            }
+        }
+
+        return checkpoint;
+    }
+
+    private static void UpsertCheckpointPeerTeammate(
+        FullDuplexCheckpointV1 checkpoint,
+        string handle,
+        string remoteDeviceName,
+        string runtimeBadge,
+        string linkStatus,
+        bool awaitingApproval,
+        IReadOnlyList<string> writeScope,
+        int hopDepth,
+        string? summary)
+    {
+        var effectiveStatus = MapPeerLinkStatusToTeammateStatus(linkStatus, awaitingApproval);
+        var existing = checkpoint.Teammates.FirstOrDefault(t =>
+            string.Equals(t.Handle, handle, StringComparison.OrdinalIgnoreCase));
+        if (existing is null)
+        {
+            checkpoint.Teammates.Add(new DurableTeammateState
+            {
+                Handle = handle,
+                AgentSlug = $"peer:{remoteDeviceName}",
+                Mode = "peer",
+                Status = effectiveStatus,
+                RuntimeBadge = runtimeBadge,
+                WriteScope = writeScope.Count > 0 ? writeScope.ToList() : null,
+                RelayDepth = hopDepth,
+                LastOutcomeSummary = summary,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        existing.Status = effectiveStatus;
+        existing.RuntimeBadge = runtimeBadge;
+        if (writeScope.Count > 0) existing.WriteScope = writeScope.ToList();
+        existing.RelayDepth = hopDepth;
+        if (!string.IsNullOrWhiteSpace(summary)) existing.LastOutcomeSummary = summary;
+        existing.UpdatedAt = DateTimeOffset.UtcNow;
     }
 
     internal static string ToolResultHead(string result, string executionId)

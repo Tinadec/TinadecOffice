@@ -25,6 +25,11 @@ import {
 import type { PairPeerDeviceInput, PeerClientPool, PeerDeviceRecord } from './peerClientPool.js';
 import { DevServerRequestError, type RequestDevServerLeaseInput } from './peerDevServerTunnel.js';
 import { PeerProtocolError } from './peerProtocol.js';
+import {
+  HEADER_PROXY_TOKEN,
+  HEADER_USE_PROVIDER_PROXY,
+  registerProviderProxyRoutes,
+} from './peerProviderProxy.js';
 import { discoverReachablePeerAddresses, type PeerTlsServer } from './peerTlsServer.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +58,8 @@ const PROXY_FORWARD_HEADER_ALLOWLIST = new Set([
   'x-request-id',
   'x-tinadec-storage-id',
   'x-tinadec-client-request-id',
+  HEADER_PROXY_TOKEN,
+  HEADER_USE_PROVIDER_PROXY,
   'if-match',
   'idempotency-key',
   'last-event-id',
@@ -177,6 +184,13 @@ export function registerPeerRoutes(app: AnyElysia, options: RegisterPeerRoutesOp
   const callCoreJson = options.proxyCoreJson ?? proxyJson;
   const activePeerWsTerminals = new Map<unknown, WsTerminalSession>();
 
+  peerClientPool.setProviderProxyRuntime(peerTlsServer.providerProxy);
+  registerProviderProxyRoutes(app, {
+    runtime: peerTlsServer.providerProxy,
+    keepStreamOpen,
+    fallbackClientProxy: (deviceId, req) => peerClientPool.proxyHttpRequest(deviceId, req),
+  });
+
   const checkMgmt = (
     request: Request,
     set: { status?: number | string; headers: Record<string, string | number> },
@@ -255,6 +269,15 @@ export function registerPeerRoutes(app: AnyElysia, options: RegisterPeerRoutesOp
     }
 
     try {
+      await peerTlsServer.providerProxy.maybeAttachOutboundProxyToken({
+        deviceId: params.deviceId,
+        remoteDeviceId: peerClientPool.getRemoteDeviceId(params.deviceId) ?? undefined,
+        controllerDeviceId: peerTlsServer.getRuntimeStatus().localDeviceId || undefined,
+        method: request.method,
+        targetPath,
+        headers: tunnelHeaders,
+      });
+
       const upstreamResponse = await peerClientPool.proxyHttpRequest(params.deviceId, {
         method: request.method,
         path: targetPath,

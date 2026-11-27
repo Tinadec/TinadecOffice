@@ -91,6 +91,10 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IChatResolver>(sp => sp.GetRequiredService<ModelProvider>());
         builder.Services.AddSingleton<IEmbeddingProvider, EmbeddingProvider>();
         builder.Services.AddSingleton<IModelProfileCatalogService, ModelProfileCatalogService>();
+        builder.Services.AddSingleton<IPeerProviderProxyTokenIssuer>(sp => new PeerProviderProxyTokenIssuerService(
+            sp.GetRequiredService<ISecretStore>(),
+            sp.GetService<IPeerIdentityService>()));
+        builder.Services.AddSingleton<IPeerProviderProxyContextStore>(_ => PeerProviderProxyRuntimeRegistry.Default);
         // Everything a chat route can turn into a live client: the protocol-aware factory, the two local
         // harness transports, the binary resolver, and the terminal host. This lives here rather than in
         // DmaEA because reaching a model is the model interface's job, and DmaEA references only
@@ -209,13 +213,39 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         }
 
         var route = await db.Routes.AsNoTracking().Where(x => x.Purpose == purpose && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (route is null) return Unavailable("No chat model route is configured for this workspace.");
+        if (route is null) return TryResolvePeerProxyFallback("No chat model route is configured for this workspace.");
         var routeVersion = await db.RouteVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == route.CurrentVersionId, cancellationToken).ConfigureAwait(false);
-        if (routeVersion is null) return Unavailable("Chat route has no current version.");
+        if (routeVersion is null) return TryResolvePeerProxyFallback("Chat route has no current version.");
         var candidate = await db.RouteCandidates.AsNoTracking().Where(x => x.RouteVersionId == routeVersion.Id).OrderBy(x => x.Position).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (candidate is null) return Unavailable("Chat route has no candidates.");
+        if (candidate is null) return TryResolvePeerProxyFallback("Chat route has no candidates.");
 
-        return await ResolveProviderChatAsync(db, candidate.ProviderInstanceId, candidate.Model, route.Id, routeVersion.Id, candidate.Position, "route", cancellationToken).ConfigureAwait(false);
+        var resolved = await ResolveProviderChatAsync(db, candidate.ProviderInstanceId, candidate.Model, route.Id, routeVersion.Id, candidate.Position, "route", cancellationToken).ConfigureAwait(false);
+        return resolved.IsAvailable ? resolved : TryResolvePeerProxyFallback(resolved.Error ?? "Chat model route is unavailable.");
+    }
+
+    private ChatResolution TryResolvePeerProxyFallback(string fallbackError)
+    {
+        var hostKey = PeerProviderProxyHostRegistry.ResolveHostPartitionKey(_secrets);
+        var proxy = PeerProviderProxyHostRegistry.TryGetWorkerSession(Guid.Empty, hostKey);
+        if (proxy is null || string.IsNullOrWhiteSpace(proxy.ControllerDeviceId) || string.IsNullOrWhiteSpace(proxy.ProxySessionToken))
+            return Unavailable(fallbackError);
+
+        var model = string.IsNullOrWhiteSpace(proxy.ModelHint) ? ChatProtocols.PeerProxy : proxy.ModelHint!.Trim();
+        var gwUrl = PeerProxyModelProvider.ResolveEnvironmentGatewayUrl(
+            proxy.GatewayLoopbackUrl ?? PeerProviderProxyHostRegistry.GetHostGatewayLoopbackUrl(hostKey));
+        return new ChatResolution
+        {
+            IsAvailable = true,
+            BaseUrl = gwUrl,
+            ApiKey = null,
+            Model = model,
+            ModelId = $"peer/{model}",
+            Protocol = ChatProtocols.PeerProxy,
+            ProxyControllerDeviceId = proxy.ControllerDeviceId,
+            ProxySessionToken = proxy.ProxySessionToken,
+            StrategySource = "peer_provider_proxy_fallback",
+            RuntimeBadge = FormatRuntimeBadge(ChatProtocols.PeerProxy, proxy.ControllerDeviceId, model)
+        };
     }
 
     private async Task<ChatResolution> ResolveLiveExplainerChatAsync(ModelControlDbContext db, TenantContext tenant, CancellationToken cancellationToken)
@@ -455,6 +485,7 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
             ChatProtocols.HeadlessCli => $"CLI · {harnessLabel}",
             ChatProtocols.Tui => $"TUI · {harnessLabel}",
             ChatProtocols.OpencodeServe => $"HTTP · {harnessLabel}",
+            ChatProtocols.PeerProxy => $"Proxy · {harnessLabel}",
             _ => $"API · {apiLabel}"
         };
     }

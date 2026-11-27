@@ -56,6 +56,16 @@ public static class PeerConstants
         "expired",
         "failed"
     };
+
+    public static readonly IReadOnlySet<string> DelegationStatuses = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "queued",
+        "running",
+        "awaiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+    };
 }
 
 public sealed class PeerInboundSettingsRecord
@@ -189,6 +199,25 @@ public sealed class PeerStagedAttachmentRecord
     public string? AttachmentId { get; set; }
     public long CreatedAt { get; set; }
     public long ExpiresAt { get; set; }
+    public long UpdatedAt { get; set; }
+}
+
+public sealed class PeerDelegationLinkRecord
+{
+    public string DelegationId { get; set; } = string.Empty;
+    public string ParentRunId { get; set; } = string.Empty;
+    public string ParentSessionId { get; set; } = string.Empty;
+    public string RemoteDeviceId { get; set; } = string.Empty;
+    public string RemoteSessionId { get; set; } = string.Empty;
+    public string? RemoteRunId { get; set; }
+    public string TeammateHandle { get; set; } = string.Empty;
+    public string Goal { get; set; } = string.Empty;
+    public string? WriteScopeJson { get; set; }
+    public int HopDepth { get; set; } = 1;
+    public int ProviderProxyEnabled { get; set; }
+    public string Status { get; set; } = "queued";
+    public string? SummaryText { get; set; }
+    public long CreatedAt { get; set; }
     public long UpdatedAt { get; set; }
 }
 

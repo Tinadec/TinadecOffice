@@ -116,6 +116,10 @@ public sealed record ChatResolution
     public string? McpScopedBearerToken { get; init; }
     /// <summary>Human-readable runtime badge (e.g. <c>ACP · Antigravity</c>, <c>CLI · Claude Code</c>, <c>API · gpt-5</c>).</summary>
     public string? RuntimeBadge { get; init; }
+    /// <summary>Target controller device ID when <see cref="Protocol"/> is <see cref="ChatProtocols.PeerProxy"/>.</summary>
+    public string? ProxyControllerDeviceId { get; init; }
+    /// <summary>Short-lived single-session token for <see cref="ChatProtocols.PeerProxy"/> (never an upstream API key).</summary>
+    public string? ProxySessionToken { get; init; }
 }
 
 /// <summary>
@@ -172,6 +176,12 @@ public static class ChatProtocols
     public const string Tui = "tui";
 
     /// <summary>
+    /// Peer provider proxy protocol: a zero-API-key worker forwards chat/tool inference over an
+    /// authenticated mTLS peer tunnel to the controller's model provider via local Gateway loopback.
+    /// </summary>
+    public const string PeerProxy = "peer_proxy";
+
+    /// <summary>
     /// Normalizes a stored protocol value; blank or unknown values fall back to
     /// <see cref="OpenAiChat"/> so legacy configurations keep working.
     /// </summary>
@@ -183,6 +193,7 @@ public static class ChatProtocols
         OpencodeServe => OpencodeServe,
         HeadlessCli => HeadlessCli,
         Tui => Tui,
+        PeerProxy or "peer-proxy" => PeerProxy,
         _ => OpenAiChat
     };
 
@@ -226,7 +237,7 @@ public static class ChatProtocols
     /// </summary>
     public static bool IsModelChosenByHarness(string? protocol) => Normalize(protocol) switch
     {
-        Acp or HeadlessCli or Tui or OpencodeServe => true,
+        Acp or HeadlessCli or Tui or OpencodeServe or PeerProxy => true,
         _ => false
     };
 
@@ -257,6 +268,273 @@ public static class ChatProtocols
     {
         var normalized = Normalize(protocol);
         return HarnessClientGap(normalized) is null
-            && normalized switch { Acp or OpencodeServe or HeadlessCli or Tui => true, _ => false };
+            && normalized switch { Acp or OpencodeServe or HeadlessCli or Tui or PeerProxy => true, _ => false };
+    }
+}
+
+/// <summary>
+/// Ephemeral in-memory session/token state for Wave 3 Peer Provider Proxy.
+/// Never persists anything to SQLite, SecretStore, TOML, or logs, and partitions controller
+/// token tables by host identity key so multi-instance in-process tests stay strictly isolated
+/// while <c>user</c> and <c>project</c> storage scopes within one host share state seamlessly.
+/// </summary>
+public static class PeerProviderProxyHostRegistry
+{
+    public const int DefaultTokenTtlSeconds = 1800;
+    public const int DefaultMaxRequests = 64;
+
+    public sealed record IssuedProxyTokenRecord(
+        string Token,
+        string ControllerDeviceId,
+        string WorkerDeviceId,
+        string? DelegationId,
+        string? SessionId,
+        long ExpiresAtMs,
+        int MaxRequests)
+    {
+        private int _usedRequests;
+        private int _revoked;
+
+        public int UsedRequests => Volatile.Read(ref _usedRequests);
+        public bool IsRevoked => Volatile.Read(ref _revoked) != 0;
+
+        public bool TryConsume(long nowMs, string? verifiedWorkerDeviceId, out string denyReason)
+        {
+            if (IsRevoked)
+            {
+                denyReason = "Proxy session token has been revoked.";
+                return false;
+            }
+            if (nowMs > ExpiresAtMs)
+            {
+                denyReason = "Proxy session token has expired.";
+                return false;
+            }
+            if (!string.IsNullOrWhiteSpace(WorkerDeviceId)
+                && !string.IsNullOrWhiteSpace(verifiedWorkerDeviceId)
+                && !string.Equals(WorkerDeviceId, verifiedWorkerDeviceId.Trim(), StringComparison.Ordinal))
+            {
+                denyReason = $"Proxy session token is not bound to worker device '{verifiedWorkerDeviceId}'.";
+                return false;
+            }
+            var next = Interlocked.Increment(ref _usedRequests);
+            if (next > MaxRequests)
+            {
+                denyReason = $"Proxy session token exceeded max_requests ({MaxRequests}).";
+                return false;
+            }
+            denyReason = string.Empty;
+            return true;
+        }
+
+        public void Revoke() => Interlocked.Exchange(ref _revoked, 1);
+    }
+
+    public sealed record WorkerProxyContextEntry(
+        Guid SessionId,
+        Guid? RunId,
+        string? DelegationId,
+        string ControllerDeviceId,
+        string ProxySessionToken,
+        bool ForceProviderProxy,
+        long ExpiresAtMs,
+        string? GatewayLoopbackUrl = null,
+        string? ModelHint = null);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.Collections.Concurrent.ConcurrentDictionary<string, IssuedProxyTokenRecord>> TokensByHost = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, WorkerProxyContextEntry> WorkerSessions = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, WorkerProxyContextEntry> WorkerRuns = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, WorkerProxyContextEntry> HostDefaultWorkerContext = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> HostGatewayLoopbackUrls = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> HostControllerProxyAllowed = new();
+
+    public static int ResolveHostPartitionKey(object? sharedHostAnchor) =>
+        sharedHostAnchor is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(sharedHostAnchor);
+
+    public static IssuedProxyTokenRecord IssueToken(
+        int hostKey,
+        string controllerDeviceId,
+        string workerDeviceId,
+        string? delegationId = null,
+        string? sessionId = null,
+        long? expiresAtMs = null,
+        int? maxRequests = null,
+        long? nowMs = null)
+    {
+        var currentNow = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var effectiveExpiry = expiresAtMs is > 0 ? expiresAtMs.Value : currentNow + (DefaultTokenTtlSeconds * 1000L);
+        var effectiveMax = maxRequests is > 0 ? Math.Min(maxRequests.Value, 4096) : DefaultMaxRequests;
+        var randomBytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(24);
+        var token = "ppt_v1_" + Convert.ToHexString(randomBytes).ToLowerInvariant();
+        var record = new IssuedProxyTokenRecord(
+            token,
+            controllerDeviceId?.Trim() ?? string.Empty,
+            workerDeviceId?.Trim() ?? string.Empty,
+            string.IsNullOrWhiteSpace(delegationId) ? null : delegationId.Trim(),
+            string.IsNullOrWhiteSpace(sessionId) ? null : sessionId.Trim(),
+            effectiveExpiry,
+            effectiveMax);
+
+        var table = TokensByHost.GetOrAdd(hostKey, _ => new());
+        PurgeExpiredTokens(table, currentNow);
+        table[token] = record;
+        return record;
+    }
+
+    public static bool TryValidateAndConsumeToken(
+        int hostKey,
+        string? rawToken,
+        string? verifiedWorkerDeviceId,
+        long? nowMs,
+        out IssuedProxyTokenRecord? matched,
+        out string denyReason)
+    {
+        matched = null;
+        if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            denyReason = "Missing x-tinadec-peer-proxy-token.";
+            return false;
+        }
+        var trimmed = rawToken.Trim();
+        if (!TokensByHost.TryGetValue(hostKey, out var table) || !table.TryGetValue(trimmed, out var record))
+        {
+            denyReason = "Invalid or unknown proxy_session_token.";
+            return false;
+        }
+        matched = record;
+        return record.TryConsume(nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), verifiedWorkerDeviceId, out denyReason);
+    }
+
+    public static int RevokeWorkerTokens(int hostKey, string workerDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(workerDeviceId) || !TokensByHost.TryGetValue(hostKey, out var table))
+            return 0;
+        var count = 0;
+        foreach (var pair in table)
+        {
+            if (string.Equals(pair.Value.WorkerDeviceId, workerDeviceId.Trim(), StringComparison.Ordinal))
+            {
+                pair.Value.Revoke();
+                table.TryRemove(pair.Key, out _);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public static void SetControllerProxyAllowed(int hostKey, bool allowed) =>
+        HostControllerProxyAllowed[hostKey] = allowed;
+
+    public static bool IsControllerProxyAllowed(int hostKey) =>
+        !HostControllerProxyAllowed.TryGetValue(hostKey, out var allowed) || allowed;
+
+    public static void SetHostGatewayLoopbackUrl(int hostKey, string? loopbackUrl)
+    {
+        if (TryNormalizeLoopbackBaseUrl(loopbackUrl, out var normalized))
+        {
+            HostGatewayLoopbackUrls[hostKey] = normalized;
+        }
+    }
+
+    public static string? GetHostGatewayLoopbackUrl(int hostKey) =>
+        HostGatewayLoopbackUrls.TryGetValue(hostKey, out var url) ? url : null;
+
+    public static void BindWorkerSession(int hostKey, WorkerProxyContextEntry entry)
+    {
+        if (entry.SessionId != Guid.Empty)
+        {
+            WorkerSessions[entry.SessionId] = entry;
+        }
+        if (entry.RunId is { } runId && runId != Guid.Empty)
+        {
+            WorkerRuns[runId] = entry;
+        }
+        if (TryNormalizeLoopbackBaseUrl(entry.GatewayLoopbackUrl, out var normalizedGw))
+        {
+            HostGatewayLoopbackUrls[hostKey] = normalizedGw;
+        }
+        HostDefaultWorkerContext[hostKey] = entry;
+    }
+
+    public static WorkerProxyContextEntry? TryGetWorkerSession(Guid sessionId, int? hostKey = null, long? nowMs = null)
+    {
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (sessionId != Guid.Empty && WorkerSessions.TryGetValue(sessionId, out var found))
+        {
+            if (found.ExpiresAtMs <= 0 || now <= found.ExpiresAtMs)
+                return found;
+            WorkerSessions.TryRemove(sessionId, out _);
+        }
+        if (hostKey is { } hk && HostDefaultWorkerContext.TryGetValue(hk, out var fallback))
+        {
+            if (fallback.ExpiresAtMs <= 0 || now <= fallback.ExpiresAtMs)
+                return fallback;
+        }
+        return null;
+    }
+
+    public static WorkerProxyContextEntry? TryGetWorkerRun(Guid runId, long? nowMs = null)
+    {
+        if (runId == Guid.Empty || !WorkerRuns.TryGetValue(runId, out var found))
+            return null;
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (found.ExpiresAtMs <= 0 || now <= found.ExpiresAtMs)
+            return found;
+        WorkerRuns.TryRemove(runId, out _);
+        return null;
+    }
+
+    public static void ClearWorkerControllerBindings(int hostKey, string controllerDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(controllerDeviceId)) return;
+        var target = controllerDeviceId.Trim();
+        foreach (var pair in WorkerSessions)
+        {
+            if (string.Equals(pair.Value.ControllerDeviceId, target, StringComparison.Ordinal))
+                WorkerSessions.TryRemove(pair.Key, out _);
+        }
+        foreach (var pair in WorkerRuns)
+        {
+            if (string.Equals(pair.Value.ControllerDeviceId, target, StringComparison.Ordinal))
+                WorkerRuns.TryRemove(pair.Key, out _);
+        }
+        if (HostDefaultWorkerContext.TryGetValue(hostKey, out var def)
+            && string.Equals(def.ControllerDeviceId, target, StringComparison.Ordinal))
+        {
+            HostDefaultWorkerContext.TryRemove(hostKey, out _);
+        }
+    }
+
+    public static bool TryNormalizeLoopbackBaseUrl(string? rawUrl, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(rawUrl)) return false;
+        if (!Uri.TryCreate(rawUrl.Trim(), UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme is not ("http" or "https")) return false;
+        if (!IsStrictLoopbackHost(uri.Host)) return false;
+        var builder = new UriBuilder(uri.Scheme, uri.Host, uri.Port);
+        normalized = builder.Uri.ToString().TrimEnd('/');
+        return true;
+    }
+
+    public static bool IsStrictLoopbackHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return false;
+        var trimmed = host.Trim().Trim('[', ']');
+        return string.Equals(trimmed, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "::1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "localhost", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void PurgeExpiredTokens(
+        System.Collections.Concurrent.ConcurrentDictionary<string, IssuedProxyTokenRecord> table,
+        long nowMs)
+    {
+        if (table.Count < 128) return;
+        foreach (var pair in table)
+        {
+            if (pair.Value.IsRevoked || pair.Value.ExpiresAtMs < nowMs)
+                table.TryRemove(pair.Key, out _);
+        }
     }
 }

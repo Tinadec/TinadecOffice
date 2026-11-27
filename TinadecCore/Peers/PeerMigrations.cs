@@ -49,6 +49,9 @@ public sealed class PeerMigrations : IStorageMigrationParticipant
             await db.Database.ExecuteSqlRawAsync(
                 "CREATE INDEX IF NOT EXISTS \"ix_peer_staged_attachments_expires\" ON \"peer_staged_attachments\" (\"expires_at\");",
                 cancellationToken).ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync(
+                "CREATE INDEX IF NOT EXISTS \"ix_peer_delegation_run\" ON \"peer_delegation_links\" (\"parent_run_id\", \"status\");",
+                cancellationToken).ConfigureAwait(false);
         }
 
         // Recover any interrupted ingress rows left in received/processing without a run_id by a crashed host process.

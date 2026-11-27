@@ -59,6 +59,11 @@ public static class TinadecCoreServiceCollectionExtensions
         new AgentGraphModuleRegistrar().Register(builder);
         new ExplorationModuleRegistrar().Register(builder);
         new PeersModuleRegistrar().Register(builder);
+        // Project storage scopes mount their own SQLite database for sessions/runs, while peer_devices
+        // and peer_delegation_links live in the authoritative "user" storage scope. Forward any project-scope
+        // IPeerDelegationCoordinator call to the "user" scope so Coordinator runs inside workspaces see
+        // paired peer nodes and persist delegation links in one canonical store.
+        services.Replace(ServiceDescriptor.Singleton<IPeerDelegationCoordinator>(sp => new UserScopePeerDelegationCoordinator(sp)));
         new TinaChatModuleRegistrar().Register(builder);
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
@@ -169,5 +174,75 @@ public static class TinadecCoreServiceCollectionExtensions
         new DmaEAModuleRegistrar().Register(builder);
 
         return builder;
+    }
+
+    private sealed class UserScopePeerDelegationCoordinator(IServiceProvider scopeServices) : IPeerDelegationCoordinator
+    {
+        private PeerDelegationService LocalService => scopeServices.GetRequiredService<PeerDelegationService>();
+
+        private async ValueTask<(IPeerDelegationCoordinator Service, StorageRuntimeLease? Lease)> ResolveAsync(CancellationToken ct)
+        {
+            var locations = scopeServices.GetService<IScopeStorageLocations>();
+            var registry = scopeServices.GetService<IStorageScopeRegistry>();
+            if (registry is not null && locations is not null && !string.Equals(locations.StorageId, "user", StringComparison.Ordinal))
+            {
+                var lease = await registry.AcquireAsync("user", ct).ConfigureAwait(false);
+                return (lease.Services.GetRequiredService<PeerDelegationService>(), lease);
+            }
+
+            return (LocalService, null);
+        }
+
+        public int ResolveCurrentHopDepth(Guid? sessionId, Guid? runId, string? sessionOrigin = null) =>
+            LocalService.ResolveCurrentHopDepth(sessionId, runId, sessionOrigin);
+
+        public async Task<PeerNodeListResultDto> ListNodesAsync(CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.ListNodesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<PeerDelegationLinkDto> DelegateTaskAsync(PeerDelegateTaskCommand command, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.DelegateTaskAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<PeerDelegationTaskStatusDto> ReadTaskAsync(string delegationId, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.ReadTaskAsync(delegationId, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<PeerWaitTasksResultDto> WaitTasksAsync(PeerWaitTasksCommand command, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.WaitTasksAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<PeerDelegationTaskStatusDto> CancelTaskAsync(string delegationId, string? reason = null, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.CancelTaskAsync(delegationId, reason, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<IReadOnlyList<PeerDelegationLinkDto>> ListRunDelegationsAsync(Guid parentRunId, bool refreshActive = false, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.ListRunDelegationsAsync(parentRunId, refreshActive, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<PeerRemoteApprovalDecisionResultDto> DecideRemoteApprovalAsync(string delegationId, Guid approvalId, bool approve, string? reason = null, CancellationToken cancellationToken = default)
+        {
+            var (service, lease) = await ResolveAsync(cancellationToken).ConfigureAwait(false);
+            await using var _ = lease;
+            return await service.DecideRemoteApprovalAsync(delegationId, approvalId, approve, reason, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

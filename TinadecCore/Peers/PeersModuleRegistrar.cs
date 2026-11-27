@@ -30,11 +30,15 @@ public sealed class PeersModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IPeerIngressQueueService>(sp => sp.GetRequiredService<PeerIngressQueueService>());
         builder.Services.AddSingleton<PeerAttachmentStageService>();
         builder.Services.AddSingleton<IPeerAttachmentStageService>(sp => sp.GetRequiredService<PeerAttachmentStageService>());
+        builder.Services.TryAddSingleton<IPeerProviderProxyContextStore>(PeerProviderProxyRuntimeRegistry.Default);
+        builder.Services.TryAddSingleton<IPeerTransportLoopbackClient, HttpPeerTransportLoopbackClient>();
+        builder.Services.AddSingleton<PeerDelegationService>();
+        builder.Services.AddSingleton<IPeerDelegationCoordinator>(sp => sp.GetRequiredService<PeerDelegationService>());
 
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
-            Version = "0.2.0",
+            Version = "0.3.0",
             Dependencies = ["contracts", "abstractions", "persistence", "tenancy"],
             Capabilities =
             [
@@ -46,7 +50,8 @@ public sealed class PeersModuleRegistrar : IModuleRegistrar
                 "peer_shadow_workspaces",
                 "peer_shadow_sessions",
                 "peer_ingress_queue",
-                "peer_staged_attachments"
+                "peer_staged_attachments",
+                "peer_agent_delegation"
             ],
             Language = "C#",
             MafPrimitives = [],

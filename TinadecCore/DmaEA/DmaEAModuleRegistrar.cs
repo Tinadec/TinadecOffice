@@ -123,7 +123,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
             ModuleId = ModuleId,
             Version = "0.2.0",
             Dependencies = ["abstractions", "persistence", "lifecycle", "models", "memory", "context", "prompts", "loop_guard", "tools"],
-            Capabilities = ["dual_layer_orchestration", "task_dispatch", "team_orchestration", "persistent_teammates", "worktree_integration", "collaboration", "scheduling", "result_aggregation", "operational_trigger_chain", "standing_member_turns", "governance_topic_sink", "approval_gate_judge", "autonomous_exploration_coordinator", "worker_settlement", "cross_worker_trace"],
+            Capabilities = ["dual_layer_orchestration", "task_dispatch", "team_orchestration", "persistent_teammates", "worktree_integration", "collaboration", "scheduling", "result_aggregation", "operational_trigger_chain", "standing_member_turns", "governance_topic_sink", "approval_gate_judge", "autonomous_exploration_coordinator", "worker_settlement", "cross_worker_trace", "peer_delegation_orchestration"],
             Language = "C#",
             MafPrimitives = ["agent", "workflow"],
             RegistrationStatus = ModuleRegistrationStatus.Registered

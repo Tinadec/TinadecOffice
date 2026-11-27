@@ -83,6 +83,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private readonly IContextMemoryService? _contextMemory;
     private readonly IWorktreeIntegratorService? _worktreeIntegrator;
     private readonly ITeamBoardMcpBridge? _teamBoardMcpBridge;
+    private readonly IPeerDelegationCoordinator? _peerDelegation;
     private readonly ICompanionSessionBackflow? _companionBackflow;
     private readonly IPlanLedger? _planLedger;
     private readonly AutonomousExplorationCoordinator? _autonomousPlanning;
@@ -155,7 +156,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         IWorktreeIntegratorService? worktreeIntegrator = null,
         ITeamBoardMcpBridge? teamBoardMcpBridge = null,
         IContextMemoryService? contextMemory = null,
-        ICompanionSessionBackflow? companionBackflow = null)
+        ICompanionSessionBackflow? companionBackflow = null,
+        IPeerDelegationCoordinator? peerDelegation = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -170,6 +172,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         _directiveValidator = directiveValidator ?? services.GetService(typeof(IOrchestrationDirectiveValidator)) as IOrchestrationDirectiveValidator;
         _worktreeIntegrator = worktreeIntegrator ?? services.GetService(typeof(IWorktreeIntegratorService)) as IWorktreeIntegratorService;
         _teamBoardMcpBridge = teamBoardMcpBridge ?? services.GetService(typeof(ITeamBoardMcpBridge)) as ITeamBoardMcpBridge;
+        _peerDelegation = peerDelegation ?? services.GetService(typeof(IPeerDelegationCoordinator)) as IPeerDelegationCoordinator;
         _contextMemory = contextMemory ?? services.GetService(typeof(IContextMemoryService)) as IContextMemoryService;
         _companionBackflow = companionBackflow ?? services.GetService(typeof(ICompanionSessionBackflow)) as ICompanionSessionBackflow;
         _longTermMemory = services.GetService(typeof(ILongTermMemoryService)) as ILongTermMemoryService;

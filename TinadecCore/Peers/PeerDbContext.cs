@@ -16,6 +16,7 @@ public sealed class PeerDbContext : DbContext
     public DbSet<PeerShadowTurnRecord> ShadowTurns => Set<PeerShadowTurnRecord>();
     public DbSet<PeerIngressQueueRecord> IngressQueue => Set<PeerIngressQueueRecord>();
     public DbSet<PeerStagedAttachmentRecord> StagedAttachments => Set<PeerStagedAttachmentRecord>();
+    public DbSet<PeerDelegationLinkRecord> DelegationLinks => Set<PeerDelegationLinkRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -240,6 +241,37 @@ public sealed class PeerDbContext : DbContext
                 .HasDatabaseName("ix_peer_staged_attachments_session");
             entity.HasIndex(x => x.ExpiresAt)
                 .HasDatabaseName("ix_peer_staged_attachments_expires");
+        });
+
+        modelBuilder.Entity<PeerDelegationLinkRecord>(entity =>
+        {
+            entity.ToTable("peer_delegation_links", t =>
+            {
+                t.HasCheckConstraint("ck_peer_delegation_links_hop_depth", "hop_depth >= 1");
+                t.HasCheckConstraint("ck_peer_delegation_links_provider_proxy", "provider_proxy_enabled IN (0, 1)");
+                t.HasCheckConstraint(
+                    "ck_peer_delegation_links_status",
+                    "status IN ('queued', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled')");
+            });
+            entity.HasKey(x => x.DelegationId);
+            entity.Property(x => x.DelegationId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ParentRunId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ParentSessionId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RemoteDeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RemoteSessionId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RemoteRunId).HasMaxLength(128);
+            entity.Property(x => x.TeammateHandle).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Goal).IsRequired();
+            entity.Property(x => x.WriteScopeJson).HasMaxLength(65536);
+            entity.Property(x => x.HopDepth).IsRequired();
+            entity.Property(x => x.ProviderProxyEnabled).HasDefaultValue(0).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(32).HasDefaultValue("queued").IsRequired();
+            entity.Property(x => x.SummaryText);
+            entity.Property(x => x.CreatedAt).IsRequired();
+            entity.Property(x => x.UpdatedAt).IsRequired();
+
+            entity.HasIndex(x => new { x.ParentRunId, x.Status })
+                .HasDatabaseName("ix_peer_delegation_run");
         });
 
         modelBuilder.UseTinadecSnakeCase();

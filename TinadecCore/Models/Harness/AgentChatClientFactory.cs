@@ -67,6 +67,7 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
             ChatProtocols.OpencodeServe => CreateOpenCodeClientAsync(resolution, cancellationToken),
             ChatProtocols.HeadlessCli => CreateHeadlessClientAsync(resolution),
             ChatProtocols.Tui => CreateTuiClientAsync(resolution),
+            ChatProtocols.PeerProxy => Task.FromResult<IChatClient>(PeerProxyModelProvider.FromResolution(resolution)),
             _ => Task.FromResult(CreateOpenAiChatClient(resolution))
         }).ConfigureAwait(false);
         return ConfigureParameters(client, resolution);

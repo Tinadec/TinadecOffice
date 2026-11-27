@@ -2150,12 +2150,87 @@ internal sealed partial class FullDuplexRunEngine
             snapshots = ProjectTeammateSnapshots(checkpoint);
         }
 
+        if (_peerDelegation is not null)
+        {
+            var peerLinks = await _peerDelegation.ListRunDelegationsAsync(runId, refreshActive: true, cancellationToken).ConfigureAwait(false);
+            if (peerLinks.Count > 0)
+            {
+                snapshots = MergePeerDelegationsIntoSnapshots(snapshots, peerLinks);
+            }
+        }
+
         return new TeammateListResponseDto
         {
             RunId = runId,
             SessionId = sessionId,
             RunStatus = ToStatusVocabulary(run.Status),
             Teammates = snapshots
+        };
+    }
+
+    internal static IReadOnlyList<TeammateSnapshotDto> MergePeerDelegationsIntoSnapshots(
+        IReadOnlyList<TeammateSnapshotDto> localSnapshots,
+        IReadOnlyList<PeerDelegationLinkDto> peerLinks)
+    {
+        if (peerLinks.Count == 0) return localSnapshots;
+
+        var merged = localSnapshots.ToList();
+        var indexByHandle = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < merged.Count; i++)
+        {
+            indexByHandle[merged[i].Handle] = i;
+        }
+
+        foreach (var link in peerLinks)
+        {
+            var status = MapPeerLinkStatusToTeammateStatus(link.Status, link.AwaitingApproval);
+            var awaiting = link.AwaitingApproval || string.Equals(link.Status, "awaiting_approval", StringComparison.OrdinalIgnoreCase);
+            var updatedAt = link.UpdatedAt > 0
+                ? DateTimeOffset.FromUnixTimeMilliseconds(link.UpdatedAt)
+                : DateTimeOffset.UtcNow;
+            var peerSnapshot = new TeammateSnapshotDto
+            {
+                Handle = link.TeammateHandle,
+                AgentSlug = $"peer:{link.RemoteDeviceName}",
+                Mode = "peer",
+                Status = status,
+                Paused = false,
+                AwaitingApproval = awaiting,
+                CurrentTaskId = null,
+                CurrentTaskTitle = status == "terminated" ? null : link.Goal,
+                ClaimedStepId = null,
+                LatestSummary = !string.IsNullOrWhiteSpace(link.SummaryText) ? link.SummaryText : link.Goal,
+                RuntimeBadge = link.RuntimeBadge,
+                WorktreePath = null,
+                BranchName = null,
+                WriteScope = link.WriteScope,
+                RelayDepth = link.HopDepth,
+                PendingSteerCount = 0,
+                UpdatedAt = updatedAt
+            };
+
+            if (indexByHandle.TryGetValue(link.TeammateHandle, out var existingIndex))
+            {
+                merged[existingIndex] = peerSnapshot;
+            }
+            else
+            {
+                indexByHandle[link.TeammateHandle] = merged.Count;
+                merged.Add(peerSnapshot);
+            }
+        }
+
+        return merged;
+    }
+
+    internal static string MapPeerLinkStatusToTeammateStatus(string? linkStatus, bool awaitingApproval = false)
+    {
+        if (awaitingApproval || string.Equals(linkStatus, "awaiting_approval", StringComparison.OrdinalIgnoreCase))
+            return "awaiting_approval";
+        return linkStatus?.Trim().ToLowerInvariant() switch
+        {
+            "completed" or "failed" or "cancelled" => "terminated",
+            _ => "working"
         };
     }
 
@@ -2512,8 +2587,9 @@ internal sealed partial class FullDuplexRunEngine
             var activeTask = FindActiveTeammateTask(checkpoint, tm);
             var lastTask = activeTask ?? checkpoint.Tasks.LastOrDefault(t =>
                 string.Equals(t.TeammateHandle ?? t.WorkerHandle, tm.Handle, StringComparison.OrdinalIgnoreCase));
-            var awaitingApproval = activeTask is not null && IsTaskAwaitingExternalDecision(activeTask);
             var effectiveStatus = ComputeTeammateEffectiveStatus(checkpoint, tm);
+            var awaitingApproval = (activeTask is not null && IsTaskAwaitingExternalDecision(activeTask))
+                || string.Equals(effectiveStatus, "awaiting_approval", StringComparison.OrdinalIgnoreCase);
 
             result.Add(new TeammateSnapshotDto
             {

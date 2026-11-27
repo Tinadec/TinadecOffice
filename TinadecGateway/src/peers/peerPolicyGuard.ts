@@ -121,6 +121,9 @@ function hasPathTraversal(rawPath: string): boolean {
 }
 
 const OBSERVER_READONLY_TOOL_IDS = new Set([
+  'ls',
+  'stat',
+  'file_search',
   'read_file',
   'view_file',
   'list_dir',
@@ -557,6 +560,10 @@ const STRIPPED_INCOMING_HEADERS = new Set([
   'x-tinadec-peer-controller-id',
   'x-tinadec-peer-controller-name',
   'x-tinadec-peer-role',
+  'x-tinadec-peer-verified-worker-id',
+  'x-tinadec-peer-verified-device-id',
+  'x-tinadec-peer-controller-target',
+  'x-tinadec-gateway-loopback-url',
   'authorization',
   'x-api-key',
   'cookie',
@@ -600,6 +607,11 @@ export function buildSanitizedPeerCoreHeaders(
       }
       sanitized[lower] = rawVal;
     }
+  }
+
+  if (!toBoolFlag(controller.policy.allow_provider_proxy, false)) {
+    delete sanitized['x-tinadec-peer-proxy-token'];
+    delete sanitized['x-tinadec-peer-use-provider-proxy'];
   }
 
   sanitized['x-request-id'] = ensureRequestId(incomingRequestId);

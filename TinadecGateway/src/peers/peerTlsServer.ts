@@ -48,6 +48,17 @@ import {
   PeerProtocolError,
   type PeerWsOpenFrame,
 } from './peerProtocol.js';
+import {
+  BlindRelayTransport,
+  type IPeerTransportChannel,
+  type PeerTransportKind,
+  type PeerTransportListenerHandle,
+} from './peerTransport.js';
+import {
+  HEADER_GATEWAY_LOOPBACK_URL,
+  PeerProviderProxyRuntime,
+  PROVIDER_PROXY_COMPLETIONS_PATH,
+} from './peerProviderProxy.js';
 
 export interface LocalTlsMaterialDto {
   inbound_enabled: boolean;
@@ -69,6 +80,9 @@ export interface PeerInboundRuntimeStatus {
   localDeviceId: string;
   localFingerprint: string;
   reachableAddresses: string[];
+  relayConnected?: boolean;
+  relayDeviceId?: string | null;
+  relayAddress?: string | null;
 }
 
 export interface PeerTlsServerOptions {
@@ -86,6 +100,18 @@ export interface PeerTlsServerOptions {
   devServerVerifyReachable?: boolean;
   createInteractiveShell?: typeof createInteractiveShellSession;
   createAgentTerminal?: typeof createAgentTerminalBridgeSession;
+  /** Optional custom `IPeerTransportChannel` for primary LAN listening. */
+  lanTransport?: IPeerTransportChannel;
+  /** Optional `IPeerTransportChannel` (e.g. `BlindRelayTransport`) for inbound Relay listening. */
+  relayTransport?: IPeerTransportChannel | null;
+  /** Convenience Relay base URL; creates a `BlindRelayTransport` when configured. */
+  relayUrl?: string | (() => string | undefined);
+  /** When true alongside `relayTransport`/`relayUrl`, skips binding a local LAN TCP port. */
+  disableLanListen?: boolean;
+  /** Optional shared Wave 3 provider-proxy runtime instance. */
+  providerProxy?: PeerProviderProxyRuntime;
+  /** Optional local Gateway loopback URL supplier (`http://127.0.0.1:<port>`). */
+  gatewayLoopbackUrl?: () => string | undefined;
 }
 
 interface InFlightHttpStream {
@@ -166,8 +192,11 @@ export class PeerTlsServer {
   private readonly options: PeerTlsServerOptions;
   private readonly policySubscriber: PeerPolicyEventSubscriber;
   readonly devServerTunnel: PeerDevServerLeaseManager;
+  readonly providerProxy: PeerProviderProxyRuntime;
 
   private server: TlsServer | null = null;
+  private customLanListener: PeerTransportListenerHandle | null = null;
+  private relayListener: PeerTransportListenerHandle | null = null;
   private inboundEnabled = false;
   private localDeviceId = '';
   private displayName = '';
@@ -200,10 +229,19 @@ export class PeerTlsServer {
       allowedPorts: options.devServerAllowedPorts,
       verifyTargetReachable: options.devServerVerifyReachable,
     });
+    this.providerProxy =
+      options.providerProxy ??
+      new PeerProviderProxyRuntime({
+        coreUrl: options.coreUrl,
+        fetchImpl: options.fetchImpl,
+        hostControlToken: options.hostControlToken,
+        gatewayLoopbackUrl: options.gatewayLoopbackUrl,
+      });
   }
 
   get isListening(): boolean {
-    return Boolean(this.server && this.actualListenPort !== null);
+    const lanActive = Boolean((this.server || this.customLanListener) && this.actualListenPort !== null);
+    return lanActive || this.relayListener !== null;
   }
 
   get boundPort(): number | null {
@@ -220,6 +258,13 @@ export class PeerTlsServer {
 
   getRuntimeStatus(): PeerInboundRuntimeStatus {
     const effectivePort = this.actualListenPort ?? this.configuredPort;
+    const lanReachable =
+      this.inboundEnabled && !this.options.disableLanListen
+        ? discoverReachablePeerAddresses(effectivePort)
+        : [];
+    const reachable = this.relayListener?.relayAddress
+      ? [...lanReachable, this.relayListener.relayAddress]
+      : lanReachable;
     return {
       enabled: this.inboundEnabled,
       listening: this.isListening,
@@ -229,8 +274,25 @@ export class PeerTlsServer {
       portConflict: this.portConflict,
       localDeviceId: this.localDeviceId,
       localFingerprint: this.localFingerprint,
-      reachableAddresses: this.inboundEnabled ? discoverReachablePeerAddresses(effectivePort) : [],
+      reachableAddresses: reachable,
+      relayConnected: this.relayListener !== null,
+      relayDeviceId: this.relayListener?.relayDeviceId ?? null,
+      relayAddress: this.relayListener?.relayAddress ?? null,
     };
+  }
+
+  /**
+   * Publish an active short-lived pairing code to the configured stateless Relay `/v1/rendezvous`
+   * (maps `pairingCode -> relay_device_id` without exposing any certificate private key or plaintext).
+   */
+  async publishRelayRendezvous(
+    pairingCode: string,
+    ttlSeconds?: number,
+  ): Promise<{ relay_device_id: string; expires_at_ms: number }> {
+    if (!this.relayListener?.publishRendezvous) {
+      throw new PeerProtocolError('unreachable', 'No active inbound Relay listener is connected.');
+    }
+    return await this.relayListener.publishRendezvous(pairingCode, ttlSeconds);
   }
 
   /**
@@ -344,26 +406,73 @@ export class PeerTlsServer {
     }
 
     const certChanged = material.cert_pem !== this.certPem || material.private_key_pem !== this.privateKeyPem;
+    const relayChannel = this.resolveInboundRelayChannel();
+    const needLanBind = !this.options.disableLanListen;
     const needRebind =
-      !this.server ||
-      this.actualListenPort === null ||
       certChanged ||
-      (requestedPort !== 0 &&
-        this.actualListenPort !== requestedPort &&
-        !this.portConflict);
+      (needLanBind &&
+        (!this.server && !this.customLanListener ||
+          this.actualListenPort === null ||
+          (requestedPort !== 0 &&
+            this.actualListenPort !== requestedPort &&
+            !this.portConflict))) ||
+      (Boolean(relayChannel) && !this.relayListener);
 
     if (needRebind) {
       await this.stopListening('Rebinding PeerTlsServer.');
       this.certPem = material.cert_pem;
       this.privateKeyPem = material.private_key_pem;
-      await this.bindWithPortProbe(requestedPort, material.listen_port);
+      if (needLanBind) {
+        await this.bindWithPortProbe(requestedPort, material.listen_port);
+      }
+      if (relayChannel?.listen) {
+        this.relayListener = await relayChannel.listen({
+          localDeviceId: this.localDeviceId,
+          certPem: this.certPem,
+          privateKeyPem: this.privateKeyPem,
+          alpnProtocols: [...PEER_ALPN_PROTOCOLS],
+          onConnection: ({ transport, tlsSocket }) => {
+            void this.handleIncomingTlsConnection(tlsSocket, transport);
+          },
+        });
+      }
     }
 
     return this.getRuntimeStatus();
   }
 
+  private resolveInboundRelayChannel(): IPeerTransportChannel | null {
+    if (this.options.relayTransport !== undefined) {
+      return this.options.relayTransport;
+    }
+    const configuredUrl =
+      typeof this.options.relayUrl === 'function' ? this.options.relayUrl() : this.options.relayUrl;
+    const relayUrl = configuredUrl?.trim() || process.env.TINADEC_PEER_RELAY_URL?.trim();
+    if (!relayUrl) return null;
+    return new BlindRelayTransport({ relayUrl });
+  }
+
   private async bindWithPortProbe(startPort: number, corePersistedPort: number): Promise<void> {
     const host = this.options.bindHost ?? '0.0.0.0';
+    if (this.options.lanTransport?.listen) {
+      const handle = await this.options.lanTransport.listen({
+        host,
+        port: startPort,
+        localDeviceId: this.localDeviceId,
+        certPem: this.certPem,
+        privateKeyPem: this.privateKeyPem,
+        alpnProtocols: [...PEER_ALPN_PROTOCOLS],
+        onConnection: ({ transport, tlsSocket }) => {
+          void this.handleIncomingTlsConnection(tlsSocket, transport);
+        },
+      });
+      this.customLanListener = handle;
+      this.actualListenPort = handle.boundPort ?? startPort;
+      this.portConflict =
+        startPort !== 0 && this.actualListenPort !== null && this.actualListenPort !== startPort;
+      return;
+    }
+
     const maxOffset =
       startPort === 0
         ? 0
@@ -495,6 +604,18 @@ export class PeerTlsServer {
     }
     this.rawSockets.clear();
 
+    const relayHandle = this.relayListener;
+    this.relayListener = null;
+    if (relayHandle) {
+      await relayHandle.close(reason).catch(() => undefined);
+    }
+
+    const customLanHandle = this.customLanListener;
+    this.customLanListener = null;
+    if (customLanHandle) {
+      await customLanHandle.close(reason).catch(() => undefined);
+    }
+
     const srv = this.server;
     this.server = null;
     this.actualListenPort = null;
@@ -545,7 +666,10 @@ export class PeerTlsServer {
     session.connection.destroy(new PeerProtocolError(code, reason));
   }
 
-  private async handleIncomingTlsConnection(tlsSocket: TLSSocket): Promise<void> {
+  private async handleIncomingTlsConnection(
+    tlsSocket: TLSSocket,
+    transportKind: PeerTransportKind = 'lan',
+  ): Promise<void> {
     if (!this.inboundEnabled || this.stopped) {
       tlsSocket.destroy();
       return;
@@ -566,15 +690,18 @@ export class PeerTlsServer {
           tlsSocket,
           isInboundEnabled: () => this.inboundEnabled && !this.stopped,
           verifyControllerGrant: (input) =>
-            this.verifyHandshakeWithCore({
-              transport: 'lan',
-              controllerDeviceId: input.controllerDeviceId,
-              displayName: input.controllerDeviceId,
-              remoteFingerprint: input.clientFingerprint,
-              protocolMajor: PEER_PROTOCOL_MAJOR,
-              protocolMinor: PEER_PROTOCOL_MINOR,
-              pairingMode: 'grant',
-            }),
+            this.verifyHandshakeWithCore(
+              {
+                transport: 'lan',
+                controllerDeviceId: input.controllerDeviceId,
+                displayName: input.controllerDeviceId,
+                remoteFingerprint: input.clientFingerprint,
+                protocolMajor: PEER_PROTOCOL_MAJOR,
+                protocolMinor: PEER_PROTOCOL_MINOR,
+                pairingMode: 'grant',
+              },
+              transportKind,
+            ),
           handshakeTimeoutMs: this.options.handshakeTimeoutMs,
         });
       } finally {
@@ -601,7 +728,7 @@ export class PeerTlsServer {
         localDeviceName: this.displayName,
         localFingerprint: this.localFingerprint,
         isInboundEnabled: () => this.inboundEnabled && !this.stopped,
-        verifyHandshakeWithCore: (input) => this.verifyHandshakeWithCore(input),
+        verifyHandshakeWithCore: (input) => this.verifyHandshakeWithCore(input, transportKind),
         handshakeTimeoutMs: this.options.handshakeTimeoutMs,
       });
 
@@ -634,6 +761,11 @@ export class PeerTlsServer {
         this.sessionsByController.set(handshake.controllerDeviceId, group);
       }
       group.add(session);
+      this.providerProxy.registerWorkerControllerSession(
+        session.sessionId,
+        session.controller,
+        connection,
+      );
 
       connection.onClose(() => {
         const currentGroup = this.sessionsByController.get(handshake.controllerDeviceId);
@@ -710,6 +842,11 @@ export class PeerTlsServer {
         }
         return;
       }
+      case 'http.res.head':
+      case 'http.res.chunk':
+      case 'http.res.end':
+        this.providerProxy.handleWorkerReverseResponseFrame(session.sessionId, frame);
+        return;
       default:
         return;
     }
@@ -720,7 +857,8 @@ export class PeerTlsServer {
     const isJsonBody =
       req.hasBody &&
       (contentType.toLowerCase().includes('application/json') ||
-        /^\/api\/v1\/peers\/internal\/devserver-lease(?:\/|$)/i.test(req.path));
+        /^\/api\/v1\/peers\/internal\/devserver-lease(?:\/|$)/i.test(req.path) ||
+        /^\/api\/v1\/peers\/internal\/provider-proxy\/completions(?:\/|$)/i.test(req.path));
 
     // Fast fail-closed policy pre-check before reading any body bytes (unless observer POST tool execute needs bodyJson).
     const mightNeedJsonForPolicy =
@@ -943,6 +1081,20 @@ export class PeerTlsServer {
         return;
       }
 
+      if (lowerReqPath === PROVIDER_PROXY_COMPLETIONS_PATH) {
+        session.inFlightHttp.delete(streamId);
+        await this.providerProxy.executeControllerTunnelCompletion(
+          {
+            deviceId: session.controller.controllerDeviceId,
+            remoteDeviceId: session.controller.controllerDeviceId,
+            connection: session.connection,
+          },
+          { streamId, reqFrame, abort },
+          Buffer.isBuffer(rawBody) ? rawBody : Buffer.alloc(0),
+        );
+        return;
+      }
+
       const fetchImpl = this.options.fetchImpl ?? fetch;
       const forwardHeaders = buildSanitizedPeerCoreHeaders(
         reqFrame.headers,
@@ -950,12 +1102,34 @@ export class PeerTlsServer {
         this.options.hostControlToken?.(),
       );
 
+      if (toBoolFlag(session.controller.policy.allow_provider_proxy, false)) {
+        const gwPort = Number(process.env.TINADEC_GATEWAY_PORT || process.env.PORT || '48730');
+        const gwLoopback =
+          this.options.gatewayLoopbackUrl?.() ??
+          process.env.TINADEC_GATEWAY_URL?.trim().replace(/\/+$/, '') ??
+          `http://127.0.0.1:${Number.isInteger(gwPort) && gwPort > 0 ? gwPort : 48730}`;
+        forwardHeaders[HEADER_GATEWAY_LOOPBACK_URL] = gwLoopback;
+
+        if (reqFrame.method.toUpperCase() === 'POST') {
+          const boundSessionId = extractTargetSessionId(reqFrame.path, reqFrame.query);
+          if (boundSessionId) {
+            await this.providerProxy.notifyWorkerCoreSessionBinding({
+              sessionId: boundSessionId,
+              controller: session.controller,
+              incomingHeaders: reqFrame.headers,
+              gatewayLoopbackUrl: gwLoopback,
+            });
+          }
+        }
+      }
+
       const querySuffix = reqFrame.query
         ? reqFrame.query.startsWith('?')
           ? reqFrame.query
           : `?${reqFrame.query}`
         : '';
-      const targetUrl = new URL(`${reqFrame.path}${querySuffix}`, this.options.coreUrl()).toString();
+      const corePath = PeerTlsServer.rewriteGatewayBffPathToCore(reqFrame.path);
+      const targetUrl = new URL(`${corePath}${querySuffix}`, this.options.coreUrl()).toString();
 
       const response = await fetchImpl(targetUrl, {
         method: reqFrame.method,
@@ -999,6 +1173,14 @@ export class PeerTlsServer {
           const createdId = String(created.id ?? created.session_id ?? created.sessionId ?? '').trim();
           if (createdId) {
             this.knownSessionInitiators.set(createdId, session.controller.controllerDeviceId);
+            if (toBoolFlag(session.controller.policy.allow_provider_proxy, false)) {
+              await this.providerProxy.notifyWorkerCoreSessionBinding({
+                sessionId: createdId,
+                controller: session.controller,
+                incomingHeaders: reqFrame.headers,
+                gatewayLoopbackUrl: forwardHeaders[HEADER_GATEWAY_LOOPBACK_URL],
+              });
+            }
           }
         } catch {
           // ignore
@@ -1268,6 +1450,7 @@ export class PeerTlsServer {
 
   private async verifyHandshakeWithCore(
     input: CoreHandshakeVerifyInput,
+    transportOverride?: PeerTransportKind,
   ): Promise<CoreHandshakeVerifyDecision> {
     const fetchImpl = this.options.fetchImpl ?? fetch;
     const url = new URL('/api/v1/peers/internal/handshake/verify', this.options.coreUrl()).toString();
@@ -1280,7 +1463,7 @@ export class PeerTlsServer {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          transport: input.transport,
+          transport: transportOverride ?? input.transport,
           controller_device_id: input.controllerDeviceId,
           display_name: input.displayName,
           remote_fingerprint: input.remoteFingerprint,
@@ -1442,6 +1625,21 @@ export class PeerTlsServer {
       ports.add(gwPort);
     }
     return ports;
+  }
+
+  private static rewriteGatewayBffPathToCore(rawPath: string): string {
+    const trimmed = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
+    if (/^\/api\/v1\/(?:code|tool-runtime)\/tools$/i.test(trimmed)) {
+      return '/api/v1/tools';
+    }
+    const execMatch = /^\/api\/v1\/(?:code|tool-runtime)\/tools\/([^/]+)\/execute$/i.exec(trimmed);
+    if (execMatch) {
+      return `/api/v1/tools/${execMatch[1]!}/execute`;
+    }
+    if (/^\/api\/v1\/tool-runtime\/health$/i.test(trimmed)) {
+      return '/api/v1/tool-layer-readiness';
+    }
+    return rawPath;
   }
 
   private getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
