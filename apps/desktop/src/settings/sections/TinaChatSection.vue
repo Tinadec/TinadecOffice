@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, LockKeyhole, MessageCircle, Plus, RefreshCw, User, Users } from '@lucide/vue'
 import { UiButton, UiCheckbox, UiInput, UiIslandCard, UiSelectField, UiSwitch, UiTextarea } from '@/components/ui'
 import { api as baseApi, type TinaChatConversation, type TinaChatMember, type TinaChatParticipant, type TinaChatWorkspacePolicy } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
-import { useNotifications } from '@/composables/useNotifications'
+import { useScopedStatus } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 import { useChatIdentity } from '@/tinaChat/useChatIdentity'
 
 /**
@@ -15,7 +16,8 @@ import { useChatIdentity } from '@/tinaChat/useChatIdentity'
  * on every call, and a stale revision or a withdrawn member fails closed here rather than locally.
  */
 const { t } = useI18n()
-const { status } = useNotifications()
+const status = useScopedStatus('tina-chat-manage')
+const { canAccessBackend } = useHostAccess()
 const identity = useChatIdentity()
 
 const participants = ref<TinaChatParticipant[]>([])
@@ -40,13 +42,14 @@ async function report<T>(action: () => Promise<T>, okKey: string): Promise<T | u
   busy.value = true
   try {
     const result = await action()
+    status.clear('tina-chat-manage')
     if (okKey) status.success({ key: 'tina-chat-manage', title: t(okKey), message: t('tinaChat.manage'), source: 'TinaChat' })
     return result
   } catch (error) {
     const stale = (error as { status?: number })?.status === 412
-    status.error({
+    status.error(error, {
       key: 'tina-chat-manage', title: t(stale ? 'tinaChat.revisionStale' : 'tinaChat.actionFailed'),
-      message: error instanceof Error ? error.message : String(error), source: 'TinaChat',
+      source: 'TinaChat',
       action: { label: t('tinaChat.retry'), run: load },
     })
     return undefined
@@ -56,6 +59,7 @@ async function report<T>(action: () => Promise<T>, okKey: string): Promise<T | u
 }
 
 async function load() {
+  if (!canAccessBackend.value) return
   loading.value = true
   try {
     const [people, rooms, nextPolicy] = await Promise.all([api.tinaChatParticipants(), Promise.resolve([] as TinaChatConversation[]), api.tinaChatPolicy()])
@@ -64,10 +68,14 @@ async function load() {
     const current = actor.value
     conversations.value = current ? await api.tinaChatConversations(current) : []
     if (current && !people.some(x => x.id === current && x.status === 'active')) actingId.value = ''
+    status.clear('tina-chat-manage')
   } catch (error) {
-    status.error({ key: 'tina-chat-manage', title: t('tinaChat.loadFailed'),
-      message: error instanceof Error ? error.message : String(error), source: 'TinaChat',
-      action: { label: t('tinaChat.retry'), run: load } })
+    status.error(error, {
+      key: 'tina-chat-manage',
+      title: t('tinaChat.loadFailed'),
+      source: 'TinaChat',
+      action: { label: t('tinaChat.retry'), run: load },
+    })
   } finally {
     loading.value = false
   }
@@ -139,7 +147,16 @@ async function savePolicy(field: 'allow_cross_workspace_discovery' | 'allow_cros
   if (saved) policy.value = saved
 }
 
-onMounted(load)
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    status.clear('tina-chat-manage')
+    void load()
+  }
+})
+
+onMounted(() => {
+  if (canAccessBackend.value) void load()
+})
 defineExpose({ load, participants, conversations, policy, actor, register, createRoom, openRoom, memberAction, setFlags })
 </script>
 

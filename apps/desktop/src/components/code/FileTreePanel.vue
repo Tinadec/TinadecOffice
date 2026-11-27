@@ -13,11 +13,12 @@ import {
   Search,
   Trash2,
 } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 import { searchedFilePaths, toDirEntryView, type DirEntryDto, type DirEntryView, type FileSearchDataDto } from '@/lib/workspaceSearch'
 import {
   userToolActionIdempotencyKey,
@@ -52,6 +53,7 @@ const props = defineProps<{
 }>()
 const { t, te } = useI18n()
 const { notify, status, dismissByKey } = useNotifications()
+const { canAccessBackend } = useHostAccess()
 
 const emit = defineEmits<{
   select: [path: string]
@@ -134,6 +136,7 @@ function handleNodeClick(node: TreeNode): void {
 }
 
 async function refresh(): Promise<void> {
+  if (!canAccessBackend.value) return
   loading.value = true
   try {
     const entries = await loadDirectory(rootPath.value)
@@ -397,8 +400,19 @@ const flatList = computed<FlatNode[]>(() => {
 
 watch(() => props.cwd, () => {
   expandedPaths.value = new Set()
-  void refresh()
+  if (canAccessBackend.value) void refresh()
 }, { immediate: true })
+
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    dismissByKey('code-tree-load')
+    void refresh()
+  }
+})
+
+onBeforeUnmount(() => {
+  dismissByKey('code-tree-load')
+})
 </script>
 
 <template>

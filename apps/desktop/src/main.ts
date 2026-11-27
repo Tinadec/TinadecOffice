@@ -8,7 +8,7 @@ import router from './router'
 import i18n, { ensureActiveLocale, isSupportedLocale, setInterfaceLocale } from './i18n'
 import { useTheme } from './composables/useTheme'
 import { useDynamicPalette } from './composables/useDynamicPalette'
-import { setErrorActionLabels, setNotificationFallbackText } from './composables/useNotifications'
+import { setErrorActionLabels, setLocalizedConnectionMessages, setNotificationFallbackText } from './composables/useNotifications'
 import { installPreviewShimIfNeeded } from './lib/previewShim'
 import { homeController } from './controllers/HomeController'
 import { auth } from './lib/auth'
@@ -47,6 +47,17 @@ function applyLocaleText(): void {
   // language this window is actually showing so its labels follow a switch made in Settings.
   window.tinadec?.setInterfaceLocale?.(i18n.global.locale.value)
   setNotificationFallbackText(i18n.global.t('app.unknownError'))
+  setLocalizedConnectionMessages([
+    i18n.global.t('host.identityUnavailable'),
+    i18n.global.t('host.identityRejected'),
+    i18n.global.t('host.verifyingReason'),
+    i18n.global.t('host.notReady'),
+    i18n.global.t('host.bridgeUnavailable'),
+    i18n.global.t('host.connectionCheckFailed'),
+    i18n.global.t('host.connectionStopped'),
+    i18n.global.t('host.authRequiredReason'),
+    i18n.global.t('errors.networkUnavailable'),
+  ])
   setErrorActionLabels({
     retry: i18n.global.t('errors.actions.retry'),
     reload: i18n.global.t('errors.actions.reload'),

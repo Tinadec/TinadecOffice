@@ -5,8 +5,47 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent, watch } from 'vue'
+import { defineComponent, h, watch } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+
+vi.mock('@/components/ui', async () => {
+  const { defineComponent: dc, h: render } = await import('vue')
+  const passThrough = (name: string, tag = 'div') =>
+    dc({
+      name,
+      setup(_, { slots, attrs }) {
+        return () => render(tag, attrs, slots.default?.())
+      },
+    })
+  const buttonStub = dc({
+    name: 'UiButton',
+    props: { disabled: Boolean },
+    emits: ['click'],
+    setup(props, { slots, attrs, emit }) {
+      return () =>
+        render('button', { ...attrs, type: 'button', disabled: props.disabled, onClick: (e: MouseEvent) => emit('click', e) }, slots.default?.())
+    },
+  })
+  const valueStub = (name: string) =>
+    dc({
+      name,
+      props: { modelValue: [String, Number, Boolean], disabled: Boolean },
+      emits: ['update:modelValue'],
+      setup(_, { slots, attrs }) {
+        return () => render('div', attrs, slots.default?.())
+      },
+    })
+  return {
+    UiBadge: passThrough('UiBadge', 'span'),
+    UiButton: buttonStub,
+    UiCard: passThrough('UiCard'),
+    UiInput: valueStub('UiInput'),
+    UiLabel: passThrough('UiLabel', 'label'),
+    UiSelectField: valueStub('UiSelectField'),
+    UiSwitch: valueStub('UiSwitch'),
+    UiTextarea: valueStub('UiTextarea'),
+  }
+})
 
 vi.mock('@/api', () => ({
   api: {
@@ -480,5 +519,169 @@ describe('Unified Dynamic Notification System invariants', () => {
       .map((args) => args.map(String).join(' '))
       .filter((msg) => msg.includes('onBeforeUnmount'))
     expect(lifecycleWarnings).toEqual([])
+  })
+
+  // -------------------------------------------------------------------------
+  // Invariant 7 — Localized host error strings & General settings recovery sync
+  // -------------------------------------------------------------------------
+  it('Invariant 7: classifies localized host unavailable strings as connection errors, prevents zombie PersonalSection cards, and syncs GeneralSection discovery/test probes to clear banners', async () => {
+    const n = useNotifications()
+    const { connectionState, hostStatus, businessReady, start } = useConnection()
+    const { canAccessBackend } = useHostAccess()
+
+    const stopProjector = watch(
+      [businessReady, connectionState, hostStatus],
+      () => {
+        syncConnectionNotifications()
+      },
+      { immediate: true },
+    )
+
+    // 7a: Even if a caller raises status.error using only the localized zh-CN message string
+    // (dropping the ApiError code), it must be classified as 'connection', suppressed while
+    // globally blocked, and cleared automatically once recovery completes.
+    const zhUnavailableMsg = '本地服务暂时不可用，请重试宿主连接。'
+    expect(isConnectionLevelError(zhUnavailableMsg)).toBe(true)
+
+    getHostStatus.mockResolvedValue({
+      state: 'unavailable',
+      managed: true,
+      error: { code: 'host_identity_unavailable', message: 'The local services are temporarily unavailable.' },
+    })
+    await start()
+    await flushPromises()
+    expect(connectionState.value).toBe('host_unavailable')
+    expect(canAccessBackend.value).toBe(false)
+
+    // While blocked, raising a localized string-only status.error does NOT create a zombie 'general' card.
+    n.status.error({ key: 'personal-usage', source: 'gateway', message: zhUnavailableMsg })
+    expect(n.items.value.some((item) => item.key === 'personal-usage')).toBe(false)
+    expect(n.items.value.map((item) => item.key)).toEqual([CONNECTION_BANNER_KEY])
+
+    // Even if raised before global block activates, category is 'connection' so recovery clears it.
+    setGlobalConnectionBlocked(false)
+    n.dismissByKey(CONNECTION_BANNER_KEY)
+    n.status.error({ key: 'personal-usage', source: 'gateway', message: zhUnavailableMsg })
+    expect(n.items.value.find((item) => item.key === 'personal-usage')?.category).toBe('connection')
+    setGlobalConnectionBlocked(true)
+
+    // 7b: Mount PersonalSection while backend is blocked — it must NOT fire blind API calls or raise zombie cards.
+    const { default: PersonalSection } = await import('@/settings/sections/PersonalSection.vue')
+    const stubUi = { template: '<div><slot /></div>' }
+    const personalWrapper = mount(PersonalSection, {
+      global: {
+        plugins: [i18n],
+        stubs: {
+          UiButton: stubUi,
+          UiCard: stubUi,
+          UiInput: stubUi,
+          UiTextarea: stubUi,
+          PersonalAvatar: stubUi,
+          PersonalShareCard: stubUi,
+        },
+      },
+    })
+    await flushPromises()
+    expect(n.items.value.some((item) => item.key === 'personal-usage')).toBe(false)
+    personalWrapper.unmount()
+
+    // 7c: Mount GeneralSection while host is still unavailable, then scan & test connection once services come up.
+    const gatewayUrl = 'http://gateway.test'
+    const discoverServices = vi.fn().mockResolvedValue([
+      { service: 'core', url: 'http://127.0.0.1:48731', port: 48731, status: 'ready' },
+      { service: 'gateway', url: gatewayUrl, port: 48730, status: 'ready' },
+    ])
+    const getAppConfig = vi.fn().mockResolvedValue({
+      gateway_url: gatewayUrl,
+      source: 'default',
+      managed: false,
+      close_to_tray: false,
+      launch_at_login: false,
+      companion_mode_enabled: false,
+      companion_speak_replies: false,
+    })
+    Object.defineProperty(window, 'tinadec', {
+      configurable: true,
+      value: {
+        getHostStatus,
+        retryHostConnection,
+        broadcastStatusNotification,
+        onHostStatusChanged: (cb: typeof hostListener) => {
+          hostListener = cb
+          return () => {
+            hostListener = undefined
+          }
+        },
+        getAppConfig,
+        discoverServices,
+        onCloseToTrayChanged: () => () => {},
+        onLaunchAtLoginChanged: () => () => {},
+        onCompanionSpeakRepliesChanged: () => () => {},
+      },
+    })
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'ok' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    retryHostConnection.mockResolvedValue({ state: 'ready', managed: true })
+    vi.mocked(api.health).mockResolvedValue({ status: 'ok' })
+
+    const { default: GeneralSection } = await import('@/settings/sections/GeneralSection.vue')
+    const generalWrapper = mount(GeneralSection, {
+      global: {
+        plugins: [i18n],
+        stubs: {
+          UiBadge: stubUi,
+          UiButton: stubUi,
+          UiInput: stubUi,
+          UiLabel: stubUi,
+          UiSelectField: stubUi,
+          UiSwitch: stubUi,
+        },
+      },
+    })
+    await flushPromises()
+
+    // Trigger "Scan Services" -> discovers active gatewayUrl -> immediately triggers global retryConnection()!
+    const scanButton = generalWrapper.findAll('button').find((btn) => btn.text().includes('扫描') || btn.text().includes('Scan'))
+    if (scanButton) {
+      await scanButton.trigger('click')
+    } else {
+      await (generalWrapper.vm as unknown as { scanServices: () => Promise<void> }).scanServices()
+    }
+    await flushPromises()
+
+    expect(retryHostConnection).toHaveBeenCalledTimes(1)
+    expect(businessReady.value).toBe(true)
+    expect(canAccessBackend.value).toBe(true)
+    expect(n.items.value.filter((item) => item.kind === 'status')).toHaveLength(0)
+
+    // Drop host back to unavailable and verify "Test Connection" also triggers global host recovery and clears banners.
+    hostListener?.({
+      state: 'unavailable',
+      managed: true,
+      error: { code: 'host_identity_unavailable', message: 'retry' },
+    })
+    await flushPromises()
+    expect(businessReady.value).toBe(false)
+    expect(n.items.value.some((item) => item.key === CONNECTION_BANNER_KEY)).toBe(true)
+
+    await (generalWrapper.vm as unknown as { testGatewayConnection: () => Promise<void> }).testGatewayConnection()
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${gatewayUrl}/api/v1/health`,
+      expect.objectContaining({ headers: expect.objectContaining({ accept: 'application/json' }) }),
+    )
+    expect(retryHostConnection).toHaveBeenCalledTimes(2)
+    expect(businessReady.value).toBe(true)
+    expect(n.items.value.filter((item) => item.kind === 'status')).toHaveLength(0)
+    expect(n.items.value.filter((item) => item.category === 'connection')).toHaveLength(0)
+
+    generalWrapper.unmount()
+    stopProjector()
   })
 })

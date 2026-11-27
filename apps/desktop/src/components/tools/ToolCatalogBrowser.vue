@@ -12,13 +12,15 @@ import {
 } from '@lucide/vue'
 import { api, type ToolDescriptorDto, type ToolSearchResultDto } from '@/api'
 import { riskLevelsPresent, riskToneClass, toolIconOf } from '@/lib/toolPresentation'
-import { useNotifications } from '@/composables/useNotifications'
+import { useScopedStatus } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 import { UiSelectField } from '@/components/ui'
 import { useStatusLabels } from '@/lib/statusLabels'
 
 const { t } = useI18n()
 const { riskLabel } = useStatusLabels()
-const { status, dismissByKey } = useNotifications()
+const status = useScopedStatus('tools')
+const { canAccessBackend } = useHostAccess()
 
 const props = defineProps<{
   tools?: ToolDescriptorDto[]
@@ -137,16 +139,15 @@ function isExpanded(toolId: string): boolean {
 }
 
 async function loadTools() {
-  if (props.tools && props.tools.length > 0) return
+  if ((props.tools && props.tools.length > 0) || !canAccessBackend.value) return
   loading.value = true
   try {
     localTools.value = await api.listTools()
-    dismissByKey('tools')
+    status.clear('tools')
   } catch (err) {
-    status.error({
+    status.error(err, {
       key: 'tools',
       title: t('app.loadFailed'),
-      message: err instanceof Error ? err.message : String(err),
       source: 'tools',
       action: { label: t('app.retry'), run: loadTools }
     })
@@ -177,8 +178,15 @@ watch(searchQuery, (val) => {
   }, 300)
 })
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    status.clear('tools')
+    void loadTools()
+  }
+})
+
 onMounted(() => {
-  loadTools()
+  if (canAccessBackend.value) void loadTools()
 })
 
 function onExecute(tool: ToolDescriptorDto) {

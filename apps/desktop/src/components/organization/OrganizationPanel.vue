@@ -252,10 +252,9 @@ async function load(at: number): Promise<void> {
   } catch (cause) {
     if (at !== epoch || disposed) return
     if (phase.value === 'loading') phase.value = 'error'
-    status.error({
+    status.error(cause, {
       key: NOTICE_KEY,
       title: t('organization.loadFailed'),
-      message: cause instanceof Error ? cause.message : String(cause),
       source: 'organization',
       action: { label: t('organization.retry'), run: () => refresh() },
     })
@@ -487,7 +486,10 @@ onMounted(() => {
 })
 
 watch(canAccessBackend, (ready) => {
-  if (ready && props.sessionId && toValue(active)) void refresh()
+  if (ready) {
+    dismissByKey(NOTICE_KEY)
+    if (props.sessionId && toValue(active)) void refresh()
+  }
 })
 
 onBeforeUnmount(() => {

@@ -1048,7 +1048,7 @@ app.whenReady().then(async () => {
     managed,
     // Packaged service startup can take up to two bounded 90-second waits; keep retries finite
     // across longer cold starts in dev as well so early transient failures settle automatically.
-    retryDelaysMs: [1_000, 1_500, 2_000, 3_000, 3_000, 4_000, 5_000, 5_000, 8_000, 12_000, 20_000, 30_000],
+    retryDelaysMs: [1_000, 1_500, 2_000, 2_500, 3_000, 3_000, 3_000, 4_000, 4_000, 5_000, 5_000, 5_000, 5_000, 5_000, 8_000, 10_000, 15_000, 15_000],
     verificationTimeoutMs: app.isPackaged ? 200_000 : 20_000,
     onStatusChange: publishHostStatus,
     verify: async ({ signal }) => {

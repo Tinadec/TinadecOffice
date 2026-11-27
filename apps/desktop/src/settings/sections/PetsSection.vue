@@ -284,9 +284,8 @@ async function loadPets(force = false): Promise<void> {
     downloadedPets.value = downloaded
     petCatalogLimit.value = PET_CATALOG_PAGE_SIZE
   } catch (error) {
-    const msg = error instanceof Error ? error.message : t('settings.petsLoadFailed')
     if (notifications.status?.error) {
-      notifications.status.error({ key: 'pets', source: 'pets', message: msg })
+      notifications.status.error(error, { key: 'pets', source: 'pets', title: t('settings.petsLoadFailed') })
     } else {
       notify.error(error, { title: t('settings.petsLoadFailed') })
     }
@@ -384,6 +383,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   petLoadMoreObserver?.disconnect()
   stopPetChanged?.()
+  notifications.dismissByKey?.('pets')
 })
 </script>
 

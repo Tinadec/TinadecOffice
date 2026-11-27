@@ -180,7 +180,7 @@ function probe(refreshHost = true, recoverUnavailableHost = false): Promise<bool
 function nextHealthWatchDelayMs(): number {
   const base = CONNECTION_POLL_INTERVAL_MS * 4
   if (consecutiveHostUnavailable < 2) return base
-  return Math.min(30_000, base * (2 ** Math.min(consecutiveHostUnavailable - 1, 3)))
+  return Math.min(15_000, base * (2 ** Math.min(consecutiveHostUnavailable - 1, 3)))
 }
 
 function scheduleHealthWatch() {

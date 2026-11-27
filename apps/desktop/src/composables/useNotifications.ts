@@ -190,6 +190,11 @@ const CONNECTION_ERROR_CODES = new Set([
   'host_bridge_unavailable',
   'host_connection_unavailable',
   'host_identity_unavailable',
+  'host_identity_rejected',
+  'host_endpoint_invalid',
+  'host_credential_invalid',
+  'host_nonce_invalid',
+  'host_connection_stopped',
   'desktop_restart_required',
   'desktop_host_required',
   'web_auth_required',
@@ -197,6 +202,41 @@ const CONNECTION_ERROR_CODES = new Set([
 
 const NETWORK_MESSAGE_PATTERN =
   /(failed to fetch|networkerror|network request failed|load failed|econnrefused|econnreset|etimedout|err_connection_refused|fetch failed|cannot connect to backend)/i
+
+/**
+ * Localized host/network strings registered by `main.ts` (and seeded with default
+ * zh-CN/en host readiness messages so callers that forwarded `error.message` without
+ * the underlying `ApiError` still classify into `category: 'connection'`).
+ */
+const localizedConnectionMessages = new Set<string>([
+  '本地服务暂时不可用，请重试宿主连接。',
+  '本地服务无法证明自己是受信任的宿主。请同时启动 Core、Gateway 和桌面端，然后重试。',
+  '桌面宿主尚未就绪，请重试连接。',
+  '正在验证桌面宿主，业务操作暂不可用。',
+  '桌面宿主状态接口暂不可用，请重试连接。',
+  '无法检查宿主连接，请重试桌面宿主。',
+  '宿主正在关闭。',
+  'The local services are temporarily unavailable. Retry the host connection.',
+  'The local services could not prove their trusted host identity. Start Core, Gateway and Desktop together, then retry.',
+  'Desktop host is not ready yet. Retry the connection.',
+  'Verifying desktop host; workspace operations are temporarily unavailable.',
+  'Desktop host status bridge is unavailable. Retry the connection.',
+  'Could not check the host connection. Retry the desktop host.',
+  'The host is shutting down.',
+])
+
+export function setLocalizedConnectionMessages(messages: Iterable<string>): void {
+  localizedConnectionMessages.clear()
+  for (const message of messages) {
+    const trimmed = typeof message === 'string' ? message.trim() : ''
+    if (trimmed) localizedConnectionMessages.add(trimmed)
+  }
+}
+
+function isKnownConnectionMessage(message: string): boolean {
+  const trimmed = message.trim()
+  return Boolean(trimmed) && (NETWORK_MESSAGE_PATTERN.test(trimmed) || localizedConnectionMessages.has(trimmed))
+}
 
 const DEFAULT_DURATION: Record<NotificationLevel, number> = {
   info: 5000,
@@ -232,7 +272,7 @@ let nextScopedKey = 1
 export function isConnectionLevelError(error: unknown): boolean {
   if (!error) return false
   if (typeof error === 'string') {
-    return CONNECTION_ERROR_CODES.has(error.trim()) || NETWORK_MESSAGE_PATTERN.test(error)
+    return CONNECTION_ERROR_CODES.has(error.trim()) || isKnownConnectionMessage(error)
   }
   if (typeof error === 'object') {
     const record = error as {
@@ -256,7 +296,7 @@ export function isConnectionLevelError(error: unknown): boolean {
     }
 
     for (const candidate of [record.message, record.error, record.detail]) {
-      if (typeof candidate === 'string' && NETWORK_MESSAGE_PATTERN.test(candidate)) {
+      if (typeof candidate === 'string' && isKnownConnectionMessage(candidate)) {
         return true
       }
     }

@@ -7,6 +7,7 @@ import { api as baseApi } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 const api = scopedApi(baseApi, () => 'user')
 import { useNotifications } from '@/composables/useNotifications'
+import { useConnection } from '@/composables/useConnection'
 import { getDispatchPref, setDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import {
   CONVERSATION_FLOW_PRESETS,
@@ -28,6 +29,7 @@ import { SUPPORTED_LOCALES, setInterfaceLocale, type SupportedLocale } from '@/i
 const { t, locale } = useI18n()
 const { items: notificationItems, notify, banner, status, confirm: dismissConfirm, dismiss: dismissNotification, dismissByKey } =
   useNotifications()
+const { businessReady, hostStatus, retryConnection, syncConnectionNotifications } = useConnection()
 
 /**
  * Switch the interface language. Every non-default bundle is a separate chunk now, so the switch waits
@@ -164,6 +166,21 @@ function normalizedGatewayDraft(): string {
   return url.toString().replace(/\/$/, '')
 }
 
+function isSameGatewayUrl(a: string, b: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase()
+  return normalize(a) === normalize(b)
+}
+
+async function syncGlobalHostRecovery(): Promise<boolean> {
+  if (businessReady.value) {
+    syncConnectionNotifications()
+    return true
+  }
+  const recovered = await retryConnection()
+  syncConnectionNotifications()
+  return recovered
+}
+
 async function testGatewayConnection(): Promise<void> {
   dismissByKey('gateway-config')
   gatewayConnectionState.value = 'testing'
@@ -181,12 +198,26 @@ async function testGatewayConnection(): Promise<void> {
       signal: AbortSignal.timeout(5000),
     })
     if (!response.ok) throw new Error(t('settings.gatewayConnectionHttp', { status: response.status }))
+    dismissByKey('gateway-config')
+    if (isSameGatewayUrl(gatewayUrl, api.gatewayUrl) && !businessReady.value) {
+      await syncGlobalHostRecovery()
+      if (hostStatus.value.state === 'rejected') {
+        gatewayConnectionState.value = 'failed'
+        status.error({
+          key: 'gateway-config',
+          source: 'gateway',
+          title: t('hostBanner.rejectedTitle'),
+          message: hostStatus.value.error?.message ?? t('hostBanner.rejectedText'),
+        })
+        return
+      }
+    }
     gatewayConnectionState.value = 'ready'
     notify.success({ message: t('settings.gatewayConnectionReady'), source: 'gateway' })
   } catch (error) {
     // The browser's own wording ("Failed to fetch", a timeout) stays as detail under a translated message.
     gatewayConnectionState.value = 'failed'
-    status.error({ key: 'gateway-config', source: 'gateway', message: t('settings.gatewayConnectionFailed'), details: error instanceof Error ? error.message : undefined })
+    status.error(error, { key: 'gateway-config', source: 'gateway', title: t('settings.gatewayConnectionFailed') })
   }
 }
 
@@ -257,20 +288,28 @@ const discoveredServices = ref<DiscoveredService[]>([])
 const scanState = ref<'idle' | 'scanning' | 'scanned' | 'failed'>('idle')
 
 async function scanServices(): Promise<void> {
+  dismissByKey('gateway-config')
   scanState.value = 'scanning'
   try {
     discoveredServices.value = await window.tinadec.discoverServices()
     scanState.value = 'scanned'
     if (discoveredServices.value.length === 0) {
       notify.info({ message: t('settings.serviceDiscoveryEmpty'), source: 'gateway' })
+      return
+    }
+    const activeGatewayFound = discoveredServices.value.some(
+      (service) => service.service === 'gateway' && isSameGatewayUrl(service.url, api.gatewayUrl),
+    )
+    if (activeGatewayFound && !businessReady.value) {
+      void syncGlobalHostRecovery()
     }
   } catch (error) {
     scanState.value = 'failed'
     discoveredServices.value = []
-    status.error({
+    status.error(error, {
       key: 'gateway-config',
       source: 'gateway',
-      message: error instanceof Error ? error.message : t('settings.serviceDiscoveryFailed'),
+      title: t('settings.serviceDiscoveryFailed'),
     })
   }
 }
@@ -279,6 +318,9 @@ function selectDiscoveredService(service: DiscoveredService): void {
   if (service.service !== 'gateway' || appConfig.value.managed) return
   gatewayUrlDraft.value = service.url
   notify.success({ message: t('settings.serviceDiscoverySelected'), source: 'gateway' })
+  if (isSameGatewayUrl(service.url, api.gatewayUrl) && !businessReady.value) {
+    void syncGlobalHostRecovery()
+  }
 }
 
 function onEnterPrefChange(value: string): void {
@@ -327,6 +369,7 @@ onMounted(() => {
   })
 })
 onUnmounted(() => {
+  dismissByKey('gateway-config')
   disposeCloseToTray?.()
   disposeCloseToTray = undefined
   disposeLaunchAtLogin?.()

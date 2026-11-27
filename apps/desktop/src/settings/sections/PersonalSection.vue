@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Briefcase, Check, LogIn, LogOut, Pencil, Share2, X } from '@lucide/vue'
 import { UiButton, UiCard, UiInput, UiTextarea } from '@/components/ui'
 import PersonalAvatar from '@/components/personal/PersonalAvatar.vue'
-import { useNotifications } from '@/composables/useNotifications'
+import { useNotifications, useScopedStatus } from '@/composables/useNotifications'
+import { useHostAccess } from '@/lib/hostAccess'
 import { api as baseApi } from '@/api'
 import { scopedApi } from '@/lib/storageScope'
 // Usage lives in each workspace's own storage database, so the personal total is a
@@ -43,7 +44,9 @@ import PersonalShareCard from './PersonalShareCard.vue'
  * is known to break on, and it cannot be mounted in tests at all.
  */
 const { t, locale } = useI18n()
-const { notify, status, confirm, dismissByKey } = useNotifications()
+const { notify, confirm } = useNotifications()
+const scopedStatus = useScopedStatus('personal-usage')
+const { canAccessBackend } = useHostAccess()
 
 const BIO_MAX_LENGTH = 80
 const CUSTOM_ROLE_MAX_LENGTH = 24
@@ -114,7 +117,7 @@ function openEditDialog(): void {
     void auth.login()
     return
   }
-  dismissByKey('personal-profile')
+  scopedStatus.clear('personal-profile')
   nicknameDraft.value = userProfile.nickname
   bioDraft.value = userProfile.bio
   avatarUrlDraft.value = userProfile.avatar ?? ''
@@ -132,7 +135,7 @@ function closeEditDialog(): void {
  */
 async function saveEditDialog(): Promise<void> {
   if (!avatarUrlValid.value) {
-    status.error({ key: 'personal-profile', source: 'desktop', message: t('settings.personalAvatarUrlInvalid') })
+    scopedStatus.error(t('settings.personalAvatarUrlInvalid'), { key: 'personal-profile', source: 'desktop' })
     return
   }
   const nextNickname = nicknameDraft.value.trim()
@@ -156,10 +159,10 @@ async function saveEditDialog(): Promise<void> {
         avatarUrl: nextAvatar ?? '',
       })
     } catch (error) {
-      status.error({
+      scopedStatus.error(error, {
         key: 'personal-profile',
+        title: t('settings.personalAccountSaveFailed'),
         source: 'gateway',
-        message: error instanceof Error ? error.message : t('settings.personalAccountSaveFailed'),
       })
       return
     }
@@ -168,7 +171,7 @@ async function saveEditDialog(): Promise<void> {
     if (nextAvatar !== userProfile.avatar) setAvatar(nextAvatar)
   }
 
-  dismissByKey('personal-profile')
+  scopedStatus.clear('personal-profile')
   setBio(bioDraft.value)
   editDialogOpen.value = false
   notify.success(t('settings.personalSaved'))
@@ -225,6 +228,7 @@ async function readScopeInvocations(storageId: string): Promise<Awaited<ReturnTy
 }
 
 async function loadTokenUsage(): Promise<void> {
+  if (!canAccessBackend.value) return
   usageLoading.value = true
   try {
     const scopes = await baseApi.listStorageScopes()
@@ -278,20 +282,32 @@ async function loadTokenUsage(): Promise<void> {
       totalActiveDays: activeDays.size,
       dailyTokens,
     }
+    scopedStatus.clear('personal-usage')
   } catch (error) {
-    status.error({
+    scopedStatus.error(error, {
       key: 'personal-usage',
+      title: t('settings.personalUsageLoadFailed'),
       source: 'gateway',
-      message: error instanceof Error ? error.message : t('settings.personalUsageLoadFailed'),
+      action: { label: t('common.retry'), run: () => loadTokenUsage() },
     })
   } finally {
     usageLoading.value = false
   }
 }
 
+watch(canAccessBackend, (ready, wasReady) => {
+  if (ready && !wasReady) {
+    scopedStatus.clear('personal-usage')
+    void loadTokenUsage()
+    void auth.refreshAuthState()
+  }
+})
+
 onMounted(() => {
-  void loadTokenUsage()
-  void auth.refreshAuthState()
+  if (canAccessBackend.value) {
+    void loadTokenUsage()
+    void auth.refreshAuthState()
+  }
 })
 </script>
 
