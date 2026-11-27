@@ -117,7 +117,9 @@ public sealed class ProjectSessionLifecycleService
         if (sessions.Count != 0) await ThrowIfAnyActiveRunAsync(sessions.Select(x => x.Id), ct).ConfigureAwait(false);
         foreach (var session in sessions) await PurgeSessionDataAsync(session.Id, ct).ConfigureAwait(false);
         await _store.DeleteProjectRowAsync(projectId, ct).ConfigureAwait(false);
-        TryDeleteFile(_paths.ProjectVectorDatabase(project.TenantId, project.WorkspaceId, project.Id));
+        var vectorPath = _paths.ProjectVectorDatabase(project.TenantId, project.WorkspaceId, project.Id);
+        SqliteConnectionPragmaInterceptor.ClearPoolForPath(vectorPath);
+        TryDeleteFile(vectorPath);
     }
 
     private async Task PurgeSessionDataAsync(Guid sessionId, CancellationToken ct)

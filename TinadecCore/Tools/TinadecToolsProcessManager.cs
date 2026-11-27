@@ -287,18 +287,56 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
         {
             stopped = _processes.Values.ToList();
             _processes.Clear();
+            _writeLocks.Clear();
         }
+        if (stopped.Count == 0) return;
+
+        // Fail pending RPC calls and close every child's stdin simultaneously first so
+        // TinadecTools receives EOF immediately and runs McpRuntime.DisposeAsync() in parallel.
         foreach (var process in stopped)
         {
             process.FailPending("process_exit", "TinadecTools process was shut down by the host.");
             try
             {
-                if (!process.Process.WaitForExit(3000)) process.Process.Kill(entireProcessTree: true);
+                process.StandardInput.Close();
             }
-            catch (InvalidOperationException)
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        await Task.WhenAll(stopped.Select(StopProcessAsync)).ConfigureAwait(false);
+    }
+
+    private static async Task StopProcessAsync(ManagedProcess process)
+    {
+        try
+        {
+            if (!process.Process.HasExited)
             {
-                // Already exited.
+                using var graceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
+                try
+                {
+                    await process.Process.WaitForExitAsync(graceCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (!process.Process.HasExited)
+                    {
+                        process.Process.Kill(entireProcessTree: true);
+                    }
+                }
             }
+        }
+        catch (InvalidOperationException)
+        {
+            // Already exited.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Process exited concurrently with termination.
+        }
+        finally
+        {
             process.Dispose();
         }
     }
@@ -415,6 +453,7 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IToolExecu
             if (_processes.TryGetValue(process.Key, out var current) && ReferenceEquals(current, process))
             {
                 _processes.Remove(process.Key);
+                _writeLocks.Remove(process.Key);
             }
         }
 

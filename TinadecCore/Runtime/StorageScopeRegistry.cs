@@ -484,7 +484,11 @@ public sealed partial class StorageScopeRegistry : IStorageScopeRegistry, IWorks
             services.AddSingleton<ISessionScopeTransferService>(transfers);
         if (registration.FollowUserModels) services.AddSingleton<IConfigurationDocumentRedirects>(new FollowUserModelsRedirect(User));
         services.AddTinadecConfigurationFiles();
+#if DEBUG
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+#else
+        var provider = services.BuildServiceProvider();
+#endif
         var runtime = new Runtime(scope, provider, policy);
         try
         {

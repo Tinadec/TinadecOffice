@@ -67,15 +67,35 @@ public sealed class ScopeConfigurationDocuments(
                 return cached.Hash;
             }
             await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-            var hash = Convert.ToHexStringLower(digest);
+            var hash = await HashStreamNormalizedAsync(stream, fullPath, cancellationToken).ConfigureAwait(false);
             if (FileHashCache.Count >= 512) FileHashCache.Clear();
             FileHashCache[fullPath] = new CachedFileHash(length, mtimeTicks, hash);
             return hash;
         }
         await using var fallback = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var fallbackDigest = await SHA256.HashDataAsync(fallback, cancellationToken).ConfigureAwait(false);
-        return Convert.ToHexStringLower(fallbackDigest);
+        return await HashStreamNormalizedAsync(fallback, fullPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<string> HashStreamNormalizedAsync(FileStream stream, string fullPath, CancellationToken cancellationToken)
+    {
+        var prefixBytes = new byte[3];
+        var read = await stream.ReadAsync(prefixBytes.AsMemory(0, 3), cancellationToken).ConfigureAwait(false);
+        // File.ReadAllTextAsync strips UTF-8 BOM (EF BB BF). Match Hash(ReadAllTextAsync)
+        // so external editors saving TOML with UTF-8 BOM hit the fast stamp path too.
+        if (read == 3 && prefixBytes[0] == 0xEF && prefixBytes[1] == 0xBB && prefixBytes[2] == 0xBF)
+        {
+            var digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+            return Convert.ToHexStringLower(digest);
+        }
+        if (read >= 2 && ((prefixBytes[0] == 0xFF && prefixBytes[1] == 0xFE) || (prefixBytes[0] == 0xFE && prefixBytes[1] == 0xFF)))
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            var text = await File.ReadAllTextAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            return Hash(text);
+        }
+        stream.Position = 0;
+        var rawDigest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+        return Convert.ToHexStringLower(rawDigest);
     }
 
     private async Task<ScopeConfigurationDocument> ReadCoreAsync(string id, ScopeConfigurationDocument? applied, CancellationToken cancellationToken)

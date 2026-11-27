@@ -137,13 +137,17 @@ function probe(refreshHost = true, recoverUnavailableHost = false): Promise<bool
         const wasUnavailable = hostStatus.value.state === 'unavailable'
         let next = await readHostStatus(host)
         if (epoch !== generation) return false
-        // A newer main-process event outranks an older IPC read.
-        if (revision === hostRevision) applyHostStatus(next)
-        if (recoverUnavailableHost && wasUnavailable && hostStatus.value.state === 'unavailable') {
+        const shouldRecoverUnavailable =
+          recoverUnavailableHost && wasUnavailable && next.state === 'unavailable'
+        // Defer applying unavailable status when an immediate automatic recovery attempt follows,
+        // avoiding double-counting consecutiveHostUnavailable and premature timer scheduling.
+        if (shouldRecoverUnavailable) {
           const retryRevision = hostRevision
           next = await retryHostStatus(host)
           if (epoch !== generation) return false
           if (retryRevision === hostRevision) applyHostStatus(next)
+        } else if (revision === hostRevision) {
+          applyHostStatus(next)
         }
       }
       if (hostStatus.value.state !== 'ready') return false

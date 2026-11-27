@@ -196,7 +196,7 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
         headers,
         signal: connectionAbort.signal,
       })
-      if (stopped || connectionAbort.signal.aborted) { await response.body?.cancel(); return }
+      if (stopped || connectionAbort.signal.aborted) { await response.body?.cancel().catch(() => {}); return }
       if (!response.ok) {
         const text = await response.text().catch(() => '')
         throw new Error(text || i18n.global.t('home.stream.httpFailed', { status: response.status }))
@@ -208,12 +208,28 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
       error.value = null
       const decoder = new TextDecoder()
       let buffer = ''
+      let trailingCr = false
+      const appendNormalized = (chunk: string, final = false) => {
+        if (trailingCr) {
+          chunk = chunk.startsWith('\n') ? chunk.slice(1) : chunk
+          buffer += '\n'
+          trailingCr = false
+        }
+        if (!chunk) return
+        if (!final && chunk.endsWith('\r')) {
+          trailingCr = true
+          chunk = chunk.slice(0, -1)
+        }
+        if (chunk.indexOf('\r') !== -1) {
+          chunk = chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        }
+        buffer += chunk
+      }
       while (true) {
         const { done, value } = await reader.read()
-        if (stopped || connectionAbort.signal.aborted) { await reader.cancel(); return }
+        if (stopped || connectionAbort.signal.aborted) { await reader.cancel().catch(() => {}); return }
         if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        appendNormalized(decoder.decode(value, { stream: true }))
         let boundary: number
         while ((boundary = buffer.indexOf('\n\n')) !== -1) {
           const block = buffer.slice(0, boundary)
@@ -225,12 +241,12 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
             stopped = true
             activeStreams.delete(handle)
             status.value = 'closed'
-            await reader.cancel()
+            await reader.cancel().catch(() => {})
             return
           }
         }
       }
-      buffer += decoder.decode()
+      appendNormalized(decoder.decode(), true)
       const finalBlock = buffer.trim()
       if (finalBlock && !stopped) {
         const chunk = parseRunSseBlock(finalBlock, options.runId)

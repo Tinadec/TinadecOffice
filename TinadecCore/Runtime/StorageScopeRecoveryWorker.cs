@@ -6,10 +6,26 @@ using TinadecCore.Persistence;
 namespace TinadecCore.Runtime;
 
 /// <summary>Reopens registered service graphs after host startup without selecting a current project.</summary>
-public sealed class StorageScopeRecoveryWorker(IStorageScopeRegistry registry, ILogger<StorageScopeRecoveryWorker> logger) : BackgroundService
+public sealed class StorageScopeRecoveryWorker(
+    IStorageScopeRegistry registry,
+    ILogger<StorageScopeRecoveryWorker> logger,
+    IHostApplicationLifetime? lifetime = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Let Kestrel finish binding and serve initial health probes before mounting
+        // project scopes in parallel so startup doesn't contend on ThreadPool/SQLite.
+        if (lifetime is not null)
+        {
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var reg = lifetime.ApplicationStarted.Register(static state => ((TaskCompletionSource)state!).TrySetResult(), started);
+            using var cancelReg = stoppingToken.Register(static state => ((TaskCompletionSource)state!).TrySetCanceled(), started);
+            try { await started.Task.ConfigureAwait(false); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        }
+        try { await Task.Delay(200, stoppingToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+
         // Scopes mount independently and a first mount takes seconds (migrations, journal
         // reconciliation, recovery passes), so they are opened side by side instead of the
         // last registered project waiting for every one before it.

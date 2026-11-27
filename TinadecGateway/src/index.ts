@@ -3020,7 +3020,8 @@ const app = new Elysia()
    * the Gateway buffered first, the ceiling would only ever be hit after an unbounded
    * amount of data had already been accepted from the client.
    */
-  .post('/api/v1/sessions/:sessionId/attachments', async ({ params, query, request, set }) => {
+  .post('/api/v1/sessions/:sessionId/attachments', async ({ params, query, request, set, server }) => {
+    keepStreamOpen(server, request);
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
     const rawQuery = query as Record<string, unknown>;
@@ -3073,7 +3074,8 @@ const app = new Elysia()
     setStatus(set, result.status);
     return result.data;
   }, { detail: { summary: 'Read attachment metadata', tags: ['Attachments'], responses: { 200: externalJsonResponse('MessageAttachment', 'Attachment metadata.') } } })
-  .get('/api/v1/attachments/:attachmentId/content', async ({ params, set, request }) => {
+  .get('/api/v1/attachments/:attachmentId/content', async ({ params, set, request, server }) => {
+    keepStreamOpen(server, request);
     const headers = forwardHeaders(request);
     const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}/content`;
     const response = await proxyStream({
@@ -3098,7 +3100,8 @@ const app = new Elysia()
     setStatus(set, result.status);
     if (result.status >= 400) return result.data;
   }, { detail: { summary: 'Discard an attachment row', tags: ['Attachments'] } })
-  .get('/api/v1/sessions/:sessionId/logs', async ({ params, set, request }) => {
+  .get('/api/v1/sessions/:sessionId/logs', async ({ params, set, request, server }) => {
+    keepStreamOpen(server, request);
     const headers = forwardHeaders(request);
     const response = await proxyStream({
       target: 'core',
@@ -3112,7 +3115,8 @@ const app = new Elysia()
     set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
     return response.body;
   }, { detail: { summary: 'Session logs', tags: ['System'] } })
-  .get('/api/v1/sessions/:sessionId/logs/stream', async ({ params, set, request }) => {
+  .get('/api/v1/sessions/:sessionId/logs/stream', async ({ params, set, request, server }) => {
+    keepStreamOpen(server, request);
     const headers = forwardHeaders(request);
     const response = await proxyStream({
       target: 'core',

@@ -191,4 +191,36 @@ describe('createRunStream', () => {
     void errors
     expect(failing.status.value).toBe('closed')
   })
+
+  it('normalizes CRLF split across chunk boundaries and absorbs reader.cancel() rejections', async () => {
+    const seen: unknown[] = []
+    const payload = sseEvent(1, 'delta', { payload: { delta: 'hi' } }).replace(/\n/g, '\r\n')
+    const terminal = sseEvent(2, 'done').replace(/\n/g, '\r\n')
+    // Split right between '\r' and '\n' of the '\r\n\r\n' block delimiter
+    const crSplit = payload.lastIndexOf('\r\n')
+    const chunk1 = payload.slice(0, crSplit + 1)
+    const chunk2 = payload.slice(crSplit + 1) + terminal
+    const handle = createRunStream({
+      runId: 'run-1',
+      fetchImpl: (async () => {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(chunk1))
+            controller.enqueue(encoder.encode(chunk2))
+            controller.close()
+          },
+          cancel() {
+            return Promise.reject(new Error('stream already cancelled'))
+          },
+        })
+        return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+      }) as unknown as typeof fetch,
+      onChunk: (c) => seen.push(c),
+    })
+    handle.connect()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(seen.map((c) => (c as { seq: number }).seq)).toEqual([1, 2])
+    expect(handle.status.value).toBe('closed')
+  })
 })

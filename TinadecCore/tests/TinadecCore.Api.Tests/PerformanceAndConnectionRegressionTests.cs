@@ -492,6 +492,200 @@ public sealed class PerformanceAndConnectionRegressionTests : IAsyncLifetime
         Assert.Equal(Sha256Hex(v2), snap3.Documents["agents"]);
     }
 
+    [Fact]
+    public async Task ScopeConfigurationDocuments_Utf8BomMatchesNormalizedHashCache()
+    {
+        var scopeRoot = Path.Combine(_root, "bom-hash");
+        var cfgDir = Path.Combine(scopeRoot, "config");
+        var dataDir = Path.Combine(scopeRoot, "data");
+        Directory.CreateDirectory(cfgDir);
+        Directory.CreateDirectory(dataDir);
+        await File.WriteAllTextAsync(Path.Combine(cfgDir, "storage.toml"), "[storage]\nbackend = \"sqlite\"\n");
+        await File.WriteAllTextAsync(Path.Combine(cfgDir, "logging.toml"), "[logging]\nrotation_bytes = 4096\ntotal_bytes = 8192\n");
+
+        var content = "schema_version = 1\nversion = 1\n";
+        var bomBytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes(content)).ToArray();
+        var agentsPath = Path.Combine(cfgDir, "agents.toml");
+        await File.WriteAllBytesAsync(agentsPath, bomBytes);
+        File.SetLastWriteTimeUtc(agentsPath, DateTime.UtcNow.AddMinutes(-3));
+
+        var dbPath = Path.Combine(dataDir, "tinadec.db");
+        var tenant = new TenantContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "owner");
+        var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content)));
+        await using (var sp = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            await sp.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+            var coordinator = sp.GetRequiredService<IConfigurationProjectionCoordinator>();
+            var docs = sp.GetRequiredService<ScopeConfigurationDocuments>();
+
+            await coordinator.ReconcileAsync();
+            var doc = await docs.ReadAsync("agents");
+            Assert.Equal(expectedHash, doc.ContentHash);
+            Assert.Equal(expectedHash, await ReadProjectionStampAsync(dbPath, "agents"));
+            var snap = await coordinator.CompileAsync();
+            Assert.Equal(expectedHash, snap.Documents["agents"]);
+        }
+
+        // Write a brand-new row in TOML with UTF-8 BOM, reconcile once to record stamp, delete SQLite row directly,
+        // and verify cold restart hits the normalized BOM stream hash stamp and skips re-projecting SQLite.
+        var defId = Guid.NewGuid();
+        var bomWithAgent =
+            $"""
+            schema_version = 1
+            version = 1
+
+            [[agent_definitions]]
+            id = "{defId:D}"
+            tenant_id = "{tenant.TenantId:D}"
+            workspace_id = "{tenant.WorkspaceId:D}"
+            slug = "bom-agent"
+            display_name = "BOM Agent"
+            layer = "execution"
+            role = "worker"
+            status = "draft"
+            revision = 1
+            version = 1
+            created_at = "2026-01-01T00:00:00Z"
+            updated_at = "2026-01-01T00:00:00Z"
+            created_by_principal_id = "{tenant.PrincipalId:D}"
+            updated_by_principal_id = "{tenant.PrincipalId:D}"
+            """;
+        await File.WriteAllBytesAsync(agentsPath, new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes(bomWithAgent)).ToArray());
+        await using (var sp2 = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            await sp2.GetRequiredService<IConfigurationProjectionCoordinator>().ReconcileAsync();
+        }
+        await using (var conn = new SqliteConnection($"Data Source={dbPath};Pooling=False"))
+        {
+            await conn.OpenAsync();
+            await using var del = conn.CreateCommand();
+            del.CommandText = "DELETE FROM agent_definitions WHERE upper(id) = upper(@id);";
+            del.Parameters.AddWithValue("@id", defId.ToString("D"));
+            Assert.Equal(1, await del.ExecuteNonQueryAsync());
+        }
+        await using (var sp3 = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            await sp3.GetRequiredService<IConfigurationProjectionCoordinator>().ReconcileAsync();
+            await using var db3 = await sp3.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+            Assert.Null(await db3.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == defId));
+        }
+    }
+
+    [Fact]
+    public async Task TinadecDatabaseConfigurer_PoolingEnabledAndDisposingReleasesWindowsFileLock()
+    {
+        var scopeRoot = Path.Combine(_root, "pooling-lock-release");
+        var dataDir = Path.Combine(scopeRoot, "data");
+        Directory.CreateDirectory(Path.Combine(scopeRoot, "config"));
+        Directory.CreateDirectory(dataDir);
+        var dbPath = Path.Combine(dataDir, "tinadec.db");
+        var tenant = new TenantContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "owner");
+
+        using (var sp = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            var connInfo = sp.GetRequiredService<IDatabaseConnectionInfo>();
+            var csb = new SqliteConnectionStringBuilder(connInfo.ConnectionString);
+            Assert.True(csb.Pooling);
+
+            await sp.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+            var factory = sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>();
+            await using var db = await factory.CreateDbContextAsync();
+            _ = await db.AgentDefinitions.CountAsync();
+        }
+
+        // Disposing ServiceProvider disposes TinadecDatabaseConfigurer, which calls ClearPool
+        // so the SQLite directory can be removed immediately without waiting for GC.
+        Directory.Delete(scopeRoot, recursive: true);
+        Assert.False(Directory.Exists(scopeRoot));
+    }
+
+    [Fact]
+    public async Task StorageMigrationRunner_BatchSessionReusesSchemaSnapshotAndStillRepairsColumns()
+    {
+        var scopeRoot = Path.Combine(_root, "batch-migration-repair");
+        var dataDir = Path.Combine(scopeRoot, "data");
+        Directory.CreateDirectory(Path.Combine(scopeRoot, "config"));
+        Directory.CreateDirectory(dataDir);
+        await File.WriteAllTextAsync(Path.Combine(scopeRoot, "config", "storage.toml"), "[storage]\nbackend = \"sqlite\"\n");
+        await File.WriteAllTextAsync(Path.Combine(scopeRoot, "config", "logging.toml"), "[logging]\nrotation_bytes = 4096\ntotal_bytes = 8192\n");
+        var dbPath = Path.Combine(dataDir, "tinadec.db");
+        var tenant = new TenantContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "owner");
+
+        await using (var sp1 = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            await sp1.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+            // Simulate a legacy table missing a nullable column.
+            await using var conn = new SqliteConnection($"Data Source={dbPath};Pooling=False");
+            await conn.OpenAsync();
+            await using var drop = conn.CreateCommand();
+            drop.CommandText = "ALTER TABLE agent_definitions DROP COLUMN i18n_json;";
+            await drop.ExecuteNonQueryAsync();
+        }
+
+        // Re-running StorageMigrationRunner under batch session must still detect and add back i18n_json.
+        await using (var sp2 = BuildProjectionProvider(scopeRoot, dbPath, tenant))
+        {
+            await sp2.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+            await using var conn = new SqliteConnection($"Data Source={dbPath};Pooling=False");
+            await conn.OpenAsync();
+            await using var check = conn.CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('agent_definitions') WHERE name = 'i18n_json';";
+            Assert.Equal(1L, Convert.ToInt64(await check.ExecuteScalarAsync()));
+        }
+    }
+
+    [Fact]
+    public async Task TinadecToolsProcessManager_ShutdownClosesStdinAndExitsBeforeKillTimeout()
+    {
+        var exePath = Path.Combine(
+            AppContext.BaseDirectory,
+            OperatingSystem.IsWindows() ? "TinadecTools.exe" : "TinadecTools");
+        if (!File.Exists(exePath)) return;
+
+        var ws = Path.Combine(_root, "tools-fast-shutdown-ws");
+        Directory.CreateDirectory(ws);
+        var cfg = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TinadecTools:ExecutablePath"] = exePath,
+                ["TinadecTools:StartupTimeoutSeconds"] = "30",
+                ["TinadecTools:DefaultTimeoutSeconds"] = "30",
+                ["TinadecStorage:UserRoot"] = Path.Combine(_root, "tools-fast-shutdown-user")
+            })
+            .Build();
+        var manager = new TinadecCore.Tools.TinadecToolsProcessManager(
+            cfg,
+            NullLogger<TinadecCore.Tools.TinadecToolsProcessManager>.Instance);
+
+        var execCtx = new TinadecCore.Contracts.Dtos.ToolExecutionContextDto
+        {
+            StorageId = "shutdown-test",
+            StorageRoot = Path.Combine(_root, "tools-fast-shutdown-storage"),
+            ProjectRoot = ws,
+            RunId = "shutdown-run",
+            WorkingDirectory = ws,
+            PrimaryRootId = "primary",
+            Settings = JsonDocument.Parse("{}").RootElement.Clone(),
+            AllowedToolIds = ["ls"],
+            WorkspaceRoots = [new TinadecCore.Contracts.Dtos.ToolWorkspaceRootDto { Id = "primary", Path = ws }]
+        };
+        var response = await manager.CallAsync(ws, new TinadecCore.Contracts.Dtos.ToolWireRequestDto
+        {
+            ToolId = "ls",
+            SessionId = "shutdown-test",
+            Approved = true,
+            Params = JsonDocument.Parse("{\"path\":\".\",\"limit\":10}").RootElement.Clone(),
+            ExecutionContext = execCtx
+        });
+        Assert.True(response.IsSuccess, response.Error);
+
+        // Before fixing ShutdownAsync (closing StandardInput), every child hung for the full 3000ms timeout before Kill().
+        var sw = Stopwatch.StartNew();
+        await manager.ShutdownAsync();
+        sw.Stop();
+        Assert.True(sw.ElapsedMilliseconds < 2200, $"Expected fast graceful EOF shutdown (< 2200ms), took {sw.ElapsedMilliseconds}ms.");
+    }
+
     private static async Task<long> ReadScalarLongAsync(SqliteConnection connection, string sql)
     {
         await using var cmd = connection.CreateCommand();

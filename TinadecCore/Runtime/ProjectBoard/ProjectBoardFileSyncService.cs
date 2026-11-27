@@ -44,9 +44,11 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
     private readonly ILogger<ProjectBoardFileSyncService>? _logger;
 
     private readonly ConcurrentDictionary<Guid, ProjectWatcherRegistration> _watchers = new();
+    private readonly ConcurrentDictionary<Task, byte> _inFlightDebounces = new();
     private readonly object _startupGate = new();
     private CancellationTokenSource? _startupCts;
     private Task? _startupTask;
+    private volatile bool _stopping;
     private volatile bool _disposed;
 
     private sealed class ProjectWatcherRegistration : IDisposable
@@ -181,6 +183,8 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _stopping = true;
+        DisposeAllWatchers();
         Task? startupTask;
         lock (_startupGate)
         {
@@ -198,11 +202,23 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             }
         }
         DisposeAllWatchers();
+        var debounces = _inFlightDebounces.Keys.ToArray();
+        if (debounces.Length > 0)
+        {
+            try
+            {
+                await Task.WhenAll(debounces).WaitAsync(TimeSpan.FromMilliseconds(1500), cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+        }
     }
 
     public void Dispose()
     {
         if (_disposed) return;
+        _stopping = true;
         _disposed = true;
         lock (_startupGate)
         {
@@ -1429,7 +1445,7 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
     private void EnsureWatcher(Guid projectId, string boardTasksDir, string notesFilePath)
     {
-        if (_disposed || !Directory.Exists(boardTasksDir))
+        if (_stopping || _disposed || !Directory.Exists(boardTasksDir))
             return;
 
         var notesDir = Path.GetDirectoryName(notesFilePath) ?? boardTasksDir;
@@ -1499,6 +1515,8 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
             if (!_watchers.TryAdd(projectId, reg))
                 reg.Dispose();
+            else if ((_stopping || _disposed) && _watchers.TryRemove(projectId, out var lateReg))
+                lateReg.Dispose();
         }
         catch (Exception ex) when (ex is IOException or ArgumentException or PlatformNotSupportedException)
         {
@@ -1508,12 +1526,12 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
 
     private void ScheduleDebouncedSync(ProjectWatcherRegistration reg)
     {
-        if (_disposed) return;
+        if (_stopping || _disposed) return;
 
         CancellationTokenSource cts;
         lock (reg.DebounceLock)
         {
-            if (_disposed) return;
+            if (_stopping || _disposed) return;
             reg.DebounceCts?.Cancel();
             reg.DebounceCts?.Dispose();
             cts = new CancellationTokenSource();
@@ -1521,12 +1539,13 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
         }
 
         var token = cts.Token;
-        _ = Task.Run(async () =>
+        Task? taskRef = null;
+        taskRef = Task.Run(async () =>
         {
             try
             {
                 await Task.Delay(WatcherDebounce, token).ConfigureAwait(false);
-                if (_disposed || token.IsCancellationRequested) return;
+                if (_stopping || _disposed || token.IsCancellationRequested) return;
                 await SyncProjectAsync(reg.ProjectId, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -1536,7 +1555,13 @@ public sealed class ProjectBoardFileSyncService : IHostedService, IProjectBoardS
             {
                 _logger?.LogDebug(ex, "Debounced FileSystemWatcher sync failed for project {ProjectId}.", reg.ProjectId);
             }
+            finally
+            {
+                if (taskRef is not null) _inFlightDebounces.TryRemove(taskRef, out _);
+            }
         }, CancellationToken.None);
+        _inFlightDebounces[taskRef] = 1;
+        if (taskRef.IsCompleted) _inFlightDebounces.TryRemove(taskRef, out _);
     }
 
     private void StopWatcher(Guid projectId)

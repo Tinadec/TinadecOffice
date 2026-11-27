@@ -75,15 +75,22 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 Merge(batch.ModeVersions, global.ModeVersions),
                 Merge(batch.Definitions, global.Definitions));
         }
-        var previews = new List<ModelResolutionPreviewDto>(requests.Count);
-        foreach (var request in requests)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try { previews.Add(await PreviewCoreAsync(request, batch, cancellationToken).ConfigureAwait(false)); }
-            catch (Exception error) when (error is ArgumentException or InvalidDataException or KeyNotFoundException)
-            { previews.Add(ModelPreviewFailure.Unavailable(error.Message)); }
+            var previews = new List<ModelResolutionPreviewDto>(requests.Count);
+            foreach (var request in requests)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try { previews.Add(await PreviewCoreAsync(request, batch, cancellationToken).ConfigureAwait(false)); }
+                catch (Exception error) when (error is ArgumentException or InvalidDataException or KeyNotFoundException)
+                { previews.Add(ModelPreviewFailure.Unavailable(error.Message)); }
+            }
+            return previews;
         }
-        return previews;
+        finally
+        {
+            batch.Dispose();
+        }
     }
 
     // This cache lives only for one read. It never survives a scope switch,
@@ -92,12 +99,67 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         IReadOnlyDictionary<Guid, AgentRuntimeBindingRecord> Bindings,
         IReadOnlyDictionary<Guid, AgentVersionRecord> AgentVersions,
         IReadOnlyDictionary<Guid, ModeVersionRecord> ModeVersions,
-        IReadOnlyDictionary<Guid, AgentDefinitionRecord> Definitions)
+        IReadOnlyDictionary<Guid, AgentDefinitionRecord> Definitions) : IDisposable
     {
         public Dictionary<string, Task<FrozenModelPlan>> Plans { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, Task<IReadOnlyList<ChatResolution>>> Resolutions { get; } = new(StringComparer.Ordinal);
         public Dictionary<Guid, IReadOnlyDictionary<string, ModelStrategyDto?>> ParsedModeNodeStrategies { get; } = new();
         public Dictionary<Guid, ModelStrategyDto> ParsedAgentStrategies { get; } = new();
+        public Task<ModelCatalogSnapshot>? ModelsTask { get; set; }
+        public Dictionary<Guid, JsonDocument?> ProviderDocuments { get; } = new();
+        public Dictionary<string, string?> Secrets { get; } = new(StringComparer.Ordinal);
+        public Task<SanitizedModelCatalogDto>? SanitizedCatalogTask { get; set; }
+        public Dictionary<Guid, ModelProviderRecord> ExtraProviders { get; } = new();
+        public Dictionary<Guid, ModelProviderVersionRecord> ExtraProviderVersions { get; } = new();
+
+        public void Dispose()
+        {
+            foreach (var doc in ProviderDocuments.Values) doc?.Dispose();
+            ProviderDocuments.Clear();
+        }
+    }
+
+    private sealed record ModelCatalogSnapshot(
+        Dictionary<string, ModelRouteRecord> RoutesByPurpose,
+        Dictionary<Guid, ModelRouteVersionRecord> RouteVersionsById,
+        ILookup<Guid, ModelRouteCandidateRecord> RouteCandidatesByVersionId,
+        Dictionary<Guid, ModelProviderRecord> ProvidersById,
+        Dictionary<Guid, ModelProviderVersionRecord> ProviderVersionsById);
+
+    private async Task<ModelCatalogSnapshot> GetModelCatalogAsync(PreviewBatch batch, CancellationToken ct)
+    {
+        if (batch.ModelsTask is not null) return await batch.ModelsTask.ConfigureAwait(false);
+        var scope = _tenant.Current;
+        batch.ModelsTask = LoadModelCatalogAsync(scope, ct);
+        return await batch.ModelsTask.ConfigureAwait(false);
+    }
+
+    private async Task<ModelCatalogSnapshot> LoadModelCatalogAsync(TenantContext scope, CancellationToken ct)
+    {
+        await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var routes = await db.Routes.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.DeletedAt == null)
+            .ToListAsync(ct).ConfigureAwait(false);
+        var routeVersionIds = routes.Select(r => r.CurrentVersionId).Distinct().ToArray();
+        var routeVersions = routeVersionIds.Length == 0
+            ? new Dictionary<Guid, ModelRouteVersionRecord>()
+            : await db.RouteVersions.AsNoTracking().Where(x => routeVersionIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct).ConfigureAwait(false);
+        var candidates = routeVersionIds.Length == 0
+            ? new List<ModelRouteCandidateRecord>()
+            : await db.RouteCandidates.AsNoTracking().Where(x => routeVersionIds.Contains(x.RouteVersionId)).OrderBy(x => x.Position).ToListAsync(ct).ConfigureAwait(false);
+        var providers = await db.Providers.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId))
+            .ToDictionaryAsync(x => x.Id, ct).ConfigureAwait(false);
+        var versionIds = providers.Values.Select(p => p.CurrentVersionId).Distinct().ToArray();
+        var providerVersions = versionIds.Length == 0
+            ? new Dictionary<Guid, ModelProviderVersionRecord>()
+            : await db.ProviderVersions.AsNoTracking().Where(x => versionIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct).ConfigureAwait(false);
+        return new ModelCatalogSnapshot(
+            routes.GroupBy(r => r.Purpose, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal),
+            routeVersions,
+            candidates.ToLookup(c => c.RouteVersionId),
+            providers,
+            providerVersions);
     }
 
     private static async Task<PreviewBatch> LoadBatchAsync(
@@ -259,15 +321,15 @@ internal sealed class AgentModelResolver : IAgentModelResolver
 
         var planKey = JsonSerializer.Serialize(new { selected, source, parent = request.ParentInstanceId is not null });
         Task<FrozenModelPlan> planRead;
-        if (batch is null) planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, cancellationToken);
+        if (batch is null) planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, null, cancellationToken);
         else if (!batch.Plans.TryGetValue(planKey, out planRead!))
-            batch.Plans[planKey] = planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, cancellationToken);
+            batch.Plans[planKey] = planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, batch, cancellationToken);
         var plan = await planRead.ConfigureAwait(false);
         var resolutionKey = JsonSerializer.Serialize(new { plan, request.ParentInstanceId });
         Task<IReadOnlyList<ChatResolution>> resolutionRead;
-        if (batch is null) resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, cancellationToken);
+        if (batch is null) resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, null, cancellationToken);
         else if (!batch.Resolutions.TryGetValue(resolutionKey, out resolutionRead!))
-            batch.Resolutions[resolutionKey] = resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, cancellationToken);
+            batch.Resolutions[resolutionKey] = resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, batch, cancellationToken);
         var resolutions = await resolutionRead.ConfigureAwait(false);
         var candidates = resolutions.Select(ToPreview).ToArray();
         return new ModelResolutionPreviewDto
@@ -296,6 +358,12 @@ internal sealed class AgentModelResolver : IAgentModelResolver
 
     public async Task<FrozenModelPlan> FreezeAsync(AgentModelFreezeRequest request, CancellationToken cancellationToken = default)
     {
+        var proxyBinding = TryResolveWorkerProxyBinding(request.SessionId);
+        if (proxyBinding is { UseProviderProxy: true })
+        {
+            return BuildPeerProxyFrozenPlan(request.SessionId, proxyBinding.ModelHint, "peer_provider_proxy");
+        }
+
         var strategy = ModelStrategyJson.Parse(request.StrategyJson);
         var source = request.StrategySource;
         if (request.IsConversationRoot)
@@ -325,7 +393,70 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 }
             }
         }
-        return await FreezeStrategyAsync(strategy, source, !request.IsConversationRoot && strategy.Kind == ModelStrategyKinds.Inherit, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var frozen = await FreezeStrategyAsync(strategy, source, !request.IsConversationRoot && strategy.Kind == ModelStrategyKinds.Inherit, null, cancellationToken).ConfigureAwait(false);
+            return proxyBinding is not null
+                ? AppendPeerProxyFallback(frozen, request.SessionId, proxyBinding.ModelHint)
+                : frozen;
+        }
+        catch (InvalidDataException) when (proxyBinding is not null)
+        {
+            return BuildPeerProxyFrozenPlan(request.SessionId, proxyBinding.ModelHint, "peer_provider_proxy_fallback");
+        }
+    }
+
+    private PeerProviderProxySessionBinding? TryResolveWorkerProxyBinding(Guid sessionId)
+    {
+        if (sessionId != Guid.Empty && PeerProviderProxyRuntimeRegistry.TryGetBySession(sessionId) is { } direct)
+        {
+            return direct;
+        }
+
+        var hostKey = PeerProviderProxyHostRegistry.ResolveHostPartitionKey(_secrets);
+        var hostEntry = PeerProviderProxyHostRegistry.TryGetWorkerSession(sessionId, hostKey);
+        if (hostEntry is null) return null;
+
+        return new PeerProviderProxySessionBinding(
+            SessionId: sessionId == Guid.Empty ? hostEntry.SessionId.ToString() : sessionId.ToString(),
+            RunId: hostEntry.RunId?.ToString(),
+            DelegationId: hostEntry.DelegationId,
+            ControllerDeviceId: hostEntry.ControllerDeviceId,
+            ProxySessionToken: hostEntry.ProxySessionToken,
+            UseProviderProxy: hostEntry.ForceProviderProxy,
+            ExpiresAtMs: hostEntry.ExpiresAtMs,
+            GatewayLoopbackUrl: hostEntry.GatewayLoopbackUrl,
+            ModelHint: hostEntry.ModelHint);
+    }
+
+    private static FrozenModelPlan BuildPeerProxyFrozenPlan(Guid sessionId, string? modelHint, string source) =>
+        new(
+            ModelStrategyKinds.Fixed,
+            source,
+            [
+                new FrozenModelCandidate(
+                    0,
+                    sessionId,
+                    Guid.Empty,
+                    string.IsNullOrWhiteSpace(modelHint) ? ChatProtocols.PeerProxy : modelHint.Trim(),
+                    ChatProtocols.PeerProxy)
+            ]);
+
+    private static FrozenModelPlan AppendPeerProxyFallback(FrozenModelPlan plan, Guid sessionId, string? modelHint)
+    {
+        if (plan.Candidates.Any(c => ChatProtocols.Normalize(c.Protocol) == ChatProtocols.PeerProxy))
+            return plan;
+
+        var extended = new List<FrozenModelCandidate>(plan.Candidates.Count + 1);
+        extended.AddRange(plan.Candidates);
+        extended.Add(new FrozenModelCandidate(
+            extended.Count,
+            sessionId,
+            Guid.Empty,
+            string.IsNullOrWhiteSpace(modelHint) ? ChatProtocols.PeerProxy : modelHint.Trim(),
+            ChatProtocols.PeerProxy));
+        return plan with { Candidates = extended };
     }
 
     /// <summary>The provider exists in the current scope, is not deleted and is enabled.</summary>
@@ -337,12 +468,15 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId) && x.DeletedAt == null && x.Enabled, ct).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default) =>
+        ResolveInvocationCandidatesAsync(plan, parentInstanceId, null, cancellationToken);
+
+    private async Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, PreviewBatch? batch, CancellationToken cancellationToken)
     {
         // Resolve first, filter second: the health breaker removes candidates from a chain the frozen plan
         // already authorized, and never adds one. See ApplyModelHealthAsync for why the all-cooling case
         // reports a category instead of substituting a model.
-        var chain = await ResolveChainAsync(plan, parentInstanceId, new HashSet<Guid>(), cancellationToken).ConfigureAwait(false);
+        var chain = await ResolveChainAsync(plan, parentInstanceId, new HashSet<Guid>(), batch, cancellationToken).ConfigureAwait(false);
         return await ApplyModelHealthAsync(chain, cancellationToken).ConfigureAwait(false);
     }
 
@@ -364,6 +498,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         FrozenModelPlan plan,
         Guid? parentInstanceId,
         HashSet<Guid> visitedParents,
+        PreviewBatch? batch,
         CancellationToken cancellationToken)
     {
         if (plan.InheritFromParent && parentInstanceId is { } parentId)
@@ -384,7 +519,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             if (actual is not null)
             {
                 var inherited = new FrozenModelCandidate(actual.FallbackPosition, actual.ProviderInstanceId, actual.ProviderVersionId, actual.Model, actual.Protocol, actual.RouteId, actual.RouteVersionId);
-                return [await BuildResolutionAsync(inherited, "parent_actual", cancellationToken).ConfigureAwait(false)];
+                return [await BuildResolutionAsync(inherited, "parent_actual", batch, cancellationToken).ConfigureAwait(false)];
             }
 
             await using var instances = await _instances.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -400,13 +535,13 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 ?? throw new InvalidDataException($"Parent Agent version '{parent.AgentVersionId}' is absent from the frozen run configuration.");
             var parentPlan = parentDefinition.ModelPlan
                 ?? throw new InvalidDataException($"Parent Agent '{parentDefinition.Id}' has no frozen model plan.");
-            var inheritedCandidates = await ResolveChainAsync(parentPlan, parent.ParentInstanceId, visitedParents, cancellationToken).ConfigureAwait(false);
+            var inheritedCandidates = await ResolveChainAsync(parentPlan, parent.ParentInstanceId, visitedParents, batch, cancellationToken).ConfigureAwait(false);
             return inheritedCandidates.Select(item => WithSource(item, "parent_frozen_plan")).ToArray();
         }
 
         var result = new List<ChatResolution>(plan.Candidates.Count);
         foreach (var candidate in plan.Candidates)
-            result.Add(await BuildResolutionAsync(candidate, plan.StrategySource, cancellationToken).ConfigureAwait(false));
+            result.Add(await BuildResolutionAsync(candidate, plan.StrategySource, batch, cancellationToken).ConfigureAwait(false));
         return result;
     }
 
@@ -462,29 +597,42 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         }
     }
 
-    private async Task<FrozenModelPlan> FreezeStrategyAsync(ModelStrategyDto strategy, string source, bool inheritFromParent, CancellationToken ct)
+    private async Task<FrozenModelPlan> FreezeStrategyAsync(ModelStrategyDto strategy, string source, bool inheritFromParent, PreviewBatch? batch, CancellationToken ct)
     {
         if (strategy.Kind == ModelStrategyKinds.Inherit)
         {
-            var routePlan = await FreezeRouteAsync("chat", ct).ConfigureAwait(false);
+            var routePlan = await FreezeRouteAsync("chat", batch, ct).ConfigureAwait(false);
             return routePlan with { StrategyKind = ModelStrategyKinds.Inherit, StrategySource = source, InheritFromParent = inheritFromParent };
         }
         if (strategy.Kind == ModelStrategyKinds.Route)
         {
-            var route = await FreezeRouteAsync(strategy.RoutePurpose!, ct).ConfigureAwait(false);
+            var route = await FreezeRouteAsync(strategy.RoutePurpose!, batch, ct).ConfigureAwait(false);
             return route with { StrategySource = source };
         }
         if (strategy.Kind == ModelStrategyKinds.Fixed && strategy.ProviderInstanceId is { } providerId)
         {
             var scope = _tenant.Current;
-            await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
-            var provider = await db.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == providerId
-                && x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId)
-                && x.DeletedAt == null, ct).ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Provider '{providerId}' was not found.");
-            var providerVersion = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == provider.CurrentVersionId, ct).ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Provider '{providerId}' has no current version.");
-            var protocol = await ReadProtocolAsync(provider, providerVersion, ct).ConfigureAwait(false);
+            ModelProviderRecord? provider;
+            ModelProviderVersionRecord? providerVersion;
+            if (batch is not null)
+            {
+                var catalog = await GetModelCatalogAsync(batch, ct).ConfigureAwait(false);
+                if (!catalog.ProvidersById.TryGetValue(providerId, out provider) || provider.DeletedAt is not null)
+                    throw new InvalidDataException($"Provider '{providerId}' was not found.");
+                if (!catalog.ProviderVersionsById.TryGetValue(provider.CurrentVersionId, out providerVersion))
+                    throw new InvalidDataException($"Provider '{providerId}' has no current version.");
+            }
+            else
+            {
+                await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+                provider = await db.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == providerId
+                    && x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId)
+                    && x.DeletedAt == null, ct).ConfigureAwait(false)
+                    ?? throw new InvalidDataException($"Provider '{providerId}' was not found.");
+                providerVersion = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == provider.CurrentVersionId, ct).ConfigureAwait(false)
+                    ?? throw new InvalidDataException($"Provider '{providerId}' has no current version.");
+            }
+            var protocol = await ReadProtocolAsync(provider, providerVersion, batch, ct).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(strategy.Model) && !ChatProtocols.IsModelChosenByHarness(protocol))
                 throw new InvalidDataException($"fixed model strategy requires model unless the harness chooses it (protocol '{protocol}').");
             return new FrozenModelPlan(ModelStrategyKinds.Fixed, source,
@@ -492,27 +640,40 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         }
         if (strategy.Kind == ModelStrategyKinds.Auto)
         {
-            return await FreezeAutoAsync(strategy, source, ct).ConfigureAwait(false);
+            return await FreezeAutoAsync(strategy, source, batch, ct).ConfigureAwait(false);
         }
         throw new InvalidDataException("Unsupported model strategy.");
     }
 
-    private async Task<FrozenModelPlan> FreezeAutoAsync(ModelStrategyDto strategy, string source, CancellationToken ct)
+    private async Task<FrozenModelPlan> FreezeAutoAsync(ModelStrategyDto strategy, string source, PreviewBatch? batch, CancellationToken ct)
     {
         if (_catalog is null)
             throw new InvalidDataException("Auto model strategy requires IModelProfileCatalogService.");
 
-        var catalog = await _catalog.GetSanitizedCatalogAsync(includeDisabled: false, ct).ConfigureAwait(false);
+        var catalog = batch is not null
+            ? await (batch.SanitizedCatalogTask ??= _catalog.GetSanitizedCatalogAsync(includeDisabled: false, ct)).ConfigureAwait(false)
+            : await _catalog.GetSanitizedCatalogAsync(includeDisabled: false, ct).ConfigureAwait(false);
         if (catalog.Providers.Count == 0)
             throw new InvalidDataException("No enabled model provider is configured for auto model_strategy.");
 
         var scope = _tenant.Current;
-        await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var providerVersionById = await db.Providers.AsNoTracking()
-            .Where(x => x.TenantId == scope.TenantId
-                && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId)
-                && x.DeletedAt == null && x.Enabled)
-            .ToDictionaryAsync(x => x.Id, x => x.CurrentVersionId, ct).ConfigureAwait(false);
+        Dictionary<Guid, Guid> providerVersionById;
+        if (batch is not null)
+        {
+            var modelCatalog = await GetModelCatalogAsync(batch, ct).ConfigureAwait(false);
+            providerVersionById = modelCatalog.ProvidersById.Values
+                .Where(x => x.DeletedAt == null && x.Enabled)
+                .ToDictionary(x => x.Id, x => x.CurrentVersionId);
+        }
+        else
+        {
+            await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+            providerVersionById = await db.Providers.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId
+                    && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId)
+                    && x.DeletedAt == null && x.Enabled)
+                .ToDictionaryAsync(x => x.Id, x => x.CurrentVersionId, ct).ConfigureAwait(false);
+        }
 
         var providerById = catalog.Providers.ToDictionary(p => p.Id);
         var coolingSet = catalog.Health
@@ -705,8 +866,29 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         _ => null
     };
 
-    private async Task<FrozenModelPlan> FreezeRouteAsync(string purpose, CancellationToken ct)
+    private async Task<FrozenModelPlan> FreezeRouteAsync(string purpose, PreviewBatch? batch, CancellationToken ct)
     {
+        if (batch is not null)
+        {
+            var catalog = await GetModelCatalogAsync(batch, ct).ConfigureAwait(false);
+            if (!catalog.RoutesByPurpose.TryGetValue(purpose, out var cachedRoute))
+                throw new InvalidDataException($"Model route '{purpose}' is not configured.");
+            if (!catalog.RouteVersionsById.TryGetValue(cachedRoute.CurrentVersionId, out var cachedVersion))
+                throw new InvalidDataException($"Model route '{purpose}' has no current version.");
+            var cachedRows = catalog.RouteCandidatesByVersionId[cachedVersion.Id].OrderBy(x => x.Position).ToList();
+            if (cachedRows.Count == 0) throw new InvalidDataException($"Model route '{purpose}' has no candidates.");
+            var cachedCandidates = new List<FrozenModelCandidate>(cachedRows.Count);
+            foreach (var row in cachedRows)
+            {
+                if (!catalog.ProvidersById.TryGetValue(row.ProviderInstanceId, out var prov))
+                    throw new InvalidDataException($"Route '{purpose}' references missing provider '{row.ProviderInstanceId}'.");
+                if (!catalog.ProviderVersionsById.TryGetValue(prov.CurrentVersionId, out var provVersion))
+                    throw new InvalidDataException($"Provider '{prov.Id}' has no current version.");
+                cachedCandidates.Add(new FrozenModelCandidate(row.Position, prov.Id, provVersion.Id, row.Model, await ReadProtocolAsync(prov, provVersion, batch, ct).ConfigureAwait(false), cachedRoute.Id, cachedVersion.Id));
+            }
+            return new FrozenModelPlan(ModelStrategyKinds.Route, "route", cachedCandidates);
+        }
+
         var scope = _tenant.Current;
         await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
         var route = await db.Routes.AsNoTracking().SingleOrDefaultAsync(x => x.Purpose == purpose && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.DeletedAt == null, ct).ConfigureAwait(false)
@@ -723,72 +905,178 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 ?? throw new InvalidDataException($"Route '{purpose}' references missing provider '{row.ProviderInstanceId}'.");
             var providerVersion = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == provider.CurrentVersionId, ct).ConfigureAwait(false)
                 ?? throw new InvalidDataException($"Provider '{provider.Id}' has no current version.");
-            candidates.Add(new FrozenModelCandidate(row.Position, provider.Id, providerVersion.Id, row.Model, await ReadProtocolAsync(provider, providerVersion, ct).ConfigureAwait(false), route.Id, version.Id));
+            candidates.Add(new FrozenModelCandidate(row.Position, provider.Id, providerVersion.Id, row.Model, await ReadProtocolAsync(provider, providerVersion, null, ct).ConfigureAwait(false), route.Id, version.Id));
         }
         return new FrozenModelPlan(ModelStrategyKinds.Route, "route", candidates);
     }
 
-    private async Task<ChatResolution> BuildResolutionAsync(FrozenModelCandidate candidate, string source, CancellationToken ct)
+    private async Task<ChatResolution> BuildResolutionAsync(FrozenModelCandidate candidate, string source, PreviewBatch? batch, CancellationToken ct)
     {
+        if (ChatProtocols.Normalize(candidate.Protocol) == ChatProtocols.PeerProxy)
+        {
+            var binding = TryResolveWorkerProxyBinding(candidate.ProviderInstanceId);
+            if (binding is null
+                || string.IsNullOrWhiteSpace(binding.ControllerDeviceId)
+                || string.IsNullOrWhiteSpace(binding.ProxySessionToken))
+            {
+                return Unavailable(candidate, source, PeerErrorCodes.PolicyDenied, "Peer provider proxy context is missing, expired, or revoked.");
+            }
+
+            var hostKey = PeerProviderProxyHostRegistry.ResolveHostPartitionKey(_secrets);
+            var proxyModel = !string.IsNullOrWhiteSpace(candidate.Model)
+                ? candidate.Model!.Trim()
+                : !string.IsNullOrWhiteSpace(binding.ModelHint)
+                    ? binding.ModelHint!.Trim()
+                    : ChatProtocols.PeerProxy;
+            var gatewayUrl = PeerProxyModelProvider.ResolveEnvironmentGatewayUrl(
+                binding.GatewayLoopbackUrl ?? PeerProviderProxyHostRegistry.GetHostGatewayLoopbackUrl(hostKey));
+
+            // Security invariant: ApiKey is strictly null; controller credentials NEVER enter worker resolution, memory, SQLite, or SecretStore.
+            return new ChatResolution
+            {
+                IsAvailable = true,
+                BaseUrl = gatewayUrl,
+                ApiKey = null,
+                Model = proxyModel,
+                ModelId = $"peer/{proxyModel}",
+                Protocol = ChatProtocols.PeerProxy,
+                ProxyControllerDeviceId = binding.ControllerDeviceId.Trim(),
+                ProxySessionToken = binding.ProxySessionToken.Trim(),
+                ProviderInstanceId = candidate.ProviderInstanceId,
+                ProviderVersionId = Guid.Empty,
+                RouteId = candidate.RouteId,
+                RouteVersionId = candidate.RouteVersionId,
+                CandidatePosition = candidate.Position,
+                StrategySource = source,
+                RuntimeBadge = FormatRuntimeBadge(ChatProtocols.PeerProxy, binding.ControllerDeviceId, proxyModel)
+            };
+        }
+
         var scope = _tenant.Current;
-        await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var provider = await db.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderInstanceId
-            && x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId), ct).ConfigureAwait(false);
-        if (provider is null || provider.DeletedAt is not null || !provider.Enabled)
-            return Unavailable(candidate, source, "provider_disabled", "Provider is missing, deleted, or disabled.");
-        var version = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderVersionId && x.ProviderId == provider.Id, ct).ConfigureAwait(false);
+        ModelProviderRecord? provider = null;
+        ModelProviderVersionRecord? version = null;
+        if (batch is not null)
+        {
+            var catalog = await GetModelCatalogAsync(batch, ct).ConfigureAwait(false);
+            catalog.ProvidersById.TryGetValue(candidate.ProviderInstanceId, out provider);
+            if (provider is null)
+            {
+                if (!batch.ExtraProviders.TryGetValue(candidate.ProviderInstanceId, out provider))
+                {
+                    await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+                    provider = await db.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderInstanceId
+                        && x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId), ct).ConfigureAwait(false);
+                    if (provider is not null) batch.ExtraProviders[provider.Id] = provider;
+                }
+            }
+            if (provider is null || provider.DeletedAt is not null || !provider.Enabled)
+                return Unavailable(candidate, source, "provider_disabled", "Provider is missing, deleted, or disabled.");
+            if (!catalog.ProviderVersionsById.TryGetValue(candidate.ProviderVersionId, out version) || version.ProviderId != provider.Id)
+            {
+                if (!batch.ExtraProviderVersions.TryGetValue(candidate.ProviderVersionId, out version) || version.ProviderId != provider.Id)
+                {
+                    await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+                    version = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderVersionId && x.ProviderId == provider.Id, ct).ConfigureAwait(false);
+                    if (version is not null) batch.ExtraProviderVersions[version.Id] = version;
+                }
+            }
+        }
+        else
+        {
+            await using var db = await _models.CreateDbContextAsync(ct).ConfigureAwait(false);
+            provider = await db.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderInstanceId
+                && x.TenantId == scope.TenantId && (x.WorkspaceId == null || x.WorkspaceId == scope.WorkspaceId), ct).ConfigureAwait(false);
+            if (provider is null || provider.DeletedAt is not null || !provider.Enabled)
+                return Unavailable(candidate, source, "provider_disabled", "Provider is missing, deleted, or disabled.");
+            version = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidate.ProviderVersionId && x.ProviderId == provider.Id, ct).ConfigureAwait(false);
+        }
         if (version is null) return Unavailable(candidate, source, "provider_version_missing", "Frozen provider version is missing.");
 
         try
         {
-            await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            var root = document.RootElement;
-            string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            var protocol = candidate.Protocol;
-            var processBacked = ChatProtocols.IsProcessTransport(protocol);
-            var harnessOwned = processBacked || protocol == ChatProtocols.OpencodeServe;
-            var model = candidate.Model ?? Text("model");
-            if (string.IsNullOrWhiteSpace(model) && !harnessOwned) return Unavailable(candidate, source, "model_missing", "Model id is missing.");
-            model ??= provider.Driver;
-            string? baseUrl;
-            if (processBacked)
+            JsonDocument document;
+            bool disposeDocument;
+            if (batch is not null)
             {
-                // A process-backed harness is reached by spawning binary_path and talking to its
-                // stdio. Requiring an endpoint here is what silently killed every stdio ACP provider:
-                // the route failed with `endpoint_missing` and named nothing that was actually wrong.
-                if (string.IsNullOrWhiteSpace(Text("binary_path")))
-                    return Unavailable(candidate, source, "binary_missing", $"'{protocol}' runs as a local process and needs binary_path.");
-                baseUrl = null;
+                if (!batch.ProviderDocuments.TryGetValue(version.Id, out var cachedDoc) || cachedDoc is null)
+                {
+                    await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
+                    cachedDoc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                    batch.ProviderDocuments[version.Id] = cachedDoc;
+                }
+                document = cachedDoc;
+                disposeDocument = false;
             }
             else
             {
-                baseUrl = protocol == ChatProtocols.OpencodeServe ? Text("server_url") : Text("base_url");
-                if (string.IsNullOrWhiteSpace(baseUrl))
-                    return Unavailable(candidate, source, "endpoint_missing", protocol == ChatProtocols.OpencodeServe ? "CLI runtime server_url is missing." : "Provider endpoint is missing.");
+                await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
+                document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                disposeDocument = true;
             }
-            string? apiKey = null;
-            if (!harnessOwned)
+            try
             {
-                if (string.IsNullOrWhiteSpace(provider.SecretReference)) return Unavailable(candidate, source, "credential_missing", "Provider credential is not configured.");
-                apiKey = await _secrets.GetAsync(provider.SecretReference, ct).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(apiKey)) return Unavailable(candidate, source, "credential_missing", "Provider credential is not available.");
+                var root = document.RootElement;
+                string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                var protocol = candidate.Protocol;
+                var processBacked = ChatProtocols.IsProcessTransport(protocol);
+                var harnessOwned = processBacked || protocol == ChatProtocols.OpencodeServe;
+                var model = candidate.Model ?? Text("model");
+                if (string.IsNullOrWhiteSpace(model) && !harnessOwned) return Unavailable(candidate, source, "model_missing", "Model id is missing.");
+                model ??= provider.Driver;
+                string? baseUrl;
+                if (processBacked)
+                {
+                    // A process-backed harness is reached by spawning binary_path and talking to its
+                    // stdio. Requiring an endpoint here is what silently killed every stdio ACP provider:
+                    // the route failed with `endpoint_missing` and named nothing that was actually wrong.
+                    if (string.IsNullOrWhiteSpace(Text("binary_path")))
+                        return Unavailable(candidate, source, "binary_missing", $"'{protocol}' runs as a local process and needs binary_path.");
+                    baseUrl = null;
+                }
+                else
+                {
+                    baseUrl = protocol == ChatProtocols.OpencodeServe ? Text("server_url") : Text("base_url");
+                    if (string.IsNullOrWhiteSpace(baseUrl))
+                        return Unavailable(candidate, source, "endpoint_missing", protocol == ChatProtocols.OpencodeServe ? "CLI runtime server_url is missing." : "Provider endpoint is missing.");
+                }
+                string? apiKey = null;
+                if (!harnessOwned)
+                {
+                    if (string.IsNullOrWhiteSpace(provider.SecretReference)) return Unavailable(candidate, source, "credential_missing", "Provider credential is not configured.");
+                    if (batch is not null)
+                    {
+                        if (!batch.Secrets.TryGetValue(provider.SecretReference, out apiKey))
+                        {
+                            apiKey = await _secrets.GetAsync(provider.SecretReference, ct).ConfigureAwait(false);
+                            batch.Secrets[provider.SecretReference] = apiKey;
+                        }
+                    }
+                    else
+                    {
+                        apiKey = await _secrets.GetAsync(provider.SecretReference, ct).ConfigureAwait(false);
+                    }
+                    if (string.IsNullOrWhiteSpace(apiKey)) return Unavailable(candidate, source, "credential_missing", "Provider credential is not available.");
+                }
+                var imageInput = ModelProfile.ResolveImageInput(root, protocol, model);
+                return new ChatResolution
+                {
+                    IsAvailable = true, BaseUrl = baseUrl, ApiKey = apiKey, Model = model,
+                    Parameters = ModelParameters.ForModel(root, model),
+                    SupportsImageInput = imageInput.Enabled,
+                    MaxImageBytes = imageInput.MaxImageBytes,
+                    MaxImagesPerTurn = imageInput.MaxImagesPerTurn,
+                    ModelId = $"{provider.Driver}/{model}", Protocol = protocol,
+                    ServerUrl = Text("server_url"), BinaryPath = Text("binary_path"), LaunchArgs = Text("launch_args"), HomePath = Text("home_path"),
+                    ProviderInstanceId = provider.Id, ProviderVersionId = version.Id,
+                    RouteId = candidate.RouteId, RouteVersionId = candidate.RouteVersionId,
+                    CandidatePosition = candidate.Position, StrategySource = source,
+                    RuntimeBadge = FormatRuntimeBadge(protocol, provider.Driver, model)
+                };
             }
-            var imageInput = ModelProfile.ResolveImageInput(root, protocol, model);
-            return new ChatResolution
+            finally
             {
-                IsAvailable = true, BaseUrl = baseUrl, ApiKey = apiKey, Model = model,
-                Parameters = ModelParameters.ForModel(root, model),
-                SupportsImageInput = imageInput.Enabled,
-                MaxImageBytes = imageInput.MaxImageBytes,
-                MaxImagesPerTurn = imageInput.MaxImagesPerTurn,
-                ModelId = $"{provider.Driver}/{model}", Protocol = protocol,
-                ServerUrl = Text("server_url"), BinaryPath = Text("binary_path"), LaunchArgs = Text("launch_args"), HomePath = Text("home_path"),
-                ProviderInstanceId = provider.Id, ProviderVersionId = version.Id,
-                RouteId = candidate.RouteId, RouteVersionId = candidate.RouteVersionId,
-                CandidatePosition = candidate.Position, StrategySource = source,
-                RuntimeBadge = FormatRuntimeBadge(protocol, provider.Driver, model)
-            };
+                if (disposeDocument) document.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -811,6 +1099,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             ChatProtocols.HeadlessCli => $"CLI · {harnessLabel}",
             ChatProtocols.Tui => $"TUI · {harnessLabel}",
             ChatProtocols.OpencodeServe => $"HTTP · {harnessLabel}",
+            ChatProtocols.PeerProxy => $"Proxy · {harnessLabel}",
             _ => $"API · {apiLabel}"
         };
     }
@@ -826,12 +1115,36 @@ internal sealed class AgentModelResolver : IAgentModelResolver
     private static ChatResolution WithSource(ChatResolution value, string source) =>
         value with { StrategySource = source };
 
-    private async Task<string> ReadProtocolAsync(ModelProviderRecord provider, ModelProviderVersionRecord version, CancellationToken ct)
+    private async Task<string> ReadProtocolAsync(ModelProviderRecord provider, ModelProviderVersionRecord version, PreviewBatch? batch, CancellationToken ct)
     {
-        await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-        string? Text(string key) => document.RootElement.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.String ? property.GetString() : null;
-        return HarnessCatalog.ResolveProtocol(Text("protocol"), provider.Driver, Text("channel"));
+        JsonDocument document;
+        bool disposeDocument;
+        if (batch is not null)
+        {
+            if (!batch.ProviderDocuments.TryGetValue(version.Id, out var cachedDoc) || cachedDoc is null)
+            {
+                await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
+                cachedDoc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                batch.ProviderDocuments[version.Id] = cachedDoc;
+            }
+            document = cachedDoc;
+            disposeDocument = false;
+        }
+        else
+        {
+            await using var stream = await _content.OpenReadAsync(new ContentReference(version.ContentReference, version.ContentHash, version.ContentLength, "application/json"), ct).ConfigureAwait(false);
+            document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+            disposeDocument = true;
+        }
+        try
+        {
+            string? Text(string key) => document.RootElement.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.String ? property.GetString() : null;
+            return HarnessCatalog.ResolveProtocol(Text("protocol"), provider.Driver, Text("channel"));
+        }
+        finally
+        {
+            if (disposeDocument) document.Dispose();
+        }
     }
 
     private static IReadOnlyDictionary<string, ModelStrategyDto?> ReadModeNodeStrategies(string? snapshot)

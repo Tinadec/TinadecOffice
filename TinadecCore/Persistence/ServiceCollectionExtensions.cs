@@ -120,9 +120,9 @@ public static class ServiceCollectionExtensions
         {
             DataSource = fullPath,
             DefaultTimeout = defaultTimeoutSeconds,
-            // A closed scope must release its database file immediately. Process-wide
-            // pooling can outlive its service graph and keep a moved/copied project locked.
-            Pooling = false
+            // Pool connections within the active scope lifetime for PRAGMA/page-cache reuse;
+            // TinadecDatabaseConfigurer.Dispose and scope teardown clear the pool immediately.
+            Pooling = true
         }.ToString();
 
         return new DatabaseConnectionInfo(DatabaseProvider.Sqlite, connectionString);

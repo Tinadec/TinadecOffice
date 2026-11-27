@@ -6,8 +6,12 @@ using Microsoft.Extensions.Logging;
 
 namespace TinadecCore.Persistence;
 
+internal interface IDbContextSchemaMigrationParticipant
+{
+}
+
 /// <summary>Small adapter allowing each business module to participate in coordinated provider migrations.</summary>
-public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationParticipant where TContext : DbContext
+public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationParticipant, IDbContextSchemaMigrationParticipant where TContext : DbContext
 {
     private readonly IDbContextFactory<TContext> _factory;
 
@@ -16,11 +20,26 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
     public async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var pending = await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false);
-        if (pending.Any())
+        var batch = DbContextSchemaBootstrapper.TryGetMatchingSqliteBatchSession(db);
+        bool hasPending;
+        if (batch is not null)
         {
-            await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
+            hasPending = await batch.HasPendingMigrationsAsync(db, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var pending = await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false);
+            hasPending = pending.Any();
+        }
+        if (hasPending)
+        {
+            if (batch is null || !batch.LockAlreadyCleared)
+            {
+                await DbContextSchemaBootstrapper.ClearStaleSqliteMigrationsLockAsync(db, cancellationToken).ConfigureAwait(false);
+                if (batch is not null) batch.LockAlreadyCleared = true;
+            }
             await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+            batch?.Invalidate();
         }
         // Some module control-plane schemas predate provider migration assemblies.
         // The idempotent model bootstrap fills only missing tables while migrations
@@ -31,6 +50,54 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
 
 public static class DbContextSchemaBootstrapper
 {
+    private static readonly AsyncLocal<SqliteBatchSchemaSession?> CurrentSqliteBatch = new();
+
+    internal static IDisposable? BeginSqliteBatchSession(string connectionString, bool lockAlreadyCleared)
+    {
+        var normalized = NormalizeSqliteDataSource(connectionString);
+        if (normalized is null) return null;
+        var previous = CurrentSqliteBatch.Value;
+        var next = new SqliteBatchSchemaSession(normalized) { LockAlreadyCleared = lockAlreadyCleared };
+        CurrentSqliteBatch.Value = next;
+        return new BatchSessionScope(previous);
+    }
+
+    internal static void InvalidateCurrentSqliteBatchSession() => CurrentSqliteBatch.Value?.Invalidate();
+
+    internal static SqliteBatchSchemaSession? TryGetMatchingSqliteBatchSession(DbContext db)
+    {
+        var session = CurrentSqliteBatch.Value;
+        if (session is null || !db.Database.IsSqlite()) return null;
+        var current = NormalizeSqliteDataSource(db.Database.GetConnectionString());
+        return string.Equals(current, session.NormalizedDataSource, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            ? session
+            : null;
+    }
+
+    private static string? NormalizeSqliteDataSource(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString)) return null;
+        try
+        {
+            var builder = new SqliteConnectionStringBuilder(connectionString);
+            if (string.IsNullOrWhiteSpace(builder.DataSource)
+                || string.Equals(builder.DataSource, ":memory:", StringComparison.OrdinalIgnoreCase)
+                || builder.Mode == SqliteOpenMode.Memory)
+            {
+                return null;
+            }
+            return Path.GetFullPath(builder.DataSource);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class BatchSessionScope(SqliteBatchSchemaSession? previous) : IDisposable
+    {
+        public void Dispose() => CurrentSqliteBatch.Value = previous;
+    }
     /// <summary>
     /// Clears an orphaned <c>__EFMigrationsLock</c> row left behind if a previous single-owner SQLite
     /// host process was terminated mid-migration. Scope single-writer leases (<c>host.lock</c> / scope
@@ -99,7 +166,8 @@ public static class DbContextSchemaBootstrapper
         // a migrations-era table does not have yet, which aborts the whole
         // script before reconciliation ever gets a chance to add them.
         await EnsureColumnsAsync(db, cancellationToken).ConfigureAwait(false);
-        if (db.Database.IsSqlite() && await AllSqliteTablesAndIndexesExistAsync(db, cancellationToken).ConfigureAwait(false))
+        var batch = TryGetMatchingSqliteBatchSession(db);
+        if (db.Database.IsSqlite() && await AllSqliteTablesAndIndexesExistAsync(db, batch, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -107,18 +175,34 @@ public static class DbContextSchemaBootstrapper
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
-        if (!string.IsNullOrWhiteSpace(script)) await db.Database.ExecuteSqlRawAsync(script, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(script))
+        {
+            await db.Database.ExecuteSqlRawAsync(script, cancellationToken).ConfigureAwait(false);
+            batch?.Invalidate();
+        }
     }
 
-    private static async Task<bool> AllSqliteTablesAndIndexesExistAsync(DbContext db, CancellationToken cancellationToken)
+    private static async Task<bool> AllSqliteTablesAndIndexesExistAsync(
+        DbContext db,
+        SqliteBatchSchemaSession? batch,
+        CancellationToken cancellationToken)
     {
-        var names = await db.Database
-            .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type IN ('table', 'index')")
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (names.Count == 0) return false;
+        HashSet<string> existing;
+        if (batch is not null)
+        {
+            existing = await batch.GetTablesAndIndexesAsync(db, cancellationToken).ConfigureAwait(false);
+            if (existing.Count == 0) return false;
+        }
+        else
+        {
+            var names = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type IN ('table', 'index')")
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (names.Count == 0) return false;
+            existing = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+        }
 
-        var existing = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
         foreach (var entityType in db.Model.GetEntityTypes())
         {
             var tableName = entityType.GetTableName();
@@ -156,10 +240,10 @@ public static class DbContextSchemaBootstrapper
     private static async Task ReconcileModelColumnsAsync(DbContext db, CancellationToken cancellationToken)
     {
         var isSqlite = db.Database.IsSqlite();
-        // One catalog read per context instead of one round trip per table and per
-        // nullable column. Mounting a real project scope measured 698
-        // pragma_table_info round trips (~5.8 s) across 12 contexts before this.
-        var catalog = new SqliteColumnCatalog(db, isSqlite);
+        var batch = isSqlite ? TryGetMatchingSqliteBatchSession(db) : null;
+        // One catalog read per migration batch (or per context outside a batch) instead of
+        // one round trip per table and per nullable column.
+        var catalog = new SqliteColumnCatalog(db, isSqlite, batch);
         var expectedByTable = new Dictionary<(string TableName, string? Schema), List<IProperty>>();
         foreach (var entityType in db.Model.GetEntityTypes())
         {
@@ -187,12 +271,15 @@ public static class DbContextSchemaBootstrapper
             var actualColumns = await GetTableColumnsAsync(db, catalog, tableName, isSqlite, cancellationToken).ConfigureAwait(false);
             if (actualColumns is null) continue;
             var table = StoreObjectIdentifier.Table(tableName, entry.Key.Schema);
+            var addedColumn = false;
             foreach (var property in entry.Value)
             {
                 var columnName = property.GetColumnName(table);
                 if (columnName is null || actualColumns.Contains(columnName)) continue;
                 await AddColumnAsync(db, tableName, columnName, property, isSqlite, cancellationToken).ConfigureAwait(false);
+                addedColumn = true;
             }
+            if (addedColumn) catalog.Forget();
         }
 
         await DropLegacyCapabilityLeaseNonceAsync(db, catalog, isSqlite, cancellationToken).ConfigureAwait(false);
@@ -235,6 +322,7 @@ public static class DbContextSchemaBootstrapper
             if (isSqlite)
             {
                 await RebuildSqliteTableRelaxingColumnsAsync(db, tableName, targets, cancellationToken).ConfigureAwait(false);
+                catalog.Forget();
             }
             else
             {
@@ -436,7 +524,105 @@ public static class DbContextSchemaBootstrapper
     /// reconciliation only reads, and the create script that follows may add
     /// tables/columns that are never queried again through this object.
     /// </summary>
-    private sealed class SqliteColumnCatalog(DbContext db, bool isSqlite)
+    internal sealed class SqliteBatchSchemaSession(string normalizedDataSource)
+    {
+        private readonly HashSet<string> _objects = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _appliedMigrations = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Dictionary<string, bool>> _columns = new(StringComparer.OrdinalIgnoreCase);
+        private Task? _loaded;
+
+        public string NormalizedDataSource { get; } = normalizedDataSource;
+        public bool LockAlreadyCleared { get; set; }
+
+        public async Task<bool> HasPendingMigrationsAsync(DbContext db, CancellationToken cancellationToken)
+        {
+            await EnsureLoadedAsync(db, cancellationToken).ConfigureAwait(false);
+            var defined = db.Database.GetMigrations();
+            foreach (var id in defined)
+            {
+                if (!_appliedMigrations.Contains(id))
+                    return true;
+            }
+            return false;
+        }
+
+        public async Task<HashSet<string>> GetTablesAndIndexesAsync(DbContext db, CancellationToken cancellationToken)
+        {
+            await EnsureLoadedAsync(db, cancellationToken).ConfigureAwait(false);
+            return _objects;
+        }
+
+        public async Task<Dictionary<string, Dictionary<string, bool>>> GetColumnsAsync(DbContext db, CancellationToken cancellationToken)
+        {
+            await EnsureLoadedAsync(db, cancellationToken).ConfigureAwait(false);
+            return _columns;
+        }
+
+        public void Invalidate()
+        {
+            _loaded = null;
+            _objects.Clear();
+            _appliedMigrations.Clear();
+            _columns.Clear();
+        }
+
+        private async Task EnsureLoadedAsync(DbContext db, CancellationToken cancellationToken)
+        {
+            if (_loaded is null) _loaded = LoadAsync(db, cancellationToken);
+            try
+            {
+                await _loaded.ConfigureAwait(false);
+            }
+            catch
+            {
+                Invalidate();
+                throw;
+            }
+        }
+
+        private async Task LoadAsync(DbContext db, CancellationToken cancellationToken)
+        {
+            _objects.Clear();
+            _appliedMigrations.Clear();
+            _columns.Clear();
+
+            var objects = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM sqlite_master WHERE type IN ('table', 'index')")
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var name in objects)
+            {
+                _objects.Add(name);
+            }
+
+            if (_objects.Contains("__EFMigrationsHistory"))
+            {
+                var applied = await db.Database
+                    .SqlQueryRaw<string>("SELECT \"MigrationId\" AS \"Value\" FROM \"__EFMigrationsHistory\"")
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var id in applied)
+                {
+                    _appliedMigrations.Add(id);
+                }
+            }
+
+            if (_objects.Count > 0)
+            {
+                var rows = await db.Database
+                    .SqlQueryRaw<string>("SELECT m.name || char(31) || p.name || char(31) || p.\"notnull\" AS \"Value\" FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table'")
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var row in rows)
+                {
+                    var parts = row.Split('\u001f');
+                    if (parts.Length < 3) continue;
+                    if (!_columns.TryGetValue(parts[0], out var columns))
+                        _columns[parts[0]] = columns = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    columns[parts[1]] = parts[2] == "1";
+                }
+            }
+        }
+    }
+
+    private sealed class SqliteColumnCatalog(DbContext db, bool isSqlite, SqliteBatchSchemaSession? batch = null)
     {
         private readonly Dictionary<string, Dictionary<string, bool>> _tables = new(StringComparer.OrdinalIgnoreCase);
         private Task? _loaded;
@@ -458,6 +644,7 @@ public static class DbContextSchemaBootstrapper
 
         private async Task EnsureLoadedAsync(CancellationToken cancellationToken)
         {
+            if (batch is not null) return;
             if (_loaded is null) _loaded = LoadAsync(cancellationToken);
             await _loaded.ConfigureAwait(false);
         }
@@ -466,6 +653,11 @@ public static class DbContextSchemaBootstrapper
         public async Task<List<string>?> ColumnsAsync(string tableName, CancellationToken cancellationToken)
         {
             if (!isSqlite) throw new InvalidOperationException("The SQLite column catalog is only valid for a SQLite database.");
+            if (batch is not null)
+            {
+                var tables = await batch.GetColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+                return tables.TryGetValue(tableName, out var batchCols) && batchCols.Count > 0 ? [.. batchCols.Keys] : null;
+            }
             await EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
             return _tables.TryGetValue(tableName, out var columns) && columns.Count > 0 ? [.. columns.Keys] : null;
         }
@@ -474,6 +666,11 @@ public static class DbContextSchemaBootstrapper
         public async Task<bool?> IsNotNullAsync(string tableName, string columnName, CancellationToken cancellationToken)
         {
             if (!isSqlite) throw new InvalidOperationException("The SQLite column catalog is only valid for a SQLite database.");
+            if (batch is not null)
+            {
+                var tables = await batch.GetColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+                return tables.TryGetValue(tableName, out var batchCols) && batchCols.TryGetValue(columnName, out var batchNotNull) ? batchNotNull : null;
+            }
             await EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
             return _tables.TryGetValue(tableName, out var columns) && columns.TryGetValue(columnName, out var notNull) ? notNull : null;
         }
@@ -487,6 +684,7 @@ public static class DbContextSchemaBootstrapper
         public void Forget()
         {
             if (!isSqlite) return;
+            batch?.Invalidate();
             _tables.Clear();
             _loaded = null;
         }

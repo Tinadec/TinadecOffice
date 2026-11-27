@@ -15,6 +15,10 @@ public sealed class StorageHostShutdownService(IStorageScopeRegistry registry, U
         {
             if (registry is IAsyncDisposable owned) await owned.DisposeAsync().ConfigureAwait(false);
         }
-        finally { hostLease.Dispose(); }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            hostLease.Dispose();
+        }
     }
 }

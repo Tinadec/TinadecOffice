@@ -152,4 +152,24 @@ public sealed class SqliteConnectionPragmaInterceptor : DbConnectionInterceptor
             return true;
         }
     }
+
+    public static void ClearPoolForPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            foreach (var defaultTimeout in new int?[] { null, 15 })
+            {
+                var builder = new SqliteConnectionStringBuilder { DataSource = fullPath, Pooling = true };
+                if (defaultTimeout is { } timeout) builder.DefaultTimeout = timeout;
+                using var connection = new SqliteConnection(builder.ToString());
+                SqliteConnection.ClearPool(connection);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup before file deletion.
+        }
+    }
 }

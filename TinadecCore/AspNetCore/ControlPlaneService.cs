@@ -275,7 +275,18 @@ public sealed class ControlPlaneService
             .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null)
             .Select(x => new { x.Driver, x.CurrentVersionId }).ToListAsync(ct);
 
-        var candidates = new List<object>();
+        var specPrepared = new List<(
+            HarnessSpec Spec,
+            bool Existing,
+            bool IsTemplate,
+            HarnessBinaryLocation? Located,
+            string? ConfiguredBinaryPath,
+            string? ConfiguredHomePath,
+            string? ConfiguredLaunchArgs,
+            object? ConfiguredAcpCapabilities,
+            List<string> ConfiguredChannels,
+            List<string> ConfiguredModels,
+            Task<CliProbe?> ProbeTask)>();
         foreach (var spec in HarnessCatalog.All)
         {
             var rows = configuredRows
@@ -313,7 +324,18 @@ public sealed class ControlPlaneService
             var existing = rows.Count > 0;
             var isTemplate = string.Equals(spec.Id, "custom-acp", StringComparison.OrdinalIgnoreCase);
             var located = isTemplate ? null : _harnessBinaries.Resolve(spec.Id, searchPaths);
-            var probe = located is null ? null : await VerifyCliExecutable(located.BinaryName, located.BinaryPath, spec.VersionProbe, ct);
+            Task<CliProbe?> probeTask = located is null
+                ? Task.FromResult<CliProbe?>(null)
+                : VerifyCliExecutableNullable(located.BinaryName, located.BinaryPath, spec.VersionProbe, ct);
+            specPrepared.Add((spec, existing, isTemplate, located, configuredBinaryPath, configuredHomePath, configuredLaunchArgs, configuredAcpCapabilities, configuredChannels, configuredModels, probeTask));
+        }
+        await Task.WhenAll(specPrepared.Select(x => x.ProbeTask)).ConfigureAwait(false);
+
+        var candidates = new List<object>(specPrepared.Count);
+        foreach (var entry in specPrepared)
+        {
+            var (spec, existing, isTemplate, located, configuredBinaryPath, configuredHomePath, configuredLaunchArgs, configuredAcpCapabilities, configuredChannels, configuredModels, probeTask) = entry;
+            var probe = await probeTask.ConfigureAwait(false);
             var reachable = existing || probe?.Runnable == true;
             // The serve argv is a template with a {port} placeholder; discovery reports the concrete
             // form it would start with, and the connect path re-materializes it from the endpoint that
@@ -589,17 +611,19 @@ public sealed class ControlPlaneService
             var command = string.Join(' ', probe.Argv);
             if (!process.Start())
                 return new(false, $"starting '{path}' {command} returned false.", "start_failed", Facts(("command", $"{path} {command}")));
+            try { process.StandardInput.Close(); } catch (InvalidOperationException) { }
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource();
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(probe.TimeoutMs);
             try
             {
                 await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
-                await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+                await Task.WhenAll(stdout, stderr).WaitAsync(deadline.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                TryKillProbeTree(process);
                 // The caller stopped looking; that is not a fact about the harness.
                 throw;
             }
@@ -640,6 +664,7 @@ public sealed class ControlPlaneService
     {
         var psi = new ProcessStartInfo
         {
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -651,6 +676,9 @@ public sealed class ControlPlaneService
 
     /// <summary><paramref name="Note"/> is the English diagnostic; <paramref name="NoteCode"/> and <paramref name="NoteData"/> are what a client words.</summary>
     private sealed record CliProbe(bool Runnable, string? Note, string? NoteCode = null, IReadOnlyDictionary<string, string>? NoteData = null);
+
+    private async Task<CliProbe?> VerifyCliExecutableNullable(string name, string command, HarnessVersionProbe probeSpec, CancellationToken ct) =>
+        await VerifyCliExecutable(name, command, probeSpec, ct).ConfigureAwait(false);
 
     private static IReadOnlyDictionary<string, string> Facts(params (string Name, string Value)[] facts) =>
         facts.ToDictionary(fact => fact.Name, fact => fact.Value);

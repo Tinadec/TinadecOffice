@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace TinadecCore.Persistence;
 
-internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
+internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer, IDisposable
 {
     private readonly IDatabaseConnectionInfo _connectionInfo;
     private readonly TinadecPersistenceOptions _options;
@@ -17,6 +17,24 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
         _connectionInfo = connectionInfo;
         _options = options.Value;
         _sqliteInterceptor = new SqliteConnectionPragmaInterceptor(_options.Sqlite.BusyTimeoutMs, _options.Sqlite.EnableWal);
+    }
+
+    public void Dispose()
+    {
+        if (_connectionInfo.Provider == DatabaseProvider.Sqlite
+            && _connectionInfo.IsConfigured
+            && !string.IsNullOrWhiteSpace(_connectionInfo.ConnectionString))
+        {
+            try
+            {
+                using var connection = new Microsoft.Data.Sqlite.SqliteConnection(_connectionInfo.ConnectionString);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+            }
+            catch
+            {
+                // Best-effort pool cleanup on service provider disposal.
+            }
+        }
     }
 
     public void Configure(DbContextOptionsBuilder options)

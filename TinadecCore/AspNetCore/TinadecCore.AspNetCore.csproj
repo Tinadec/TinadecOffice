@@ -9,6 +9,7 @@
     <PackageTags>tinadec;agent;aspnetcore;http;dmaea;maf</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
 
   <ItemGroup>

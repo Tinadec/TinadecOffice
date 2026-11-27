@@ -268,17 +268,18 @@ describe('useConnection', () => {
     const baseMs = CONNECTION_POLL_INTERVAL_MS * 4 // 6000ms
     const initialCalls = getHostStatus.mock.calls.length
 
-    // Consecutive failures >= 2 triggers exponential backoff (6000ms * 2 = 12000ms)
+    // First watch at +6000ms increments consecutive failures from 1 -> 2 (backoff 12000ms, NOT 1 -> 3 = 24000ms)
     await vi.advanceTimersByTimeAsync(baseMs)
     const afterFirstWatch = getHostStatus.mock.calls.length
     expect(afterFirstWatch).toBeGreaterThan(initialCalls)
     await vi.advanceTimersByTimeAsync(baseMs)
     expect(getHostStatus.mock.calls.length).toBe(afterFirstWatch) // still backed off at +6000ms
 
+    // If probe() had double-incremented (1 -> 3), the second watch would wait 24000ms and stay uncalled at +12000ms.
     getHostStatus.mockResolvedValue({ state: 'ready', managed: true })
     retryHost.mockResolvedValue({ state: 'ready', managed: true })
     vi.mocked(api.health).mockResolvedValue({ status: 'ok' })
-    await vi.advanceTimersByTimeAsync(baseMs) // total +12000ms fires
+    await vi.advanceTimersByTimeAsync(baseMs) // total +12000ms fires exact 2x step
     expect(connectionState.value).toBe('connected')
   })
 })
