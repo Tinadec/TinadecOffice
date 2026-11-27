@@ -101,8 +101,45 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         IReadOnlyDictionary<Guid, ModeVersionRecord> ModeVersions,
         IReadOnlyDictionary<Guid, AgentDefinitionRecord> Definitions) : IDisposable
     {
-        public Dictionary<string, Task<FrozenModelPlan>> Plans { get; } = new(StringComparer.Ordinal);
-        public Dictionary<string, Task<IReadOnlyList<ChatResolution>>> Resolutions { get; } = new(StringComparer.Ordinal);
+        public Dictionary<PlanCacheKey, Task<FrozenModelPlan>> Plans { get; } = new();
+        public Dictionary<ResolutionCacheKey, Task<IReadOnlyList<ChatResolution>>> Resolutions { get; } = new();
+
+        internal readonly record struct PlanCacheKey(
+            string Kind,
+            string? RoutePurpose,
+            Guid? ProviderInstanceId,
+            string? Model,
+            string SpecialtiesKey,
+            string? PreferredTier,
+            string? MaxCostTier,
+            string Source,
+            bool HasParent)
+        {
+            public static PlanCacheKey Create(ModelStrategyDto strategy, string source, bool hasParent) => new(
+                strategy.Kind,
+                strategy.RoutePurpose,
+                strategy.ProviderInstanceId,
+                strategy.Model,
+                strategy.RequiredSpecialties is { Count: > 0 } specs ? string.Join('\0', specs) : string.Empty,
+                strategy.PreferredTier,
+                strategy.MaxCostTier,
+                source,
+                hasParent);
+        }
+
+        internal readonly struct ResolutionCacheKey(FrozenModelPlan plan, Guid? parentInstanceId) : IEquatable<ResolutionCacheKey>
+        {
+            public FrozenModelPlan Plan { get; } = plan;
+            public Guid? ParentInstanceId { get; } = parentInstanceId;
+
+            public bool Equals(ResolutionCacheKey other) =>
+                ReferenceEquals(Plan, other.Plan) && ParentInstanceId == other.ParentInstanceId;
+
+            public override bool Equals(object? obj) => obj is ResolutionCacheKey other && Equals(other);
+
+            public override int GetHashCode() =>
+                HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Plan), ParentInstanceId);
+        }
         public Dictionary<Guid, IReadOnlyDictionary<string, ModelStrategyDto?>> ParsedModeNodeStrategies { get; } = new();
         public Dictionary<Guid, ModelStrategyDto> ParsedAgentStrategies { get; } = new();
         public Task<ModelCatalogSnapshot>? ModelsTask { get; set; }
@@ -319,13 +356,13 @@ internal sealed class AgentModelResolver : IAgentModelResolver
         if (chain.Count == 0) chain.Add(new ModelResolutionStepDto { Source = "implicit_inherit", Strategy = selected, Selected = true });
         source = source.Length == 0 ? "implicit_inherit" : source;
 
-        var planKey = JsonSerializer.Serialize(new { selected, source, parent = request.ParentInstanceId is not null });
+        var planKey = PreviewBatch.PlanCacheKey.Create(selected, source, request.ParentInstanceId is not null);
         Task<FrozenModelPlan> planRead;
         if (batch is null) planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, null, cancellationToken);
         else if (!batch.Plans.TryGetValue(planKey, out planRead!))
             batch.Plans[planKey] = planRead = FreezeStrategyAsync(selected, source, request.ParentInstanceId is not null, batch, cancellationToken);
         var plan = await planRead.ConfigureAwait(false);
-        var resolutionKey = JsonSerializer.Serialize(new { plan, request.ParentInstanceId });
+        var resolutionKey = new PreviewBatch.ResolutionCacheKey(plan, request.ParentInstanceId);
         Task<IReadOnlyList<ChatResolution>> resolutionRead;
         if (batch is null) resolutionRead = ResolveInvocationCandidatesAsync(plan, request.ParentInstanceId, null, cancellationToken);
         else if (!batch.Resolutions.TryGetValue(resolutionKey, out resolutionRead!))

@@ -10,7 +10,7 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Lifecycle;
 
-public sealed class StorageLifecycleService : IStorageMigrationParticipant
+public sealed class StorageLifecycleService : IStorageMigrationParticipant, IRunStreamPublicationSource
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> RunLocks = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -22,6 +22,55 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     private readonly ITenantContextAccessor _tenant;
     private readonly object _eventSignalGate = new();
     private TaskCompletionSource<bool> _eventSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _streamListenersGate = new();
+    private Action<Guid, DurableRunStreamChunk>[] _streamListeners = [];
+
+    public IDisposable SubscribeRunStream(Action<Guid, DurableRunStreamChunk> listener)
+    {
+        ArgumentNullException.ThrowIfNull(listener);
+        lock (_streamListenersGate)
+        {
+            _streamListeners = [.. _streamListeners, listener];
+        }
+        return new RunStreamSubscription(this, listener);
+    }
+
+    private void UnsubscribeRunStream(Action<Guid, DurableRunStreamChunk> listener)
+    {
+        lock (_streamListenersGate)
+        {
+            var idx = Array.IndexOf(_streamListeners, listener);
+            if (idx < 0) return;
+            if (_streamListeners.Length == 1)
+            {
+                _streamListeners = [];
+                return;
+            }
+            var next = new Action<Guid, DurableRunStreamChunk>[_streamListeners.Length - 1];
+            Array.Copy(_streamListeners, 0, next, 0, idx);
+            Array.Copy(_streamListeners, idx + 1, next, idx, _streamListeners.Length - idx - 1);
+            _streamListeners = next;
+        }
+    }
+
+    private void NotifyRunStreamListeners(Guid runId, DurableRunStreamChunk chunk)
+    {
+        var listeners = Volatile.Read(ref _streamListeners);
+        foreach (var listener in listeners)
+        {
+            try { listener(runId, chunk); } catch { /* stream observers must never fault durable persistence */ }
+        }
+    }
+
+    private sealed class RunStreamSubscription(StorageLifecycleService owner, Action<Guid, DurableRunStreamChunk> listener) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                owner.UnsubscribeRunStream(listener);
+        }
+    }
 
     public Task GetEventSignalTask()
     {
@@ -1095,16 +1144,22 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var deltaText = string.IsNullOrEmpty(item.Delta) ? null : item.Delta;
         var usageJson = string.IsNullOrWhiteSpace(item.UsageJson) ? null : item.UsageJson;
 
-        await using var metadataDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var run = await metadataDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Run was not found.");
-        if (key is not null)
+        Guid tenantId;
+        Guid workspaceId;
+        await using (var metadataDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
         {
-            var existing = await metadataDb.RunStream.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, cancellationToken).ConfigureAwait(false);
-            if (existing is not null)
+            var run = await metadataDb.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Run was not found.");
+            if (key is not null)
             {
-                return await ReadRunStreamChunkAsync(existing, cancellationToken).ConfigureAwait(false);
+                var existing = await metadataDb.RunStream.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == key, cancellationToken).ConfigureAwait(false);
+                if (existing is not null)
+                {
+                    return await ReadRunStreamChunkAsync(existing, cancellationToken).ConfigureAwait(false);
+                }
             }
+            tenantId = run.TenantId;
+            workspaceId = run.WorkspaceId;
         }
 
         ContentReference? delta = null;
@@ -1112,14 +1167,14 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         {
             await using var deltaBody = new MemoryStream(Encoding.UTF8.GetBytes(deltaText), writable: false);
             delta = await _contentStore.PutAsync(new ContentWriteRequest(
-                run.TenantId, run.WorkspaceId, "run_stream_delta", "text/plain; charset=utf-8", deltaBody), cancellationToken).ConfigureAwait(false);
+                tenantId, workspaceId, "run_stream_delta", "text/plain; charset=utf-8", deltaBody), cancellationToken).ConfigureAwait(false);
         }
         ContentReference? usage = null;
         if (usageJson is not null)
         {
             await using var usageBody = new MemoryStream(Encoding.UTF8.GetBytes(usageJson), writable: false);
             usage = await _contentStore.PutAsync(new ContentWriteRequest(
-                run.TenantId, run.WorkspaceId, "run_stream_usage", "application/json", usageBody), cancellationToken).ConfigureAwait(false);
+                tenantId, workspaceId, "run_stream_usage", "application/json", usageBody), cancellationToken).ConfigureAwait(false);
         }
 
         for (var attempt = 1; ; attempt++)
@@ -1145,7 +1200,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 var now = DateTimeOffset.UtcNow;
                 var record = new RunStreamRecord
                 {
-                    Id = Guid.NewGuid(), TenantId = run.TenantId, WorkspaceId = run.WorkspaceId, RunId = runId,
+                    Id = Guid.NewGuid(), TenantId = tenantId, WorkspaceId = workspaceId, RunId = runId,
                     TurnId = item.TurnId, MessageId = item.MessageId, Sequence = cursor.NextSequence + 1,
                     Kind = kind, IdempotencyKey = key,
                     DeltaReference = delta?.Value, DeltaHash = delta?.Sha256, DeltaLength = delta?.Length,
@@ -1155,13 +1210,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 };
                 cursor.NextSequence = record.Sequence;
                 cursor.UpdatedAt = now;
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-
                 db.RunStream.Add(record);
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                return new DurableRunStreamChunk(runId.ToString(), record.TurnId, record.MessageId, record.Sequence, record.Kind,
+                var chunk = new DurableRunStreamChunk(runId.ToString(), record.TurnId, record.MessageId, record.Sequence, record.Kind,
                     deltaText, usageJson, record.FinishReason, record.ErrorCategory, record.SafeErrorMessage, record.CreatedAt);
+                NotifyRunStreamListeners(runId, chunk);
+                return chunk;
             }
             catch (DbUpdateConcurrencyException) when (attempt < StreamAppendMaxAttempts)
             {

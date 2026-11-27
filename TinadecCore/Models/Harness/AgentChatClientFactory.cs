@@ -102,10 +102,14 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
 
     private static OpenAIClient CreateBrandedOpenAiClient(ChatResolution resolution)
     {
+        var endpoint = new Uri(resolution.BaseUrl!);
         var options = new OpenAIClientOptions
         {
-            Endpoint = new Uri(resolution.BaseUrl!),
-            UserAgentApplicationId = TinadecBranding.Name
+            Endpoint = endpoint,
+            UserAgentApplicationId = TinadecBranding.Name,
+            NetworkTimeout = Timeout.InfiniteTimeSpan,
+            Transport = new System.ClientModel.Primitives.HttpClientPipelineTransport(
+                TinadecBranding.CreateLongLivedClient(endpoint))
         };
         return new OpenAIClient(new ApiKeyCredential(resolution.ApiKey!), options);
     }
@@ -117,10 +121,12 @@ internal sealed class AgentChatClientFactory : IAgentChatClientFactory
     /// </summary>
     public static IChatClient CreateAnthropicClient(ChatResolution resolution)
     {
-        var http = TinadecBranding.CreateClient();
+        var endpoint = NormalizeAnthropicApiUrlFormat(resolution.BaseUrl!);
+        Uri? baseUri = Uri.TryCreate(endpoint, UriKind.Absolute, out var parsed) ? parsed : null;
+        var http = TinadecBranding.CreateLongLivedClient(baseUri);
         var client = new AnthropicClient(new APIAuthentication(resolution.ApiKey!), http, null)
         {
-            ApiUrlFormat = NormalizeAnthropicApiUrlFormat(resolution.BaseUrl!)
+            ApiUrlFormat = endpoint
         };
         return client.Messages;
     }

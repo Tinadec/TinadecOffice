@@ -184,6 +184,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     /// The mode runtime policy frozen at admission, or null on bodies frozen before modes carried
     /// one. A tool whose mechanism is feature-gated reads it here instead of re-resolving the mode.
     /// </summary>
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+
     internal static ModeRuntimePolicyDto? ReadFrozenRuntimePolicy(string content)
     {
         try
@@ -192,7 +194,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             if (!document.RootElement.TryGetProperty("runtimePolicy", out var policy)
                 || policy.ValueKind != JsonValueKind.Object)
                 return null;
-            return policy.Deserialize<ModeRuntimePolicyDto>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            return policy.Deserialize<ModeRuntimePolicyDto>(WebJsonOptions);
         }
         catch (JsonException)
         {
@@ -204,7 +206,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     {
         using var document = JsonDocument.Parse(content);
         if (!TryGetProperty(document.RootElement, out var configNode, "toolConfiguration", "tool_configuration") || configNode.ValueKind == JsonValueKind.Null) return null;
-        var config = configNode.Deserialize<FrozenToolConfigurationDto>(new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? throw new InvalidDataException("Frozen tool configuration is invalid.");
+        var config = configNode.Deserialize<FrozenToolConfigurationDto>(WebJsonOptions) ?? throw new InvalidDataException("Frozen tool configuration is invalid.");
         if (agentDefinitionId is { } id)
             return config.AgentContexts.TryGetValue(id, out var context) ? context : throw new UnauthorizedAccessException("The Agent definition is absent from the admitted tool configuration.");
         return config.SharedContext;

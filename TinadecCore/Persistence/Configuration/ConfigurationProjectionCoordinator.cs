@@ -21,6 +21,7 @@ namespace TinadecCore.Persistence;
 public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectionCoordinator
 {
     private const string StampTableName = "_tinadec_projection_stamps";
+    private const string CompileStampDocumentId = "__compile";
     private readonly ScopeConfigurationDocuments _documents;
     private readonly IScopeStorageLocations _locations;
     private readonly IContentStore _content;
@@ -34,6 +35,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     private readonly HashSet<Type> _migrationsSettled = new();
     private readonly ConcurrentDictionary<Type, string[]> _schemaSettled = new();
     private readonly ConcurrentDictionary<Type, string> _schemaStamps = new();
+    private (string Hash, string SchemaStamp)? _storedCompileStamp;
     private volatile EffectiveConfigurationSnapshot? _compiledSnapshot;
     private static readonly MethodInfo QueryMethod = typeof(ConfigurationProjectionCoordinator).GetMethod(nameof(QueryRows), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -51,6 +53,20 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
     {
         foreach (var source in _sources)
         {
+            if (_schemaSettled.TryGetValue(source.ContextType, out var settledDocIds))
+            {
+                var allUnchanged = true;
+                foreach (var docId in settledDocIds)
+                {
+                    if (!_projectedDocuments.TryGetValue(docId, out var applied)
+                        || !await _documents.IsProjectionUnchangedAsync(docId, applied, cancellationToken).ConfigureAwait(false))
+                    {
+                        allUnchanged = false;
+                        break;
+                    }
+                }
+                if (allUnchanged) continue;
+            }
             await using var db = await source.CreateRawAsync(cancellationToken).ConfigureAwait(false);
             await AttachAsync(db, cancellationToken).ConfigureAwait(false);
         }
@@ -83,6 +99,47 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
             }
         }
 
+        var fastHashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var allRequiredExist = true;
+        foreach (var id in _documents.DocumentIds)
+        {
+            var (_, fileHash, exists) = await _documents.HashForProjectionAsync(id, cancellationToken).ConfigureAwait(false);
+            if (!exists && (id is "storage" or "logging" || id == "runtime" && _documents.RequiresRuntimeDocument))
+            {
+                allRequiredExist = false;
+                break;
+            }
+            fastHashes[id] = fileHash;
+        }
+        var compileSchemaStamp = _documents.RequiresRuntimeDocument ? "compile-v1-runtime=1" : "compile-v1-runtime=0";
+        if (allRequiredExist)
+        {
+            var compositeHash = ScopeConfigurationDocuments.Hash(string.Join('\n', fastHashes.Select(x => x.Key + ":" + x.Value)));
+            if (_storedCompileStamp is null && _sources.FirstOrDefault() is { } stampSource)
+            {
+                await using var stampDb = await stampSource.CreateRawAsync(cancellationToken).ConfigureAwait(false);
+                var stamps = await LoadProjectionStampsAsync(stampDb, cancellationToken).ConfigureAwait(false);
+                if (stamps.TryGetValue(CompileStampDocumentId, out var loadedCompile))
+                    _storedCompileStamp = loadedCompile;
+            }
+            if (_storedCompileStamp is { } storedCompile
+                && storedCompile.Hash == compositeHash
+                && storedCompile.SchemaStamp == compileSchemaStamp)
+            {
+                var storageDoc = await _documents.ReadForProjectionAsync("storage", _projectedDocuments.GetValueOrDefault("storage"), cancellationToken).ConfigureAwait(false);
+                ThrowDiagnostics(storageDoc);
+                VerifyActiveStorage(storageDoc);
+                foreach (var id in _documents.DocumentIds)
+                {
+                    if (fastHashes[id].Length > 0)
+                        await _documents.MarkEstablishedAsync(id, cancellationToken).ConfigureAwait(false);
+                }
+                var fastSnapshot = new EffectiveConfigurationSnapshot(_locations.StorageId, compositeHash, fastHashes);
+                _compiledSnapshot = fastSnapshot;
+                return fastSnapshot;
+            }
+        }
+
         var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var models = new Dictionary<string, TomlTable>(StringComparer.Ordinal);
         foreach (var id in _documents.DocumentIds)
@@ -106,6 +163,19 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
         ConfigurationLiveSourceValidation.Validate(models);
         var snapshot = new EffectiveConfigurationSnapshot(_locations.StorageId, ScopeConfigurationDocuments.Hash(string.Join('\n', hashes.Select(x => x.Key + ":" + x.Value))), hashes);
         _compiledSnapshot = snapshot;
+        if (_sources.FirstOrDefault() is { } primarySource)
+        {
+            try
+            {
+                await using var saveDb = await primarySource.CreateRawAsync(cancellationToken).ConfigureAwait(false);
+                await UpsertProjectionStampsAsync(saveDb, [(CompileStampDocumentId, snapshot.ContentHash)], compileSchemaStamp, cancellationToken).ConfigureAwait(false);
+                _storedCompileStamp = (snapshot.ContentHash, compileSchemaStamp);
+            }
+            catch (Exception)
+            {
+                // Best-effort validation stamp; database may be read-only or not yet initialized.
+            }
+        }
         return snapshot;
     }
 
@@ -204,6 +274,8 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 if (applied is null)
                 {
                     storedStamps ??= await LoadProjectionStampsAsync(db, cancellationToken).ConfigureAwait(false);
+                    if (_storedCompileStamp is null && storedStamps.TryGetValue(CompileStampDocumentId, out var loadedCompileStamp))
+                        _storedCompileStamp = loadedCompileStamp;
                     var (path, fileHash, exists) = await _documents.HashForProjectionAsync(group.Key, cancellationToken).ConfigureAwait(false);
                     if (exists && fileHash.Length > 0
                         && storedStamps.TryGetValue(group.Key, out var stored)
@@ -294,6 +366,7 @@ public sealed class ConfigurationProjectionCoordinator : IConfigurationProjectio
                 // A later read always repairs that projection from these authoritative bytes.
                 _projectedDocuments.TryRemove(id, out _);
                 _compiledSnapshot = null;
+                _storedCompileStamp = null;
             }
         }
         finally { _gate.Release(); }

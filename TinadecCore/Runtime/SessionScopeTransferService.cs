@@ -256,6 +256,8 @@ public sealed class SessionScopeTransferService : ISessionScopeTransferService, 
         return receipt;
     }
 
+    private static readonly JsonSerializerOptions SpaceOptionsWebJson = new(JsonSerializerDefaults.Web);
+
     private static async Task RebindFutureConfigurationAsync(IServiceProvider target, SessionDataGraph graph, CancellationToken cancellationToken)
     {
         var session = graph.Entities.SelectMany(e => e.Rows).OfType<SessionRecord>().Single();
@@ -280,7 +282,7 @@ public sealed class SessionScopeTransferService : ISessionScopeTransferService, 
         session.MeetingModelOverrideProviderInstanceId = null;
         session.MeetingModelOverrideModel = null;
         if (ProjectSessionStore.ReadSpaceOptions(session) is { } space)
-            session.SpaceOptionsJson = JsonSerializer.Serialize(space with { WorkflowModeVersionId = null }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            session.SpaceOptionsJson = JsonSerializer.Serialize(space with { WorkflowModeVersionId = null }, SpaceOptionsWebJson);
         session.SettingsRevision++;
         session.UpdatedAt = DateTimeOffset.UtcNow;
     }

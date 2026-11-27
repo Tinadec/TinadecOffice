@@ -9,6 +9,7 @@ import UserActionStatusBadge from '@/components/governance/UserActionStatusBadge
 import PreAuthorizationDialog from '@/components/governance/PreAuthorizationDialog.vue'
 import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
 import { useStatusLabels } from '@/lib/statusLabels'
+import { useHostAccess } from '@/lib/hostAccess'
 
 export type GovernanceBoardTab = 'decisions' | 'runtime'
 
@@ -24,6 +25,7 @@ const { t, te } = useI18n()
 const { riskLabel, severityLabel } = useStatusLabels()
 const kindLabel = (kind: string) => (te(`approval.kind.${kind}`) ? t(`approval.kind.${kind}`) : kind)
 const userActionStore = useUserActionStore()
+const { canAccessBackend } = useHostAccess()
 
 const activeTab = ref<GovernanceBoardTab>(props.initialTab)
 watch(() => props.initialTab, (tab) => {
@@ -69,7 +71,7 @@ function permissionFromApprovalProjection(x: ApprovalDto): PermissionRequestDto 
 }
 
 async function loadAll(background = false): Promise<void> {
-  if (loadInFlight) return
+  if (loadInFlight || !canAccessBackend.value) return
   loadInFlight = true
   if (!background) loading.value = true
   loadError.value = null
@@ -129,11 +131,15 @@ function openRecoveryCheck(actionId: string): void {
 }
 
 onMounted(() => {
-  void loadAll()
+  if (canAccessBackend.value) void loadAll()
   refreshTimer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return
+    if (!canAccessBackend.value || document.visibilityState !== 'visible') return
     void loadAll(true)
   }, REFRESH_INTERVAL_MS)
+})
+
+watch(canAccessBackend, (ready) => {
+  if (ready) void loadAll(true)
 })
 
 onUnmounted(() => {

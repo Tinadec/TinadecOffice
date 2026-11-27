@@ -340,10 +340,12 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
             || CoreVirtualToolPolicy.IsSpecPropose(resource[7..])
             || CoreVirtualToolPolicy.IsTinadecConfig(resource[7..]));
 
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+
     private static bool IsSpatialSpecReview(string content, AgentInstanceRecord instance, CapabilityClaim claim)
     {
         if (claim.Resource != "tool://" + CoreVirtualToolPolicy.SpecProposeToolId) return false;
-        var frozen = JsonSerializer.Deserialize<FrozenRunConfigurationV1>(content, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var frozen = JsonSerializer.Deserialize<FrozenRunConfigurationV1>(content, WebJsonOptions);
         return frozen?.SpaceOptions is { SpecEnabled: true } && frozen.Graph is { } graph
             && frozen.OperationAgents.Any(agent => agent.Id == graph.ConversationTemplateSlug
                 && agent.AgentVersionId == instance.AgentVersionId

@@ -7,6 +7,7 @@ import EvidenceSearch from './EvidenceSearch.vue'
 import EnvironmentList from './EnvironmentList.vue'
 import { useNotifications } from '@/composables/useNotifications'
 import { useAgentDirectory } from '@/composables/useAgentDirectory'
+import { useHostAccess } from '@/lib/hostAccess'
 import {
   api,
   type OrganizationDto,
@@ -26,6 +27,7 @@ import {
  * report — and Core checks both again.
  */
 const props = defineProps<{ sessionId?: string | null }>()
+const { canAccessBackend } = useHostAccess()
 
 type Section = 'members' | 'rooms' | 'reports' | 'evidence' | 'environments' | 'topology'
 type Phase = 'idle' | 'loading' | 'ready' | 'not-started' | 'error'
@@ -478,10 +480,14 @@ watch(() => messages.value.at(-1)?.id, async () => {
 })
 
 onMounted(() => {
-  if (props.sessionId) void refresh()
+  if (props.sessionId && canAccessBackend.value) void refresh()
   timer = setInterval(() => {
-    if (!running && props.sessionId && toValue(active) && document.visibilityState === 'visible') void refresh()
+    if (!running && canAccessBackend.value && props.sessionId && toValue(active) && document.visibilityState === 'visible') void refresh()
   }, POLL_MS)
+})
+
+watch(canAccessBackend, (ready) => {
+  if (ready && props.sessionId && toValue(active)) void refresh()
 })
 
 onBeforeUnmount(() => {

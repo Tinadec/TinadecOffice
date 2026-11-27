@@ -1115,6 +1115,7 @@ internal sealed partial class FullDuplexRunEngine
         _autonomousPlanning?.Forget(runId);
         _liveMcpBoardPosts.TryRemove(runId, out _);
         _compactionRecommendedRevisions.TryRemove(runId, out _);
+        PruneSettledTerminalGates(runId);
         try { _teamBoardMcpBridge?.RevokeRunTokens(runId); }
         catch (Exception ex) { _logger.TryLogDebug(ex, "Could not revoke team MCP tokens on completion for run {RunId}.", runId); }
 
@@ -1133,6 +1134,18 @@ internal sealed partial class FullDuplexRunEngine
         if (_services.GetService<IToolExecutionContextLifecycle>() is { } contexts)
             await contexts.ReleaseAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         await SetRunMembersOfflineAsync(runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private void PruneSettledTerminalGates(Guid currentRunId)
+    {
+        if (_terminalFinalizationGates.Count <= 128) return;
+        foreach (var pair in _terminalFinalizationGates)
+        {
+            if (pair.Key != currentRunId && pair.Value.CurrentCount == 1)
+            {
+                _terminalFinalizationGates.TryRemove(pair.Key, out _);
+            }
+        }
     }
 
     private async Task<string> GenerateMeetingResponseAsync(

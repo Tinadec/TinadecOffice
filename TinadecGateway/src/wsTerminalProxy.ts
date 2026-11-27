@@ -150,19 +150,47 @@ export function createInteractiveShellSession(options: {
     const pumpStream = async (stream: ReadableStream<Uint8Array> | number | undefined) => {
       if (!stream || typeof stream === 'number') return;
       const reader = stream.getReader();
+      let pendingCr = false;
+      const emitNormalized = (text: string) => {
+        if (!text && !pendingCr) return;
+        let combined = text;
+        if (pendingCr) {
+          combined = '\r' + combined;
+          pendingCr = false;
+        }
+        if (isWindows && combined.endsWith('\r')) {
+          pendingCr = true;
+          combined = combined.slice(0, -1);
+        }
+        if (combined.length > 0) {
+          const normalized = isWindows ? combined.replace(/\r?\n/g, '\r\n') : combined;
+          sendJson(options.ws, { type: 'data', data: normalized });
+        }
+      };
       try {
         while (!state?.closed) {
           const { done, value } = await reader.read();
           if (done) break;
           if (value && value.length > 0) {
-            const text = decoder.decode(value, { stream: true });
-            const normalized = isWindows ? text.replace(/\r?\n/g, '\r\n') : text;
-            sendJson(options.ws, { type: 'data', data: normalized });
+            emitNormalized(decoder.decode(value, { stream: true }));
+          }
+        }
+        const remaining = decoder.decode();
+        if (!state?.closed) {
+          emitNormalized(remaining);
+          if (pendingCr) {
+            sendJson(options.ws, { type: 'data', data: '\r' });
+            pendingCr = false;
           }
         }
       } catch {
         // stream closed
       } finally {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
         try {
           reader.releaseLock();
         } catch {
@@ -289,21 +317,57 @@ export function createAgentTerminalBridgeSession(options: {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      while (!closed && !abort.signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const normalizedChunk = decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
-          ? buffer.slice(0, -1) + normalizedChunk
-          : buffer + normalizedChunk;
-        if (buffer.includes('\r')) {
-          buffer = buffer.replace(/\r\n/g, '\n');
+      let trailingCr = false;
+      const onAbort = () => {
+        void reader.cancel().catch(() => {});
+      };
+      abort.signal.addEventListener('abort', onAbort, { once: true });
+      const appendNormalized = (chunkText: string) => {
+        if (!chunkText) return;
+        let combined = trailingCr ? '\r' + chunkText : chunkText;
+        trailingCr = false;
+        if (combined.endsWith('\r')) {
+          trailingCr = true;
+          combined = combined.slice(0, -1);
         }
-        let idx: number;
-        while ((idx = buffer.indexOf('\n\n')) >= 0) {
-          const block = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          handleSseBlock(block);
+        if (combined.length > 0) {
+          buffer += combined.replace(/\r\n?/g, '\n');
+        }
+      };
+      try {
+        while (!closed && !abort.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          appendNormalized(decoder.decode(value, { stream: true }));
+          let idx: number;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            handleSseBlock(block);
+          }
+        }
+        const remaining = decoder.decode();
+        if (remaining) appendNormalized(remaining);
+        if (trailingCr) {
+          buffer += '\n';
+          trailingCr = false;
+        }
+        if (buffer.trim().length > 0 && !closed && !abort.signal.aborted) {
+          for (const block of buffer.split('\n\n')) {
+            if (block.trim().length > 0) handleSseBlock(block);
+          }
+        }
+      } finally {
+        abort.signal.removeEventListener('abort', onAbort);
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+          // ignore
         }
       }
     } catch {
@@ -363,9 +427,12 @@ export function createAgentTerminalBridgeSession(options: {
               'content-type': 'application/json',
             },
             body: JSON.stringify({ data: msg.data }),
+            signal: abort.signal,
           },
         ).catch(() => {
-          sendJson(options.ws, { type: 'error', message: 'Failed to forward stdin to Core.' });
+          if (!closed && !abort.signal.aborted) {
+            sendJson(options.ws, { type: 'error', message: 'Failed to forward stdin to Core.' });
+          }
         });
       } else if (msg.type === 'kill') {
         void fetchImpl(
@@ -373,6 +440,7 @@ export function createAgentTerminalBridgeSession(options: {
           {
             method: 'POST',
             headers: options.forwardHeaders,
+            signal: abort.signal,
           },
         ).catch(() => undefined);
       }

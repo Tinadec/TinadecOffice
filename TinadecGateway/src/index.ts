@@ -1688,6 +1688,7 @@ const app = new Elysia()
       method: 'POST',
       body: JSON.stringify(body ?? {}),
       headers,
+      signal: request.signal,
     });
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
@@ -3183,6 +3184,7 @@ const app = new Elysia()
       method: 'POST',
       body: JSON.stringify(body ?? {}),
       headers,
+      signal: request.signal,
     });
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);

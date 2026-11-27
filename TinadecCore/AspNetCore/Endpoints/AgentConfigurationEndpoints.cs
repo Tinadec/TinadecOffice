@@ -12,6 +12,8 @@ namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class AgentConfigurationEndpoints
 {
+    private static readonly JsonSerializerOptions SnakeCaseJsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+
     public static IEndpointRouteBuilder MapAgentConfigurationEndpoints(this IEndpointRouteBuilder app)
     {
         // Agents
@@ -593,7 +595,7 @@ public static class AgentConfigurationEndpoints
             if (err is not null) return Results.BadRequest(new { code = "invalid_request", message = err });
         }
         var ver = (await db.AgentVersions.Where(x => x.AgentDefinitionId == id).MaxAsync(x => (int?)x.Version, ct) ?? 0) + 1;
-        var snap = JsonSerializer.Serialize(ToAgentDto(rec), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        var snap = JsonSerializer.Serialize(ToAgentDto(rec), SnakeCaseJsonOptions);
         var vrec = new AgentVersionRecord { Id = Guid.NewGuid(), TenantId = t, WorkspaceId = w, AgentDefinitionId = id, Version = ver, Layer = rec.Layer, Role = rec.Role, SnapshotJson = snap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snap))).ToLowerInvariant(), ContentLength = snap.Length, Status = "published", Revision = 1, CreatedAt = DateTimeOffset.UtcNow, CreatedByPrincipalId = p };
         db.AgentVersions.Add(vrec);
         rec.Version = ver; rec.Revision++; rec.UpdatedAt = DateTimeOffset.UtcNow; rec.Status = "published";

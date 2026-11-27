@@ -560,6 +560,20 @@ export interface UseSessionWorktreesOptions {
 const MAX_WORKTREE_DIFF_PROBES = 8
 const REFRESH_DEBOUNCE_MS = 250
 
+const inFlightWorktreeLists = new Map<string, Promise<unknown>>()
+const inFlightTopologies = new Map<string, Promise<SessionTopologyDto | null>>()
+const inFlightDiffProbes = new Map<string, Promise<unknown>>()
+
+function coalesceAsync<T>(map: Map<string, Promise<T>>, key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = map.get(key)
+  if (existing) return existing
+  const promise = factory().finally(() => {
+    if (map.get(key) === promise) map.delete(key)
+  })
+  map.set(key, promise)
+  return promise
+}
+
 export function useSessionWorktrees(options: UseSessionWorktreesOptions) {
   const worktrees = ref<RawWorktreeEntry[]>([])
   const topology = shallowRef<SessionTopologyDto | null>(null)
@@ -625,15 +639,20 @@ export function useSessionWorktrees(options: UseSessionWorktreesOptions) {
       targets.map(async ([key, wtPath]) => {
         const lookupCwd = rootPath || wtPath
         const isSubWorktree = Boolean(rootPath && pathComparisonKey(wtPath) !== mainKey)
-        const res = await api
-          .executeCodeTool('git_worktree_manager', {
-            cwd: lookupCwd,
-            arguments: isSubWorktree
-              ? { action: 'diff_preview', repository_path: wtPath, max_files: 80, max_diff_bytes: 120000 }
-              : { action: 'diff_preview', max_files: 80, max_diff_bytes: 120000 },
-          })
-          .catch(() => null)
-        return [key, res?.data as Record<string, unknown> | undefined] as const
+        const probeCacheKey = `${lookupCwd}|${isSubWorktree ? wtPath : ''}`
+        const res = await coalesceAsync(
+          inFlightDiffProbes,
+          probeCacheKey,
+          () => api
+            .executeCodeTool('git_worktree_manager', {
+              cwd: lookupCwd,
+              arguments: isSubWorktree
+                ? { action: 'diff_preview', repository_path: wtPath, max_files: 80, max_diff_bytes: 120000 }
+                : { action: 'diff_preview', max_files: 80, max_diff_bytes: 120000 },
+            })
+            .catch(() => null),
+        ) as { data?: Record<string, unknown> } | null
+        return [key, res?.data] as const
       }),
     )
     if (disposed || readProbe !== probeGeneration) return
@@ -668,10 +687,18 @@ export function useSessionWorktrees(options: UseSessionWorktreesOptions) {
       const shouldQueryWorktrees = includeWorktreeQuery && (!options.deferInitialProbe || !toValue(options.externalWorktrees))
       const [wtRes, topoRes] = await Promise.all([
         rootPath && shouldQueryWorktrees && typeof api?.executeCodeTool === 'function'
-          ? api.executeCodeTool('git_worktree_manager', { cwd: rootPath, arguments: { action: 'worktrees' } }).catch(() => null)
+          ? coalesceAsync(
+              inFlightWorktreeLists,
+              pathComparisonKey(rootPath),
+              () => api.executeCodeTool('git_worktree_manager', { cwd: rootPath, arguments: { action: 'worktrees' } }).catch(() => null),
+            ) as Promise<{ data?: Record<string, unknown> } | null>
           : Promise.resolve(null),
         sessionId && typeof api?.getSessionTopology === 'function'
-          ? api.getSessionTopology(sessionId, { include_finished: true, max_runs: 25, max_tasks: 120 }).catch(() => null)
+          ? coalesceAsync(
+              inFlightTopologies,
+              sessionId,
+              () => api.getSessionTopology(sessionId, { include_finished: true, max_runs: 25, max_tasks: 120 }).catch(() => null),
+            )
           : Promise.resolve(null),
       ])
       if (disposed || readGen !== generation) return

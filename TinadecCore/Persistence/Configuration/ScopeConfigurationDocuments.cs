@@ -66,14 +66,63 @@ public sealed class ScopeConfigurationDocuments(
             {
                 return cached.Hash;
             }
-            await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var hash = await HashStreamNormalizedAsync(stream, fullPath, cancellationToken).ConfigureAwait(false);
+            string hash;
+            if (length <= 512 * 1024)
+            {
+                hash = HashSmallFileSync(fullPath, length);
+            }
+            else
+            {
+                await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                hash = await HashStreamNormalizedAsync(stream, fullPath, cancellationToken).ConfigureAwait(false);
+            }
             if (FileHashCache.Count >= 512) FileHashCache.Clear();
             FileHashCache[fullPath] = new CachedFileHash(length, mtimeTicks, hash);
             return hash;
         }
         await using var fallback = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         return await HashStreamNormalizedAsync(fallback, fullPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string HashSmallFileSync(string fullPath, long length)
+    {
+        using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 16 * 1024, FileOptions.SequentialScan);
+        Span<byte> prefixBytes = stackalloc byte[3];
+        var read = stream.Read(prefixBytes);
+        if (read == 3 && prefixBytes[0] == 0xEF && prefixBytes[1] == 0xBB && prefixBytes[2] == 0xBF)
+        {
+            return Convert.ToHexStringLower(SHA256.HashData(stream));
+        }
+        if (read >= 2 && ((prefixBytes[0] == 0xFF && prefixBytes[1] == 0xFE) || (prefixBytes[0] == 0xFE && prefixBytes[1] == 0xFF)))
+        {
+            stream.Dispose();
+            return Hash(File.ReadAllText(fullPath));
+        }
+        stream.Position = 0;
+        if (length > 0 && length <= 64 * 1024)
+        {
+            var rented = System.Buffers.ArrayPool<byte>.Shared.Rent((int)length);
+            try
+            {
+                var total = 0;
+                while (total < (int)length)
+                {
+                    var n = stream.Read(rented, total, (int)length - total);
+                    if (n == 0) break;
+                    total += n;
+                }
+                if (total == (int)length)
+                {
+                    return Convert.ToHexStringLower(SHA256.HashData(rented.AsSpan(0, total)));
+                }
+                stream.Position = 0;
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
     private static async Task<string> HashStreamNormalizedAsync(FileStream stream, string fullPath, CancellationToken cancellationToken)
@@ -170,11 +219,10 @@ public sealed class ScopeConfigurationDocuments(
             {
                 var bytes = Encoding.UTF8.GetBytes(text);
                 await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
+                    4096, FileOptions.Asynchronous))
                 {
                     await output.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    output.Flush(flushToDisk: true);
                 }
                 AssertNoLinks(target, path);
                 File.Move(temporary, path, overwrite: true);
@@ -209,10 +257,9 @@ public sealed class ScopeConfigurationDocuments(
         try
         {
             await using var marker = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                4096, FileOptions.Asynchronous | FileOptions.WriteThrough);
+                4096, FileOptions.Asynchronous);
             await marker.WriteAsync(Encoding.UTF8.GetBytes(id + "\n"), cancellationToken).ConfigureAwait(false);
             await marker.FlushAsync(cancellationToken).ConfigureAwait(false);
-            marker.Flush(flushToDisk: true);
         }
         catch (IOException) when (File.Exists(path)) { }
     }

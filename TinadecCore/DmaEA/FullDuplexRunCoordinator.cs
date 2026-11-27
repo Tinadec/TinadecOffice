@@ -80,9 +80,11 @@ public sealed class RunAdmissionException : InvalidOperationException
     public string Code { get; }
 }
 
-internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
+internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator, IDisposable
 {
     private static readonly TimeSpan FollowPollInterval = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan FollowDeferredTerminalInterval = TimeSpan.FromMilliseconds(25);
+    private static readonly TimeSpan LiveStateCheckInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
 
     private readonly IConversationStore _conversations;
@@ -97,6 +99,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
     // Live frames published by the engine after each durable append. Optional: without it the
     // coordinator simply replays storage, which is what it always did and is always correct.
     private readonly RunStreamProjection? _projection;
+    private readonly IDisposable? _runStreamSubscription;
 
     public FullDuplexRunCoordinator(
         IConversationStore conversations,
@@ -120,6 +123,20 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         _storageGuard = storageGuard;
         _storageLocations = storageLocations;
         _projection = projection;
+        if (_projection is not null && _lifecycle is IRunStreamPublicationSource source)
+        {
+            _runStreamSubscription = source.SubscribeRunStream(OnDurableRunStreamCommitted);
+        }
+    }
+
+    public void Dispose() => _runStreamSubscription?.Dispose();
+
+    private void OnDurableRunStreamCommitted(Guid runId, DurableRunStreamChunk chunk)
+    {
+        if (_projection is null) return;
+        _projection.Publish(ToStreamChunk(chunk));
+        if (chunk.Kind is "done" or "error")
+            _projection.Seal(runId);
     }
 
     public async Task<RunSubmission> SubmitAsync(FullDuplexInvocation invocation, CancellationToken cancellationToken = default)
@@ -598,6 +615,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
 
         var cursor = afterSequence;
         var lastEmitAt = DateTimeOffset.UtcNow;
+        var lastStateCheckAt = DateTimeOffset.MinValue;
         // True while the reader is fed from the live projection. It starts live when the run has
         // a buffer covering the cursor, and the durable replay below is the only way back: replay
         // is always correct, only slower, so any doubt resolves to replay.
@@ -626,54 +644,72 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 batch = _projection.Since(runId, cursor);
             }
 
+            var deferredTerminal = false;
             foreach (var chunk in batch)
             {
                 // The durable tail is written before CompleteRunAsync so a crashed owner can
                 // finish its claim. Do not publish success while the run still says reviewing;
                 // keeping the cursor before this frame lets the committed status be seen first.
-                if (chunk.Kind == "done" && chunk.FinishReason == "completed"
-                    && (await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false)).Status != RunStatus.Completed)
-                    break;
+                if (chunk.Kind == "done" && chunk.FinishReason == "completed")
+                {
+                    lastStateCheckAt = DateTimeOffset.UtcNow;
+                    if ((await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false)).Status != RunStatus.Completed)
+                    {
+                        deferredTerminal = true;
+                        break;
+                    }
+                }
                 cursor = Math.Max(cursor, chunk.Seq);
                 lastEmitAt = DateTimeOffset.UtcNow;
                 yield return chunk;
                 if (chunk.Kind is "done" or "error") yield break;
             }
 
-            var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
-            if (IsTerminal(state.Status))
-            {
-                // Drain storage once more after observing terminal state so a durable "done" frame
-                // deferred at line 635 (before CompleteRunAsync committed) is delivered with its
-                // full MessageId and Usage rather than replaced by a synthetic fallback frame.
-                foreach (var tail in await ReplayAsync())
-                {
-                    cursor = Math.Max(cursor, tail.Seq);
-                    yield return tail;
-                    if (tail.Kind is "done" or "error") yield break;
-                }
+            var now = DateTimeOffset.UtcNow;
+            var shouldCheckState = !live
+                || batch.Count == 0
+                || deferredTerminal
+                || (_projection?.IsSealed(runId) ?? false)
+                || (now - lastStateCheckAt) >= LiveStateCheckInterval;
 
-                // The run finished and nothing more will be appended. A terminal frame is written
-                // by the same path that ends the run, so a reader that saw done/error already
-                // returned; reaching here means the run ended without one — a failure before the
-                // answer, or a run finished elsewhere. Report the durable state instead of the old
-                // behaviour of forging a "done" after retrying a repair helper, which showed the
-                // client a success the stream never carried.
-                yield return state.Status switch
+            if (shouldCheckState)
+            {
+                lastStateCheckAt = now;
+                var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+                if (IsTerminal(state.Status))
                 {
-                    RunStatus.Cancelled => new RunStreamChunk(
-                        runId, turnId ?? Guid.Empty, null, cursor, "done",
-                        FinishReason: "cancelled", OccurredAt: DateTimeOffset.UtcNow),
-                    RunStatus.Failed => new RunStreamChunk(
-                        runId, turnId ?? Guid.Empty, null, cursor, "error",
-                        ErrorCategory: state.TerminalErrorCategory ?? RunErrorTaxonomy.Runtime,
-                        SafeErrorMessage: state.Summary ?? "The run failed before producing a final response.",
-                        OccurredAt: DateTimeOffset.UtcNow),
-                    _ => new RunStreamChunk(
-                        runId, turnId ?? Guid.Empty, null, cursor, "done",
-                        FinishReason: "completed", OccurredAt: DateTimeOffset.UtcNow)
-                };
-                yield break;
+                    // Drain storage once more after observing terminal state so a durable "done" frame
+                    // deferred at line 635 (before CompleteRunAsync committed) is delivered with its
+                    // full MessageId and Usage rather than replaced by a synthetic fallback frame.
+                    foreach (var tail in await ReplayAsync())
+                    {
+                        cursor = Math.Max(cursor, tail.Seq);
+                        yield return tail;
+                        if (tail.Kind is "done" or "error") yield break;
+                    }
+
+                    // The run finished and nothing more will be appended. A terminal frame is written
+                    // by the same path that ends the run, so a reader that saw done/error already
+                    // returned; reaching here means the run ended without one — a failure before the
+                    // answer, or a run finished elsewhere. Report the durable state instead of the old
+                    // behaviour of forging a "done" after retrying a repair helper, which showed the
+                    // client a success the stream never carried.
+                    yield return state.Status switch
+                    {
+                        RunStatus.Cancelled => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "done",
+                            FinishReason: "cancelled", OccurredAt: DateTimeOffset.UtcNow),
+                        RunStatus.Failed => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "error",
+                            ErrorCategory: state.TerminalErrorCategory ?? RunErrorTaxonomy.Runtime,
+                            SafeErrorMessage: state.Summary ?? "The run failed before producing a final response.",
+                            OccurredAt: DateTimeOffset.UtcNow),
+                        _ => new RunStreamChunk(
+                            runId, turnId ?? Guid.Empty, null, cursor, "done",
+                            FinishReason: "completed", OccurredAt: DateTimeOffset.UtcNow)
+                    };
+                    yield break;
+                }
             }
 
             if (DateTimeOffset.UtcNow - lastEmitAt >= HeartbeatInterval)
@@ -685,7 +721,9 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                     OccurredAt: DateTimeOffset.UtcNow);
             }
 
-            if (live)
+            if (deferredTerminal)
+                await Task.Delay(FollowDeferredTerminalInterval, cancellationToken).ConfigureAwait(false);
+            else if (live)
                 await _projection!.WaitForFramesAsync(runId, cursor, cancellationToken).ConfigureAwait(false);
             else
                 await Task.Delay(FollowPollInterval, cancellationToken).ConfigureAwait(false);

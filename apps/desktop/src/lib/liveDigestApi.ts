@@ -1,6 +1,7 @@
 import i18n from '@/i18n'
 import { ApiError, apiErrorMessage } from './apiError'
 import { assertHostAccess } from './hostAccess'
+import { consumeSseResponseBody } from './sseStream'
 import { readBackendResponse } from './backendRequest'
 import {
   captureStorageId,
@@ -629,44 +630,12 @@ export function openLiveDigestStream(
       reconnectAttempt = 0
       handlers.onOpen?.()
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let idleTimer: ReturnType<typeof setTimeout> | null = null
-      const armIdle = () => {
-        if (idleTimer !== null) clearTimeout(idleTimer)
-        idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs)
-      }
-      controller.signal.addEventListener(
-        'abort',
-        () => {
-          if (idleTimer !== null) clearTimeout(idleTimer)
-        },
-        { once: true },
-      )
-      armIdle()
-
-      while (!closed && !controller.signal.aborted) {
-        const { done, value } = await reader.read()
-        armIdle()
-        if (closed || controller.signal.aborted) break
-        const normalizedChunk = value ? decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n') : decoder.decode(undefined, { stream: false }).replace(/\r\n/g, '\n')
-        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
-          ? buffer.slice(0, -1) + normalizedChunk
-          : buffer + normalizedChunk
-        if (buffer.includes('\r')) buffer = buffer.replace(/\r\n/g, '\n')
-        let boundary: number
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-          dispatchBlock(buffer.slice(0, boundary))
-          buffer = buffer.slice(boundary + 2)
-          if (closed) break
-        }
-        if (done) {
-          if (buffer.trim() && !closed) dispatchBlock(buffer)
-          break
-        }
-      }
-      if (idleTimer !== null) clearTimeout(idleTimer)
+      await consumeSseResponseBody(response.body, {
+        signal: controller.signal,
+        idleTimeoutMs,
+        isClosed: () => closed,
+        onBlock: (block) => dispatchBlock(block),
+      })
     } catch (error) {
       if (!closed && !finishedByDone) {
         handlers.onError?.(error instanceof Error ? error : new Error(String(error)))

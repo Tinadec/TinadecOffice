@@ -24,6 +24,7 @@ import {
 } from '@/lib/endpointScope'
 import type { StorageScopeDto, StorageStatsDto, StorageCleanupPreviewDto, StorageContentPreviewDto, StorageDeletePreviewDto, SessionTransferDto, ConfigurationDocumentDto, StorageConfigureInput } from '@/settings/storage'
 import { ScopedEventSource } from '@/lib/scopedEventSource'
+import { consumeSseResponseBody } from '@/lib/sseStream'
 import {
   beginPeerSubmissionDraft,
   clearInFlightPeerSubmissionDraft,
@@ -7494,40 +7495,12 @@ function openBoardEventStream(
       reconnectAttempt = 0;
       options.onOpen?.();
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let idleTimer: ReturnType<typeof setTimeout> | null = null;
-      const armIdle = () => {
-        if (idleTimer !== null) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs);
-      };
-      controller.signal.addEventListener(
-        'abort',
-        () => {
-          if (idleTimer !== null) clearTimeout(idleTimer);
-        },
-        { once: true },
-      );
-      armIdle();
-
-      while (!closed && !controller.signal.aborted) {
-        const { done, value } = await reader.read();
-        armIdle();
-        if (closed || controller.signal.aborted) break;
-        buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
-        let boundary: number;
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-          dispatchBlock(buffer.slice(0, boundary));
-          buffer = buffer.slice(boundary + 2);
-          if (closed) break;
-        }
-        if (done) {
-          if (buffer.trim() && !closed) dispatchBlock(buffer);
-          break;
-        }
-      }
-      if (idleTimer !== null) clearTimeout(idleTimer);
+      await consumeSseResponseBody(response.body, {
+        signal: controller.signal,
+        idleTimeoutMs,
+        isClosed: () => closed,
+        onBlock: (block) => dispatchBlock(block),
+      });
     } catch (error) {
       if (!closed) {
         options.onError?.(error instanceof Error ? error : new Error(String(error)));

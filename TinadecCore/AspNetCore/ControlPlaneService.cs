@@ -235,9 +235,10 @@ public sealed class ControlPlaneService
         string? apiKey = row.SecretReference != null && await _secrets.ExistsAsync(row.SecretReference, ct) ? await _secrets.GetAsync(row.SecretReference, ct) : null;
         try
         {
-            using var client = TinadecBranding.CreateClient();
+            var targetUri = new Uri($"{baseUrl.TrimEnd('/')}/models");
+            using var client = TinadecBranding.CreateClient(targetUri);
             client.Timeout = TimeSpan.FromSeconds(10);
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/models");
+            using var request = new HttpRequestMessage(HttpMethod.Get, targetUri);
             if (protocol == ChatProtocols.AnthropicMessages)
             {
                 if (!string.IsNullOrEmpty(apiKey)) request.Headers.Add("x-api-key", apiKey);
@@ -255,8 +256,11 @@ public sealed class ControlPlaneService
                 .ToArray();
             return Results.Ok(new { models });
         }
-        catch (OperationCanceledException) { return Results.Json(new { code = "MODEL_DISCOVERY_TIMEOUT", message = "Provider /models request timed out after 10 seconds." }, statusCode: 502); }
-        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or TaskCanceledException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return Results.Json(new { code = "MODEL_DISCOVERY_TIMEOUT", message = "Provider /models request timed out after 10 seconds." }, statusCode: 502);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException)
         { return Results.Json(new { code = "MODEL_DISCOVERY_NETWORK", message = ex.Message }, statusCode: 502); }
     }
 
@@ -835,12 +839,26 @@ public sealed class ControlPlaneService
     public async Task<IResult> ListRoutes(CancellationToken ct)
     {
         await using var db = await _models.CreateDbContextAsync(ct);
-        var rows = await db.Routes.AsNoTracking().Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null).ToListAsync(ct);
+        var rows = await db.Routes.AsNoTracking()
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null)
+            .OrderBy(x => x.Purpose)
+            .ToListAsync(ct);
+        if (rows.Count == 0) return Results.Ok(Array.Empty<ModelRouteDto>());
+        var versionIds = rows.Select(x => x.CurrentVersionId).Distinct().ToArray();
+        var versions = await db.RouteVersions.AsNoTracking()
+            .Where(x => versionIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, ct);
+        var candidatesByVersion = (await db.RouteCandidates.AsNoTracking()
+            .Where(x => versionIds.Contains(x.RouteVersionId))
+            .OrderBy(x => x.Position)
+            .ToListAsync(ct))
+            .GroupBy(x => x.RouteVersionId)
+            .ToDictionary(g => g.Key, g => g.ToList());
         var output = new List<ModelRouteDto>(rows.Count);
-        foreach (var row in rows.OrderBy(x => x.Purpose, StringComparer.Ordinal))
+        foreach (var row in rows)
         {
-            var version = await db.RouteVersions.AsNoTracking().SingleAsync(x => x.Id == row.CurrentVersionId, ct);
-            var candidates = await db.RouteCandidates.AsNoTracking().Where(x => x.RouteVersionId == version.Id).OrderBy(x => x.Position).ToListAsync(ct);
+            var version = versions[row.CurrentVersionId];
+            var candidates = candidatesByVersion.GetValueOrDefault(version.Id) ?? [];
             output.Add(ToRouteDto(row, version, candidates));
         }
         return Results.Ok(output);

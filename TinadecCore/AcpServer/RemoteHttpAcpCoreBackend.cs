@@ -47,9 +47,15 @@ internal sealed class RemoteHttpAcpCoreBackend : IAcpCoreBackend
         }
         else
         {
-            _http = new HttpClient
+            var normalized = NormalizeBaseUri(baseUri);
+            _http = new HttpClient(new SocketsHttpHandler
             {
-                BaseAddress = NormalizeBaseUri(baseUri),
+                UseProxy = false,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+                ConnectTimeout = TimeSpan.FromSeconds(10)
+            }, disposeHandler: true)
+            {
+                BaseAddress = normalized,
                 Timeout = Timeout.InfiniteTimeSpan
             };
             _disposeHttp = true;

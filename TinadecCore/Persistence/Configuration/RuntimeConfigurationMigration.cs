@@ -193,10 +193,10 @@ public static class RuntimeConfigurationMigration
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None))
             {
                 output.Write(Encoding.UTF8.GetBytes(text));
-                output.Flush(flushToDisk: true);
+                output.Flush();
             }
             File.Move(temporary, path, overwrite: true);
         }
@@ -211,7 +211,7 @@ public static class RuntimeConfigurationMigration
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         try
         {
-            using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+            using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None);
             output.Write(Encoding.UTF8.GetBytes(Revision + "\n"));
         }
         catch (IOException) when (File.Exists(path)) { }

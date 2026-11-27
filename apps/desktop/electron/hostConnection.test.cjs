@@ -68,3 +68,21 @@ test('verification timeout is recoverable even when a dependency never settles',
 test('a false proof cannot authorize the host', async () => {
   const f = fixture(async () => false); assert.equal((await f.host.start()).state, 'rejected'); f.host.stop();
 });
+test('automatic background retries while unavailable do not oscillate checking/unavailable', async () => {
+  let calls = 0;
+  const f = fixture(async () => {
+    calls++;
+    if (calls < 3) throw new Error('network down');
+    return true;
+  });
+  await f.host.start();
+  const afterFirstFailureCount = f.events.length;
+  await f.next();
+  assert.equal(f.events.slice(afterFirstFailureCount).some(e => e.state === 'checking'), false);
+  assert.equal(f.host.snapshot().state, 'unavailable');
+  await f.next();
+  assert.equal(f.host.snapshot().state, 'ready');
+  assert.equal(f.events.at(-1)?.state, 'ready');
+  await f.host.retry();
+  f.host.stop();
+});

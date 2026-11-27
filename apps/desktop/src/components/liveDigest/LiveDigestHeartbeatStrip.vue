@@ -3,10 +3,13 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Radio, Users } from '@lucide/vue'
 import { useLiveDigest, type LiveDigestSnapshotDto } from '@/composables/useLiveDigest'
+import { isTerminalLiveDigestStatus } from '@/lib/liveDigestApi'
 import { focusDockCard } from '@/lib/homeDockSync'
 
 const props = withDefaults(defineProps<{
   runId: string | null | undefined
+  /** Known run status from parent run list; avoids opening an SSE stream for already-terminal runs. */
+  runStatus?: string | null
   /** Optional external snapshot override (primarily for tests or pre-hydrated hosts). */
   snapshotOverride?: LiveDigestSnapshotDto | null
   /** Whether clicking the strip automatically opens the Home right dock 'live-digest' card. */
@@ -14,6 +17,7 @@ const props = withDefaults(defineProps<{
   /** Optional storage scope id for multi-storage sessions. */
   storageId?: string
 }>(), {
+  runStatus: null,
   snapshotOverride: null,
   openDockOnClick: true,
   storageId: undefined,
@@ -26,7 +30,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const live = useLiveDigest(() => (props.snapshotOverride ? null : props.runId), {
-  autoStream: () => !props.snapshotOverride,
+  autoStream: () => !props.snapshotOverride && !isTerminalLiveDigestStatus(props.runStatus),
   storageId: () => props.storageId,
 })
 

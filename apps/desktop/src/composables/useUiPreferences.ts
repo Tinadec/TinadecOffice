@@ -1,4 +1,4 @@
-import { computed, effectScope, reactive, ref, watch, type ComputedRef, type EffectScope, type Ref } from 'vue'
+import { computed, effectScope, onScopeDispose, reactive, ref, watch, type ComputedRef, type EffectScope, type Ref } from 'vue'
 import {
   api,
   type PatchUiPreferencesInput,
@@ -778,8 +778,14 @@ export function __resetUiPreferencesForTests(): void {
   storeSingleton = null
 }
 
-export function useUiPreferences(): UiPreferencesStore {
+export interface UseUiPreferencesOptions {
+  /** Open the `/api/v1/preferences/events` SSE stream in this window. Child windows disable it and sync over BroadcastChannel. */
+  streamEvents?: boolean
+}
+
+export function useUiPreferences(options: UseUiPreferencesOptions = {}): UiPreferencesStore {
   if (storeSingleton) return storeSingleton
+  const streamEvents = options.streamEvents ?? true
 
   const legacySnapshot = captureLegacyLocalMigration()
   const cached = readCachedDocument()
@@ -863,7 +869,21 @@ export function useUiPreferences(): UiPreferencesStore {
       }
     }
 
-    function applyDocument(doc: UiPreferencesDocumentDto, persistCache = true): UiPreferencesDocumentDto {
+    const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tinadec:ui-preferences') : null
+    if (channel) {
+      channel.onmessage = (event: MessageEvent<{ type?: string; doc?: UiPreferencesDocumentDto }>) => {
+        if (event.data?.type !== 'ui-preferences-sync' || !event.data.doc) return
+        const incomingHash = event.data.doc.content_hash
+        if (incomingHash && incomingHash === contentHash.value) return
+        loaded.value = true
+        applyDocument(normalizeUiPreferencesDocument(event.data.doc, appearance, interaction), true, false)
+      }
+      onScopeDispose(() => {
+        channel.close()
+      })
+    }
+
+    function applyDocument(doc: UiPreferencesDocumentDto, persistCache = true, broadcast = true): UiPreferencesDocumentDto {
       const normalizedAppearance = normalizeAppearancePreferences(doc.appearance, appearance)
       const normalizedInteraction = normalizeInteractionPreferences(doc.interaction, interaction)
       syncingInternal = true
@@ -878,6 +898,13 @@ export function useUiPreferences(): UiPreferencesStore {
       applySideEffects()
       const snapshot = currentDocument()
       if (persistCache) writeCachedDocument(snapshot)
+      if (broadcast && channel) {
+        try {
+          channel.postMessage({ type: 'ui-preferences-sync', doc: snapshot })
+        } catch {
+          // ignore closed channel
+        }
+      }
       return snapshot
     }
 
@@ -1211,7 +1238,7 @@ export function useUiPreferences(): UiPreferencesStore {
       (ready) => {
         if (ready) {
           void refresh()
-          openSseStream()
+          if (streamEvents) openSseStream()
         } else {
           closeSseStream()
         }

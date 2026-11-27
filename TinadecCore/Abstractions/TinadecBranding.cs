@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 
 namespace TinadecCore.Abstractions;
@@ -10,6 +11,25 @@ namespace TinadecCore.Abstractions;
 public static class TinadecBranding
 {
     public const string Name = "Tinadec";
+
+    private static readonly SocketsHttpHandler SharedExternalHandler = new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+        ConnectTimeout = TimeSpan.FromSeconds(15),
+        MaxConnectionsPerServer = 64,
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    };
+
+    private static readonly SocketsHttpHandler SharedLoopbackHandler = new()
+    {
+        UseProxy = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+        ConnectTimeout = TimeSpan.FromSeconds(10),
+        MaxConnectionsPerServer = 64,
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    };
 
     /// <summary>e.g. Tinadec/1.0.0</summary>
     public static string UserAgent => $"{Name}/{Version}";
@@ -36,17 +56,35 @@ public static class TinadecBranding
         }
     }
 
-    /// <summary>Creates a new HttpClient already branded.</summary>
+    public static SocketsHttpHandler HandlerFor(Uri? uri) =>
+        uri is not null && uri.IsLoopback ? SharedLoopbackHandler : SharedExternalHandler;
+
+    /// <summary>Creates a new HttpClient already branded backed by the shared pooled handler.</summary>
     public static HttpClient CreateClient()
     {
-        var client = new HttpClient();
+        var client = new HttpClient(SharedExternalHandler, disposeHandler: false);
         Apply(client);
         return client;
     }
 
     public static HttpClient CreateClient(Uri baseAddress)
     {
-        var client = new HttpClient { BaseAddress = baseAddress };
+        var client = new HttpClient(HandlerFor(baseAddress), disposeHandler: false) { BaseAddress = baseAddress };
+        Apply(client);
+        return client;
+    }
+
+    public static HttpClient CreateLongLivedClient(Uri? baseAddress = null, bool forceNoProxy = false)
+    {
+        var handler = forceNoProxy ? SharedLoopbackHandler : HandlerFor(baseAddress);
+        var client = new HttpClient(handler, disposeHandler: false)
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        if (baseAddress is not null)
+        {
+            client.BaseAddress = baseAddress;
+        }
         Apply(client);
         return client;
     }

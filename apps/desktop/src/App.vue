@@ -64,7 +64,7 @@ function hashRoutePath(hash: string): string {
 const isCompanionWindow = hashRoutePath(window.location.hash) === '#/companion'
 const isStandaloneWindow = isPetWindow || isCompanionWindow
 if (!isStandaloneWindow) {
-  useUiPreferences()
+  useUiPreferences({ streamEvents: !isChildWindow })
 }
 const { t } = useI18n()
 setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))

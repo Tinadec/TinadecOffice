@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 
 namespace TinadecCore.Models.Harness;
 
@@ -31,7 +32,7 @@ internal sealed class OpenCodeChatClient : IChatClient, IDisposable
         _serverUrl = serverUrl;
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory.Trim();
         _logger = logger;
-        _http = new HttpClient { BaseAddress = new Uri(serverUrl) };
+        _http = TinadecBranding.CreateLongLivedClient(new Uri(serverUrl), forceNoProxy: true);
         if (!string.IsNullOrWhiteSpace(token)) _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         if (_workingDirectory is not null) _http.DefaultRequestHeaders.TryAddWithoutValidation("x-opencode-directory", _workingDirectory);
     }
@@ -107,7 +108,9 @@ internal sealed class OpenCodeChatClient : IChatClient, IDisposable
         {
             try
             {
-                _http.PostAsync($"/session/{Uri.EscapeDataString(_sessionId)}/abort", content: null).GetAwaiter().GetResult();
+                using var abortCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                _http.PostAsync($"/session/{Uri.EscapeDataString(_sessionId)}/abort", content: null, abortCts.Token)
+                    .GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

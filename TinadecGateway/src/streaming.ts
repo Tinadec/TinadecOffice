@@ -133,9 +133,14 @@ export function wrapSseWithKeepalive(
   let timer: ReturnType<typeof setInterval> | null = null;
   let lastActivityAt = Date.now();
   let closed = false;
+  let onAbort: (() => void) | null = null;
 
   const cleanup = () => {
     closed = true;
+    if (signal && onAbort) {
+      signal.removeEventListener('abort', onAbort);
+      onAbort = null;
+    }
     if (timer) {
       clearInterval(timer);
       timer = null;
@@ -158,10 +163,11 @@ export function wrapSseWithKeepalive(
           try { controller.close(); } catch { /* ignore */ }
           return;
         }
-        signal.addEventListener('abort', () => {
+        onAbort = () => {
           cleanup();
           try { controller.close(); } catch { /* ignore */ }
-        }, { once: true });
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
       }
 
       timer = setInterval(() => {

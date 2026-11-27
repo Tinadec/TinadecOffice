@@ -39,19 +39,25 @@ internal sealed class LocalFileContentStore : IContentStore
             Directory.CreateDirectory(Path.GetDirectoryName(temporary)!);
             long length = 0;
             string hash;
-            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.WriteThrough))
+            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
             using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
-                var buffer = new byte[81920];
-                int read;
-                while ((read = await request.Content.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
+                var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+                try
                 {
-                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-                    sha.AppendData(buffer, 0, read);
-                    length += read;
+                    int read;
+                    while ((read = await request.Content.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
+                    {
+                        await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                        sha.AppendData(buffer, 0, read);
+                        length += read;
+                    }
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                 }
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                output.Flush(flushToDisk: true);
                 hash = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
             }
             var reference = _paths.ContentReference(request.TenantId, request.WorkspaceId, request.Kind, hash);

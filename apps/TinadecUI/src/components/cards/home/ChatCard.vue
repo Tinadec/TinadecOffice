@@ -158,6 +158,12 @@ const primaryLiveDigestRunId = computed<string | null>(() => {
   return c.stoppableRunId?.value ?? selectPrimaryRunId(c.runs.value)
 })
 
+const primaryLiveDigestRunStatus = computed<string | null>(() => {
+  const id = primaryLiveDigestRunId.value
+  if (!id) return null
+  return c.runs.value.find((r) => r.id === id)?.status ?? null
+})
+
 const liveDigestStorageId = computed<string | undefined>(() => {
   const sessionKey = c.selectedSessionId.value
   if (!sessionKey) return undefined
@@ -212,6 +218,7 @@ const liveDigestStorageId = computed<string | undefined>(() => {
     >
       <LiveDigestHeartbeatStrip
         :run-id="primaryLiveDigestRunId"
+        :run-status="primaryLiveDigestRunStatus"
         :storage-id="liveDigestStorageId"
       />
     </div>

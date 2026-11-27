@@ -20,7 +20,7 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
   function schedule(delay) {
     clearScheduled();
     if (stopped) return;
-    timer = setTimer(() => { timer = undefined; void check(); }, delay);
+    timer = setTimer(() => { timer = undefined; void check({ silentWhenUnavailable: status.state === 'unavailable' }); }, delay);
     timer?.unref?.();
   }
   function classify(error) {
@@ -30,13 +30,16 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
       ? { state: 'rejected', error: { code: 'host_identity_rejected', message: 'The local services could not prove their trusted host identity. Start Core, Gateway and Desktop together, then retry.' } }
       : { state: 'unavailable', error: { code: 'host_identity_unavailable', message: 'The local services are temporarily unavailable. Retry the host connection.' } };
   }
-  function check() {
+  function check({ silentWhenUnavailable = false } = {}) {
     if (stopped) return Promise.resolve(snapshot());
     if (pending) return pending;
     clearScheduled();
     const epoch = generation;
     const wasReady = status.state === 'ready';
-    if (!wasReady) publish({ state: 'checking', managed });
+    const wasUnavailable = status.state === 'unavailable';
+    if (!wasReady && !(silentWhenUnavailable && wasUnavailable)) {
+      publish({ state: 'checking', managed });
+    }
     controller = new AbortController();
     const attemptController = controller;
     let timeout;
@@ -55,7 +58,12 @@ function createHostConnection({ verify, managed = true, onStatusChange = () => {
       return snapshot();
     }).catch(error => {
       if (stopped || epoch !== generation) return snapshot();
-      publish({ ...classify(error), managed, checked_at: now() });
+      const classified = { ...classify(error), managed, checked_at: now() };
+      if (silentWhenUnavailable && wasUnavailable && classified.state === 'unavailable' && status.error?.code === classified.error?.code) {
+        status = classified;
+      } else {
+        publish(classified);
+      }
       if (status.state === 'unavailable' && retryIndex < retryDelaysMs.length) schedule(retryDelaysMs[retryIndex++]);
       return snapshot();
     }).finally(() => {

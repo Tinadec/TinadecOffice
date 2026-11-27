@@ -51,12 +51,25 @@ public sealed class LifecycleModuleRegistrar : IModuleRegistrar
 /// Core owns run/task/agent/tool/approval state and audit events.
 /// MAF session/checkpoint is execution runtime state only.
 /// </summary>
-internal sealed class LifecycleManager : ILifecycleManager
+internal sealed class LifecycleManager : ILifecycleManager, IRunStreamPublicationSource
 {
     private readonly IServiceProvider _services;
     private readonly ConcurrentDictionary<string, RunState> _fallbackRuns = new();
 
     public LifecycleManager(IServiceProvider services) => _services = services;
+
+    public IDisposable SubscribeRunStream(Action<Guid, DurableRunStreamChunk> listener)
+    {
+        ArgumentNullException.ThrowIfNull(listener);
+        var storage = TryStorage();
+        return storage is null ? NoopDisposable.Instance : storage.SubscribeRunStream(listener);
+    }
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public static readonly NoopDisposable Instance = new();
+        public void Dispose() { }
+    }
 
     public async Task<string> StartRunAsync(
         string sessionId,

@@ -121,7 +121,7 @@ public static class DmaeaEndpoints
                 declaredGraph = run is null ? OrchestrationGraphProjection.FromSnapshot(snapshotJson)
                     : ProjectFrozenGraph(frozenRun, snapshotJson);
             }
-            if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), teammates = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
+            if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), teammates = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: Options);
             // The snapshot describes one run, so it reads that run's events only, and only the
             // kinds it projects: the desktop refreshes this view after every live event batch,
             // and most of a session's rows are model output deltas it never looks at. Reading the
@@ -238,10 +238,7 @@ public static class DmaeaEndpoints
                 step_results = stepResults,
                 context_packs = Array.Empty<object>(),
                 supervision_findings = Array.Empty<object>()
-            }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
-            {
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower
-            });
+            }, options: Options);
         });
 
         // run_id narrows the replay to one run in the index query; limit keeps the most recent

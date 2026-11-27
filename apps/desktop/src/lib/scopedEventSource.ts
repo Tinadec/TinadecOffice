@@ -1,4 +1,5 @@
 import { assertHostAccess } from './hostAccess'
+import { consumeSseResponseBody } from './sseStream'
 import {
   currentEndpointId,
   readEndpointEventCursor,
@@ -207,27 +208,12 @@ export class ScopedEventSource {
       if (!response.ok || !response.body) throw new Error(`Event stream returned ${response.status}`)
       this.readyState = 1
       this.reconnectAttempts = 0
-      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''
-      // Any bytes (a frame, a comment, a heartbeat) prove the connection alive; silence past
-      // the idle timeout aborts it and the retry below resumes from the last event id.
-      let idle: ReturnType<typeof setTimeout> | null = null
-      const arm = () => { if (idle) clearTimeout(idle); idle = setTimeout(() => request.abort(), this.idleTimeoutMs) }
-      request.signal.addEventListener('abort', () => { if (idle) clearTimeout(idle) }, { once: true })
-      arm()
-      while (!this.closed && !request.signal.aborted) {
-        const { done, value } = await reader.read()
-        arm()
-        if (this.closed || request.signal.aborted) break
-        const normalizedChunk = value ? decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n') : decoder.decode(undefined, { stream: false }).replace(/\r\n/g, '\n')
-        buffer = buffer.endsWith('\r') && normalizedChunk.startsWith('\n')
-          ? buffer.slice(0, -1) + normalizedChunk
-          : buffer + normalizedChunk
-        if (buffer.includes('\r')) buffer = buffer.replace(/\r\n/g, '\n')
-        let boundary: number
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) { this.dispatchBlock(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2) }
-        if (done) { if (buffer.trim()) this.dispatchBlock(buffer); break }
-      }
-      if (idle) clearTimeout(idle)
+      await consumeSseResponseBody(response.body, {
+        signal: request.signal,
+        idleTimeoutMs: this.idleTimeoutMs,
+        isClosed: () => this.closed,
+        onBlock: (block) => this.dispatchBlock(block),
+      })
     } catch { if (!this.closed) this.onerror?.(new Event('error')) }
     if (!this.closed) {
       this.readyState = 0

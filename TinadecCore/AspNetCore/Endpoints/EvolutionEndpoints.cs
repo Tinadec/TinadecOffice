@@ -18,6 +18,12 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// </summary>
 public static class EvolutionEndpoints
 {
+    private static readonly JsonSerializerOptions SnakeCaseWebOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true
+    };
+
     public static IEndpointRouteBuilder MapEvolutionEndpoints(this IEndpointRouteBuilder app)
     {
         // Ensure TinadecCore.Context module initializer registers ContextPolicyProposalService factory.
@@ -252,11 +258,7 @@ public static class EvolutionEndpoints
                 {
                     body = await JsonSerializer.DeserializeAsync<ApplyContextEvolutionProposalRequest>(
                         httpRequest.Body,
-                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                            PropertyNameCaseInsensitive = true
-                        },
+                        SnakeCaseWebOptions,
                         ct).ConfigureAwait(false);
                 }
                 catch (JsonException)
@@ -286,11 +288,7 @@ public static class EvolutionEndpoints
                 {
                     body = await JsonSerializer.DeserializeAsync<RejectContextEvolutionProposalRequest>(
                         httpRequest.Body,
-                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                            PropertyNameCaseInsensitive = true
-                        },
+                        SnakeCaseWebOptions,
                         ct).ConfigureAwait(false);
                 }
                 catch (JsonException)

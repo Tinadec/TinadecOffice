@@ -395,4 +395,47 @@ describe('useUiPreferences unified store', () => {
     expect(store.appearance.workspace_view).toBe('grid')
     expect(store.appearance.panel_preset).toBe('translucent')
   })
+
+  it('skips opening SSE when streamEvents is false and syncs via BroadcastChannel', async () => {
+    const originalBc = globalThis.BroadcastChannel
+    const channels: Array<{ name: string; onmessage: ((ev: MessageEvent) => void) | null; postMessage: (d: unknown) => void; close: () => void }> = []
+    class FakeBroadcastChannel {
+      name: string
+      onmessage: ((ev: MessageEvent) => void) | null = null
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+      postMessage(data: unknown) {
+        for (const ch of channels) {
+          if (ch !== this && ch.name === this.name && ch.onmessage) {
+            ch.onmessage({ data } as MessageEvent)
+          }
+        }
+      }
+      close() {}
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const store = useUiPreferences({ streamEvents: false })
+      await flushPromises()
+      expect(sseState.listeners.size).toBe(0)
+
+      const peer = new FakeBroadcastChannel('tinadec:ui-preferences')
+      peer.postMessage({
+        type: 'ui-preferences-sync',
+        doc: {
+          version: 1,
+          appearance: { ...DEFAULT_UI_APPEARANCE_PREFERENCES, theme: 'light' },
+          interaction: { ...DEFAULT_UI_INTERACTION_PREFERENCES },
+          content_hash: 'bc-sync-1',
+        },
+      })
+      expect(store.appearance.theme).toBe('light')
+      expect(store.contentHash.value).toBe('bc-sync-1')
+    } finally {
+      if (originalBc) vi.stubGlobal('BroadcastChannel', originalBc)
+      else vi.unstubAllGlobals()
+    }
+  })
 })

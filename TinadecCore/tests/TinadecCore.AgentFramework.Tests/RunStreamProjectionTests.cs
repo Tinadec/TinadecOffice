@@ -147,4 +147,47 @@ public sealed class RunStreamProjectionTests
         Assert.False(projection.Covers(run, 0));
         Assert.Empty(projection.Since(run, 0));
     }
+
+    [Fact]
+    public async Task WaitForFramesAsync_DoesNotSpinThroughPreDrainedPublishCounts()
+    {
+        var projection = new RunStreamProjection();
+        var run = Guid.NewGuid();
+        projection.Track(run);
+
+        for (var seq = 1L; seq <= 25; seq++)
+            projection.Publish(Frame(run, seq));
+
+        var drained = projection.Since(run, 0);
+        Assert.Equal(25, drained.Count);
+
+        // If semaphore counts had accumulated across the 25 publishes, WaitForFramesAsync
+        // would spin 25 times before observing no frames past 25. With broadcast TCS
+        // signaling it must genuinely suspend until the next frame or timeout.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var ready = await projection.WaitForFramesAsync(run, 25, CancellationToken.None);
+        sw.Stop();
+
+        Assert.False(ready);
+        Assert.True(sw.ElapsedMilliseconds >= 150, $"Expected bounded wait ~250ms, finished too fast in {sw.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public async Task Seal_WakesAllConcurrentWaitersSimultaneously()
+    {
+        var projection = new RunStreamProjection();
+        var run = Guid.NewGuid();
+        projection.Track(run);
+
+        var wait1 = projection.WaitForFramesAsync(run, 0, CancellationToken.None);
+        var wait2 = projection.WaitForFramesAsync(run, 0, CancellationToken.None);
+
+        await Task.Delay(15);
+        projection.Seal(run);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+        var results = await Task.WhenAll(wait1, wait2).WaitAsync(cts.Token);
+        Assert.Equal([true, true], results);
+        Assert.True(projection.IsSealed(run));
+    }
 }

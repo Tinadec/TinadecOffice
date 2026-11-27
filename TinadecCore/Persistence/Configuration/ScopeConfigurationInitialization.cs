@@ -19,8 +19,8 @@ public static class ScopeConfigurationInitialization
             Directory.CreateDirectory(scope.Config);
             try
             {
-                using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
-                output.Write(bytes); output.Flush(flushToDisk: true);
+                using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None);
+                output.Write(bytes); output.Flush();
             }
             catch (IOException) when (File.Exists(path)) { }
         }
@@ -28,8 +28,8 @@ public static class ScopeConfigurationInitialization
         StorageScopePaths.RejectLinks(scope.Root, marker);
         try
         {
-            using var output = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
-            output.Write(Encoding.UTF8.GetBytes(id + "\n")); output.Flush(flushToDisk: true);
+            using var output = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None);
+            output.Write(Encoding.UTF8.GetBytes(id + "\n")); output.Flush();
         }
         catch (IOException) when (File.Exists(marker)) { }
     }
